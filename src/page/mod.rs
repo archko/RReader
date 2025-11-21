@@ -4,4 +4,4 @@ pub mod view_state;
 
 pub use node::PageNode;
 pub use page::Page;
-pub use view_state::{PageViewState, Orientation};
+pub use view_state::{Orientation, PageViewState};

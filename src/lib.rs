@@ -1,10 +1,11 @@
+pub mod cache;
 pub mod decoder;
 pub mod page;
 pub mod pdf;
-pub mod cache;
+pub mod render;
 pub mod state;
 pub mod ui;
 
-pub use pdf::{PdfDocument, PdfPage};
 pub use cache::{ImageCache, PageCache};
-pub use state::AppState;
+pub use pdf::{PdfDocument, PdfPage};
+pub use state::{AppState, RenderedPage};

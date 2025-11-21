@@ -1,5 +1,5 @@
-use mupdf::{Matrix, Pixmap};
 use image::{DynamicImage, ImageBuffer, Rgba};
+use mupdf::{Matrix, Pixmap};
 
 #[derive(Clone)]
 pub struct PdfConfig {
@@ -32,9 +32,9 @@ pub fn mupdf_to_image(pixmap: &Pixmap) -> DynamicImage {
     let height = pixmap.height() as u32;
     let samples = pixmap.samples();
     let n = pixmap.n() as usize; // 每个像素的组件数
-    
+
     let mut img_buffer = ImageBuffer::<Rgba<u8>, Vec<u8>>::new(width, height);
-    
+
     for y in 0..height {
         for x in 0..width {
             let idx = ((y * width + x) as usize) * n;
@@ -49,12 +49,7 @@ pub fn mupdf_to_image(pixmap: &Pixmap) -> DynamicImage {
                     ])
                 } else if n == 3 {
                     // RGB
-                    Rgba([
-                        samples[idx],
-                        samples[idx + 1],
-                        samples[idx + 2],
-                        255,
-                    ])
+                    Rgba([samples[idx], samples[idx + 1], samples[idx + 2], 255])
                 } else {
                     // 灰度或其他
                     Rgba([samples[idx], samples[idx], samples[idx], 255])
@@ -63,6 +58,6 @@ pub fn mupdf_to_image(pixmap: &Pixmap) -> DynamicImage {
             }
         }
     }
-    
+
     DynamicImage::ImageRgba8(img_buffer)
 }
