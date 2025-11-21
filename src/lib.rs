@@ -1,3 +1,5 @@
+pub mod decoder;
+pub mod page;
 pub mod pdf;
 pub mod cache;
 pub mod state;

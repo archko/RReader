@@ -55,7 +55,7 @@ The application is structured with the following modules:
 ### Build
 
 ```bash
-cd pdf-reader-rust
+cd rreader-rust
 cargo build --release
 ```
 

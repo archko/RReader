@@ -46,14 +46,35 @@ impl PdfPage {
     }
     
     pub fn render(&self) -> Result<mupdf::Pixmap> {
+        self.render_with_size(None)
+    }
+    
+    /// 根据容器尺寸渲染页面
+    /// view_width: 容器宽度，如果提供则根据此宽度自适应缩放
+    /// view_height: 容器高度（可选）
+    pub fn render_with_size(&self, view_size: Option<(f32, f32)>) -> Result<mupdf::Pixmap> {
+        let bounds = self.get_bounds();
+        let page_width = bounds.x1 - bounds.x0;
+        let page_height = bounds.y1 - bounds.y0;
+        
+        // 计算最终的缩放比例
+        let final_zoom = if let Some((view_width, _view_height)) = view_size {
+            // 根据容器宽度计算缩放比例
+            let width_scale = view_width / page_width;
+            // 应用用户设置的 zoom
+            width_scale * self.config.zoom
+        } else {
+            // 没有提供容器尺寸，使用原始 zoom
+            self.config.zoom
+        };
+        
         // 使用更高的 DPI 来提高清晰度 (72 DPI * zoom * 2 for retina)
         let dpi_scale = 2.0; // 提高渲染质量
-        let zoom = self.config.zoom * dpi_scale;
+        let zoom = final_zoom * dpi_scale;
         let matrix = create_matrix(zoom, self.config.rotation);
         
-        let bounds = self.get_bounds();
-        let width = ((bounds.x1 - bounds.x0) * zoom) as i32;
-        let height = ((bounds.y1 - bounds.y0) * zoom) as i32;
+        let width = (page_width * zoom) as i32;
+        let height = (page_height * zoom) as i32;
         
         let colorspace = mupdf::Colorspace::device_rgb();
         let mut pixmap = mupdf::Pixmap::new(&colorspace, 0, 0, width, height, true)?;

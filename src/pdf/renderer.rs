@@ -30,6 +30,13 @@ impl PageRenderer {
         Ok(image)
     }
     
+    /// 根据容器尺寸渲染页面
+    pub fn render_page_with_size(&self, page: &PdfPage, view_width: f32, view_height: f32) -> Result<DynamicImage> {
+        let pixmap = page.render_with_size(Some((view_width, view_height)))?;
+        let image = mupdf_to_image(&pixmap);
+        Ok(image)
+    }
+    
     pub fn render_thumbnail(&self, page: &PdfPage, _max_size: u32) -> Result<DynamicImage> {
         // 直接渲染页面，缩放会在 PdfPage 的配置中处理
         self.render_page(page)

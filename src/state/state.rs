@@ -80,6 +80,42 @@ impl AppState {
         }
     }
     
+    /// 根据容器尺寸获取页面
+    pub fn get_page_with_size(&mut self, page_index: usize, view_width: f32, view_height: f32) -> Option<slint::Image> {
+        if let Some(document) = &mut self.document {
+            if page_index >= document.get_page_count() {
+                return None;
+            }
+            
+            // 设置文档的 zoom
+            document.set_zoom(self.zoom);
+            document.set_rotation(self.rotation);
+            
+            // 渲染新页面（根据容器尺寸）
+            match document.get_page(page_index) {
+                Ok(page) => {
+                    match self.renderer.render_page_with_size(&page, view_width, view_height) {
+                        Ok(image) => {
+                            let slint_image = convert_to_slint_image(&image);
+                            // 可以选择缓存，但需要考虑容器尺寸变化的情况
+                            Some(slint_image)
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to render page {} with size: {}", page_index, e);
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to get page {}: {}", page_index, e);
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    }
+    
     pub fn get_thumbnail(&mut self, page_index: usize) -> Option<slint::Image> {
         if let Some(document) = &mut self.document {
             if page_index >= document.get_page_count() {
@@ -125,7 +161,7 @@ impl AppState {
     }
     
     pub fn set_zoom(&mut self, zoom: f32) {
-        let new_zoom = zoom.max(0.1).min(5.0);
+        let new_zoom = zoom.max(0.1).min(10.0);
         if (self.zoom - new_zoom).abs() > 0.001 {
             self.zoom = new_zoom;
             self.renderer.set_zoom(self.zoom);
