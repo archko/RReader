@@ -1,0 +1,155 @@
+import { Button, VerticalBox, HorizontalBox, ScrollView } from "std-widgets.slint";
+
+export component MainWindow inherits Window {
+    title: "PDF Reader";
+    preferred-width: 1024px;
+    preferred-height: 768px;
+    
+    in property <int> page-count: 0;
+    in-out property <int> current-page: 0;
+    in property <image> page-image;
+    
+    callback open-file(string);
+    callback page-changed(int);
+    callback zoom-changed(float);
+    
+    private property <float> zoom: 1.0;
+    private property <bool> show-thumbnail: false;
+    
+    VerticalBox {
+        HorizontalBox {
+            height: 40px;
+            padding: 10px;
+            spacing: 10px;
+            
+            Button {
+                text: "Open";
+                clicked => {
+                    // 触发文件选择对话框
+                    open-file("");
+                }
+            }
+            
+            Button {
+                text: "Previous";
+                enabled: root.current-page > 0;
+                clicked => {
+                    page-changed(root.current-page - 1);
+                }
+            }
+            
+            Button {
+                text: "Next";
+                enabled: root.current-page < root.page-count - 1;
+                clicked => {
+                    page-changed(root.current-page + 1);
+                }
+            }
+            
+            Text {
+                text: "Page " + (root.current-page + 1) + " of " + root.page-count;
+                vertical-alignment: center;
+            }
+            
+            Button {
+                text: "Zoom Out";
+                clicked => {
+                    zoom = Math.max(0.5, zoom - 0.1);
+                    zoom-changed(zoom);
+                }
+            }
+            
+            Button {
+                text: "Zoom In";
+                clicked => {
+                    zoom = Math.min(3.0, zoom + 0.1);
+                    zoom-changed(zoom);
+                }
+            }
+            
+            Text {
+                text: Math.round(zoom * 100) + "%";
+                vertical-alignment: center;
+            }
+            
+            Button {
+                text: show-thumbnail ? "Hide Thumbnails" : "Show Thumbnails";
+                clicked => {
+                    show-thumbnail = !show-thumbnail;
+                }
+            }
+        }
+        
+        HorizontalBox {
+            Rectangle {
+                width: show-thumbnail ? 200px : 0px;
+                background: #f0f0f0;
+                border-width: 1px;
+                border-color: #ccc;
+                
+                VerticalBox {
+                    padding: 10px;
+                    Text {
+                        text: "Thumbnails";
+                        font-size: 14px;
+                    }
+                    
+                    ScrollView {
+                        viewport-width: 180px;
+                        VerticalBox {
+                            // 缩略图列表将在这里显示
+                            Text {
+                                text: "Thumbnails will be displayed here";
+                                color: #666;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            ScrollView {
+                viewport-width: parent.width - (show-thumbnail ? 200px : 0px);
+                viewport-height: parent.height;
+                
+                Rectangle {
+                    background: #ffffff;
+                    
+                    Image {
+                        source: page-image;
+                        image-fit: contain;
+                        
+                        TouchArea {
+                            // 处理触摸事件用于文本选择和缩放
+                        }
+                    }
+                }
+            }
+        }
+        
+        Rectangle {
+            height: 30px;
+            background: #f5f5f5;
+            border-width: 1px;
+            border-color: #ddd;
+            
+            HorizontalBox {
+                padding: 5px;
+                spacing: 10px;
+                
+                Text {
+                    text: "Status: Ready";
+                    font-size: 12px;
+                    color: #666;
+                    vertical-alignment: center;
+                }
+                
+                Text {
+                    text: "Zoom: " + Math.round(zoom * 100) + "%";
+                    font-size: 12px;
+                    color: #666;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
