@@ -116,6 +116,7 @@ fn refresh_view(app: &MainWindow, state: &mut AppState) {
         })
         .collect();
 
+    println!("[Main] refresh_view {} page_models", page_models.len());
     let model = Rc::new(VecModel::from(page_models));
     app.set_document_pages(ModelRc::from(model));
     app.set_page_count(state.page_count() as i32);
