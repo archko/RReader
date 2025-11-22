@@ -3,12 +3,12 @@ use crate::pdf::PdfPage;
 use anyhow::Result;
 use image::DynamicImage;
 
-pub struct PageRenderer {
+pub struct PageRender {
     zoom: f32,
     rotation: f32,
 }
 
-impl PageRenderer {
+impl PageRender {
     pub fn new() -> Self {
         Self {
             zoom: 1.0,
@@ -50,7 +50,7 @@ impl PageRenderer {
     pub fn render_page_with_overlay(
         &self,
         page: &PdfPage,
-        links: &[crate::pdf::page::PdfLink],
+        links: &[crate::decoder::Link],
     ) -> Result<DynamicImage> {
         let mut image = self.render_page(page)?;
 
@@ -64,7 +64,7 @@ impl PageRenderer {
         &self,
         image: &mut DynamicImage,
         page: &PdfPage,
-        links: &[crate::pdf::page::PdfLink],
+        links: &[crate::decoder::Link],
     ) -> Result<()> {
         use image::Rgba;
         use imageproc::drawing::{draw_filled_rect_mut, draw_hollow_rect_mut};
@@ -79,13 +79,13 @@ impl PageRenderer {
 
         for link in links {
             // 转换链接边界到图像坐标
-            let x = ((link.bounds.x0 - page_bounds.x0) / (page_bounds.x1 - page_bounds.x0)
+            let x = ((link.bounds.left - page_bounds.x0) / (page_bounds.x1 - page_bounds.x0)
                 * page_width) as i32;
-            let y = ((link.bounds.y0 - page_bounds.y0) / (page_bounds.y1 - page_bounds.y0)
+            let y = ((link.bounds.top - page_bounds.y0) / (page_bounds.y1 - page_bounds.y0)
                 * page_height) as i32;
-            let width = ((link.bounds.x1 - link.bounds.x0) / (page_bounds.x1 - page_bounds.x0)
+            let width = ((link.bounds.right - link.bounds.left) / (page_bounds.x1 - page_bounds.x0)
                 * page_width) as i32;
-            let height = ((link.bounds.y1 - link.bounds.y0) / (page_bounds.y1 - page_bounds.y0)
+            let height = ((link.bounds.bottom - link.bounds.top) / (page_bounds.y1 - page_bounds.y0)
                 * page_height) as i32;
 
             if width > 0 && height > 0 {
@@ -93,8 +93,8 @@ impl PageRenderer {
 
                 // 根据链接类型选择颜色
                 let color = match link.link_type {
-                    crate::pdf::page::LinkType::Url => Rgba([51, 110, 229, 102]), // 半透明蓝色
-                    crate::pdf::page::LinkType::Internal => Rgba([255, 165, 0, 102]), // 半透明橙色
+                    crate::decoder::LinkType::Url => Rgba([51, 110, 229, 102]), // 半透明蓝色
+                    crate::decoder::LinkType::Page => Rgba([255, 165, 0, 102]), // 半透明橙色
                     _ => Rgba([128, 128, 128, 102]),                              // 半透明灰色
                 };
 
@@ -109,7 +109,7 @@ impl PageRenderer {
     }
 }
 
-impl Default for PageRenderer {
+impl Default for PageRender {
     fn default() -> Self {
         Self::new()
     }

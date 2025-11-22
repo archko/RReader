@@ -4,7 +4,7 @@ use mupdf::{Colorspace, Device, Document, Matrix, Pixmap};
 use std::cell::RefCell;
 use std::path::Path;
 
-use super::{DocumentDecoder, Link, LinkType, PageInfo, Rect};
+use super::{Decoder, Link, LinkType, PageInfo, Rect};
 use crate::pdf::utils::mupdf_to_image;
 
 pub struct PdfDecoder {
@@ -38,7 +38,7 @@ impl PdfDecoder {
     }
 }
 
-impl DocumentDecoder for PdfDecoder {
+impl Decoder for PdfDecoder {
     fn page_count(&self) -> usize {
         self.page_count
     }
@@ -59,7 +59,7 @@ impl DocumentDecoder for PdfDecoder {
         println!("[PDF] Rendering page {} with crop={}", page.index, crop);
         let document = self.document.borrow();
         let mupdf_page = document.load_page(page.index as i32)?;
-        
+
         let bounds = if crop && page.crop_bounds.is_some() {
             page.crop_bounds.unwrap()
         } else {
@@ -76,10 +76,10 @@ impl DocumentDecoder for PdfDecoder {
         let colorspace = Colorspace::device_rgb();
         let mut pixmap = Pixmap::new(&colorspace, 0, 0, width, height, true)?;
         pixmap.clear()?;
-        
+
         let mut device = Device::from_pixmap(&pixmap)?;
         mupdf_page.run(&mut device, &matrix)?;
-        
+
         Ok(mupdf_to_image(&pixmap))
     }
 
@@ -122,20 +122,20 @@ impl DocumentDecoder for PdfDecoder {
                 link.bounds.y1,
             );
 
-            let link_type = if link.uri.starts_with("http") {
-                LinkType::Url(link.uri.clone())
+            let (link_type, uri, page) = if link.uri.starts_with("http") {
+                (LinkType::Url, Some(link.uri.clone()), None)
             } else if link.uri.starts_with('#') {
-                // 内部链接，解析页码
-                if let Ok(page_num) = link.uri[1..].parse::<usize>() {
-                    LinkType::Page(page_num)
-                } else {
-                    continue;
-                }
+                (LinkType::Page, None, Some(link.uri.clone()))
             } else {
-                continue;
+                (LinkType::Unknown, None, None)
             };
 
-            result.push(Link { bounds, link_type });
+            result.push(Link {
+                bounds,
+                link_type,
+                uri,
+                page,
+            });
         }
 
         Ok(result)

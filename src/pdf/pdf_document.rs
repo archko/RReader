@@ -69,10 +69,10 @@ impl PdfDocument {
         self.config.crop_enabled
     }
 
-    pub fn get_metadata(&self) -> Result<Metadata> {
+    pub fn get_metadata(&self) -> Result<PdfMetadata> {
         // mupdf 0.5.0 的 API 可能不支持 get_meta_data
         // 暂时返回空的 metadata
-        Ok(Metadata {
+        Ok(PdfMetadata {
             title: None,
             author: None,
             subject: None,
@@ -85,7 +85,7 @@ impl PdfDocument {
 }
 
 #[derive(Debug, Clone)]
-pub struct Metadata {
+pub struct PdfMetadata {
     pub title: Option<String>,
     pub author: Option<String>,
     pub subject: Option<String>,

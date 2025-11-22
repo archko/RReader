@@ -1,5 +1,5 @@
 use super::Page;
-use crate::decoder::{DocumentDecoder, Rect};
+use crate::decoder::{Decoder, Rect};
 use std::rc::Rc;
 
 /// 滚动方向
@@ -15,7 +15,7 @@ pub struct PageViewState {
     pub pages: Vec<Page>,
 
     /// 解码器（使用 Rc 而不是 Arc，因为不需要跨线程）
-    decoder: std::rc::Rc<dyn DocumentDecoder>,
+    decoder: std::rc::Rc<dyn Decoder>,
 
     /// 滚动方向
     pub orientation: Orientation,
@@ -47,7 +47,7 @@ pub struct PageViewState {
 
 impl PageViewState {
     pub fn new(
-        decoder: Rc<dyn DocumentDecoder>,
+        decoder: Rc<dyn Decoder>,
         orientation: Orientation,
         crop_enabled: bool,
     ) -> anyhow::Result<Self> {

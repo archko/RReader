@@ -6,7 +6,7 @@ use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
 use crate::cache::PageCache;
 use crate::decoder::pdf::PdfDecoder;
-use crate::decoder::DocumentDecoder;
+use crate::decoder::Decoder;
 use crate::page::{Orientation, PageViewState};
 use crate::render::DecodeService;
 
@@ -20,7 +20,7 @@ pub struct RenderedPage {
 }
 
 pub struct AppState {
-    decoder: Option<Rc<dyn DocumentDecoder>>,
+    decoder: Option<Rc<dyn Decoder>>,
     view_state: Option<PageViewState>,
     decode_service: Option<DecodeService>,
     page_cache: Rc<PageCache>,

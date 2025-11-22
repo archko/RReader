@@ -2,7 +2,6 @@ pub mod cache;
 pub mod decoder;
 pub mod page;
 pub mod pdf;
-pub mod render;
 pub mod state;
 pub mod ui;
 

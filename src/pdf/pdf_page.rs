@@ -1,6 +1,7 @@
 use crate::pdf::utils::{create_matrix, PdfConfig};
 use anyhow::Result;
 use mupdf::{Page, Rect as MuRect, TextPage};
+use crate::decoder::{Link, LinkType, Rect};
 
 pub struct PdfPage {
     page: Page,
@@ -128,29 +129,36 @@ impl PdfPage {
         Ok(text_page.to_text()?)
     }
 
-    pub fn get_links(&self) -> Result<Vec<PdfLink>> {
+    /*pub fn get_links(&self) -> Result<Vec<Link>> {
         let links = self.page.links()?;
         let mut pdf_links = Vec::new();
 
         for link in links {
-            let uri = link.uri.clone();
-            let link_type = if uri.starts_with("http") {
-                LinkType::Url
-            } else if uri.starts_with('#') {
-                LinkType::Internal
+            let bounds = Rect::new(
+                link.bounds.x0,
+                link.bounds.y0,
+                link.bounds.x1,
+                link.bounds.y1,
+            );
+
+            let (link_type, uri, page) = if link.uri.starts_with("http") {
+                (LinkType::Url, Some(link.uri.clone()), None)
+            } else if link.uri.starts_with('#') {
+                (LinkType::Page, None, Some(link.uri.clone()))
             } else {
-                LinkType::Unknown
+                (LinkType::Unknown, None, None)
             };
 
-            pdf_links.push(PdfLink {
-                bounds: link.bounds,
-                uri,
+            pdf_links.push(Link {
+                bounds,
                 link_type,
+                uri,
+                page,
             });
         }
 
         Ok(pdf_links)
-    }
+    }*/
 
     pub fn has_crop(&self) -> bool {
         // 简化实现，假设没有裁剪
@@ -164,18 +172,4 @@ impl PdfPage {
             None
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct PdfLink {
-    pub bounds: MuRect,
-    pub uri: String,
-    pub link_type: LinkType,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum LinkType {
-    Url,
-    Internal,
-    Unknown,
 }
