@@ -1,5 +1,5 @@
-use crate::pdf::utils::PdfConfig;
-use crate::pdf::PdfPage;
+use crate::decoder::pdf::utils::PdfConfig;
+use crate::decoder::pdf::PdfPage;
 use anyhow::{Context, Result};
 use mupdf::Document;
 use std::path::Path;

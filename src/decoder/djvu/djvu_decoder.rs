@@ -7,13 +7,13 @@ use std::path::Path;
 use super::{Decoder, Link, LinkType, PageInfo, Rect};
 use crate::pdf::utils::mupdf_to_image;
 
-pub struct PdfDecoder {
+pub struct DjvuDecoder {
     document: RefCell<Document>,
     page_count: usize,
     pages_info: Vec<PageInfo>,
 }
 
-impl PdfDecoder {
+impl DjvuDecoder {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         println!("[PDF] Opening document: {:?}", path.as_ref());
         let document = Document::open(path.as_ref().to_str().unwrap())?;
@@ -38,7 +38,7 @@ impl PdfDecoder {
     }
 }
 
-impl Decoder for PdfDecoder {
+impl Decoder for DjvuDecoder {
     fn page_count(&self) -> usize {
         self.page_count
     }

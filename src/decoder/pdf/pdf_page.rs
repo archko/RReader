@@ -1,7 +1,6 @@
-use crate::pdf::utils::{create_matrix, PdfConfig};
+use crate::decoder::pdf::utils::{create_matrix, PdfConfig};
 use anyhow::Result;
 use mupdf::{Page, Rect as MuRect, TextPage};
-use crate::decoder::{Link, LinkType, Rect};
 
 pub struct PdfPage {
     page: Page,

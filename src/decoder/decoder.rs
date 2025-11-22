@@ -23,7 +23,12 @@ pub trait Decoder {
     /// - page_index: 页面索引
     /// - region: 要渲染的区域（PDF坐标系）
     /// - scale: 缩放比例
-    fn render_region(&self, page_index: usize, region: Rect, scale: f32) -> anyhow::Result<DynamicImage>;
+    fn render_region(
+        &self,
+        page_index: usize,
+        region: Rect,
+        scale: f32,
+    ) -> anyhow::Result<DynamicImage>;
 
     /// 获取页面链接
     fn get_page_links(&self, page_index: usize) -> anyhow::Result<Vec<Link>>;

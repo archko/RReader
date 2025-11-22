@@ -6,9 +6,9 @@ use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
 use crate::cache::PageCache;
 use crate::decoder::pdf::PdfDecoder;
+use crate::decoder::DecodeService;
 use crate::decoder::Decoder;
 use crate::page::{Orientation, PageViewState};
-use crate::render::DecodeService;
 
 pub struct RenderedPage {
     pub index: usize,
@@ -26,7 +26,7 @@ pub struct AppState {
     page_cache: Rc<PageCache>,
     zoom: f32,
     orientation: Orientation,
-    crop_enabled: bool,
+    crop: i32,
     viewport: (f32, f32),
     view_offset: (f32, f32),
 }
@@ -43,7 +43,7 @@ impl AppState {
             page_cache: Rc::new(PageCache::new(80, 200)),
             zoom: 1.0,
             orientation: Orientation::Vertical,
-            crop_enabled: false,
+            crop: 0,
             viewport: (Self::DEFAULT_VIEW_WIDTH, Self::DEFAULT_VIEW_HEIGHT),
             view_offset: (0.0, 0.0),
         }
@@ -51,8 +51,7 @@ impl AppState {
 
     pub fn load_pdf<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
         let decoder = Rc::new(PdfDecoder::open(path)?);
-        let mut view_state =
-            PageViewState::new(decoder.clone(), self.orientation, self.crop_enabled)?;
+        let mut view_state = PageViewState::new(decoder.clone(), self.orientation, self.crop)?;
         if self.viewport.0 > 0.0 && self.viewport.1 > 0.0 {
             view_state.update_view_size(self.viewport.0, self.viewport.1, self.zoom);
         }
@@ -63,7 +62,10 @@ impl AppState {
         self.view_state = Some(view_state);
         self.decoder = Some(decoder);
 
-        println!("[STATE] PDF loaded successfully, page count: {}", self.page_count());
+        println!(
+            "[STATE] PDF loaded successfully, page count: {}",
+            self.page_count()
+        );
         Ok(())
     }
 
@@ -146,18 +148,29 @@ impl AppState {
 
         // Ensure visibility list reflects the latest offset
         view_state.update_offset(self.view_offset.0, self.view_offset.1);
-        println!("[STATE] Processing {} visible pages", view_state.visible_pages.len());
+        println!(
+            "[STATE] Processing {} visible pages",
+            view_state.visible_pages.len()
+        );
 
         for &idx in &view_state.visible_pages {
             println!("[STATE] Processing visible page index: {}", idx);
             if let Some(page) = view_state.pages.get(idx) {
                 if page.width <= 0.0 || page.height <= 0.0 {
-                    eprintln!("[STATE] Invalid page dimensions for page {}: {}x{}", idx, page.width, page.height);
+                    eprintln!(
+                        "[STATE] Invalid page dimensions for page {}: {}x{}",
+                        idx, page.width, page.height
+                    );
                     continue;
                 }
-                match service.render_full_page(&page.info, view_state.crop_enabled) {
+                match service.render_full_page(&page.info, view_state.crop) {
                     Ok(image) => {
-                        println!("[STATE] Successfully rendered page {}: {}x{}", idx, image.width(), image.height());
+                        println!(
+                            "[STATE] Successfully rendered page {}: {}x{}",
+                            idx,
+                            image.width(),
+                            image.height()
+                        );
                         result.push(RenderedPage {
                             index: page.info.index,
                             x: page.bounds.left,
@@ -189,15 +202,17 @@ impl AppState {
 }
 
 fn convert_to_slint_image(image: &image::DynamicImage) -> Image {
-    println!("[STATE] Converting image with dimensions: {}x{}", image.width(), image.height());
+    println!(
+        "[STATE] Converting image with dimensions: {}x{}",
+        image.width(),
+        image.height()
+    );
     let rgba_image = image.to_rgba8();
     let (width, height) = rgba_image.dimensions();
 
-    let slint_image = Image::from_rgba8_premultiplied(SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
-        &rgba_image,
-        width,
-        height,
-    ));
+    let slint_image = Image::from_rgba8_premultiplied(
+        SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&rgba_image, width, height),
+    );
     println!("[STATE] Successfully converted image to Slint image");
     slint_image
 }

@@ -4,7 +4,7 @@ use super::Rect;
 #[derive(Debug, Clone, PartialEq)]
 pub enum LinkType {
     Page, // 内部页面链接
-    Url, // 外部URL链接
+    Url,  // 外部URL链接
     Unknown,
 }
 

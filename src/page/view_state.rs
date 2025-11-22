@@ -27,7 +27,7 @@ pub struct PageViewState {
     pub zoom: f32,
 
     /// 是否启用切边
-    pub crop_enabled: bool,
+    pub crop: i32,
 
     /// 文档总宽度
     pub total_width: f32,
@@ -49,7 +49,7 @@ impl PageViewState {
     pub fn new(
         decoder: Rc<dyn Decoder>,
         orientation: Orientation,
-        crop_enabled: bool,
+        crop: i32,
     ) -> anyhow::Result<Self> {
         let pages_info = decoder.get_all_pages()?;
         let pages = pages_info
@@ -63,7 +63,7 @@ impl PageViewState {
             orientation,
             view_offset: (0.0, 0.0),
             zoom: 1.0,
-            crop_enabled,
+            crop: crop,
             total_width: 0.0,
             total_height: 0.0,
             view_size: (0.0, 0.0),
@@ -106,8 +106,8 @@ impl PageViewState {
         let mut current_y = 0.0;
 
         for page in &mut self.pages {
-            let page_width = page.info.get_width(self.crop_enabled);
-            let page_height = page.info.get_height(self.crop_enabled);
+            let page_width = page.info.get_width(self.crop == 1);
+            let page_height = page.info.get_height(self.crop == 1);
 
             // 计算缩放比例
             let scale = scaled_width / page_width;
@@ -132,8 +132,8 @@ impl PageViewState {
         let mut current_x = 0.0;
 
         for page in &mut self.pages {
-            let page_width = page.info.get_width(self.crop_enabled);
-            let page_height = page.info.get_height(self.crop_enabled);
+            let page_width = page.info.get_width(self.crop == 1);
+            let page_height = page.info.get_height(self.crop == 1);
 
             // 计算缩放比例
             let scale = scaled_height / page_height;
@@ -290,9 +290,9 @@ impl PageViewState {
     }
 
     /// 设置切边状态
-    pub fn set_crop_enabled(&mut self, enabled: bool) {
-        if self.crop_enabled != enabled {
-            self.crop_enabled = enabled;
+    pub fn set_crop(&mut self, crop: i32) {
+        if self.crop != crop {
+            self.crop = crop;
             self.recalculate_layout();
 
             // 清理所有页面缓存

@@ -1,5 +1,5 @@
-use crate::pdf::utils::mupdf_to_image;
-use crate::pdf::PdfPage;
+use crate::decoder::pdf::utils::mupdf_to_image;
+use crate::decoder::pdf::PdfPage;
 use anyhow::Result;
 use image::DynamicImage;
 
@@ -85,7 +85,8 @@ impl PageRender {
                 * page_height) as i32;
             let width = ((link.bounds.right - link.bounds.left) / (page_bounds.x1 - page_bounds.x0)
                 * page_width) as i32;
-            let height = ((link.bounds.bottom - link.bounds.top) / (page_bounds.y1 - page_bounds.y0)
+            let height = ((link.bounds.bottom - link.bounds.top)
+                / (page_bounds.y1 - page_bounds.y0)
                 * page_height) as i32;
 
             if width > 0 && height > 0 {
@@ -95,7 +96,7 @@ impl PageRender {
                 let color = match link.link_type {
                     crate::decoder::LinkType::Url => Rgba([51, 110, 229, 102]), // 半透明蓝色
                     crate::decoder::LinkType::Page => Rgba([255, 165, 0, 102]), // 半透明橙色
-                    _ => Rgba([128, 128, 128, 102]),                              // 半透明灰色
+                    _ => Rgba([128, 128, 128, 102]),                            // 半透明灰色
                 };
 
                 draw_filled_rect_mut(&mut rgba_image, rect, color);

@@ -7,8 +7,6 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 mod cache;
 mod decoder;
 mod page;
-mod pdf;
-mod render;
 mod state;
 mod ui;
 

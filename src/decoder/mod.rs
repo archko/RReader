@@ -1,10 +1,11 @@
-pub mod pdf;
+pub mod decode_service;
 pub mod decoder;
 pub mod link;
 pub mod page_info;
+pub mod pdf;
 pub mod rect;
 
-pub use self::pdf::{PdfDecoder};
+pub use self::decode_service::DecodeService;
 pub use self::decoder::Decoder;
 pub use self::link::Link;
 pub use self::link::LinkType;

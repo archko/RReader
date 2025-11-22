@@ -1,3 +1,3 @@
 pub mod state;
 
-pub use state::{AppState, RenderedPage};
+pub use state::AppState;
