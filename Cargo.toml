@@ -17,6 +17,8 @@ async-trait = "0.1.89"
 crossbeam = "0.8.4"
 imageproc = "0.25.0"
 rfd = "0.15.4"
+log="0.4.28"
+env_logger="0.11.8"
 
 [build-dependencies]
 slint-build = "1.14.1"

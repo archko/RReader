@@ -18,9 +18,9 @@ impl DecodeService {
         }
     }
 
-    pub fn render_full_page(&self, _page_info: &PageInfo, crop: i32) -> Result<DynamicImage> {
-        // 先返回空白占位图，解码逻辑留空
-        Ok(DynamicImage::new_rgba8(1, 1))
+    pub fn render_full_page(&self, page_info: &PageInfo, crop: i32) -> Result<DynamicImage> {
+        self._decoder.render_page(page_info, crop != 0)
+        //Ok(DynamicImage::new_rgba8(1, 1))
     }
 }
 

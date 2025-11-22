@@ -2,6 +2,7 @@ use crate::decoder::pdf::utils::mupdf_to_image;
 use crate::decoder::{Decoder, Link, LinkType, PageInfo, Rect};
 use anyhow::Result;
 use image::DynamicImage;
+use log::{info, warn, error, debug};
 use mupdf::{Colorspace, Device, Document, Matrix, Pixmap};
 use std::cell::RefCell;
 use std::path::Path;
@@ -14,10 +15,10 @@ pub struct PdfDecoder {
 
 impl PdfDecoder {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        println!("[PDF] Opening document: {:?}", path.as_ref());
+        info!("[PDF] Opening document: {:?}", path.as_ref());
         let document = Document::open(path.as_ref().to_str().unwrap())?;
         let page_count = document.page_count()? as usize;
-        println!("[PDF] Document opened with {} pages", page_count);
+        debug!("[PDF] Document opened with {} pages", page_count);
 
         // 预加载所有页面尺寸
         let mut pages_info = Vec::with_capacity(page_count);
@@ -55,7 +56,7 @@ impl Decoder for PdfDecoder {
     }
 
     fn render_page(&self, page: &PageInfo, crop: bool) -> Result<DynamicImage> {
-        println!("[PDF] Rendering page {} with crop={}", page.index, crop);
+        debug!("[PDF] Rendering page {} with crop={}", page.index, crop);
         let document = self.document.borrow();
         let mupdf_page = document.load_page(page.index as i32)?;
 

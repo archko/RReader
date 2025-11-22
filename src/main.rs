@@ -2,6 +2,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use anyhow::Result;
+use env_logger::Env;
+use log::{debug, error, info};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 mod cache;
@@ -16,6 +18,9 @@ slint::include_modules!();
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
+    env_logger::Builder::from_env(
+        Env::default().default_filter_or("info")  // 默认日志级别：info
+    ).init();
     let app = MainWindow::new()?;
     let app_state = Rc::new(RefCell::new(AppState::new()));
 
@@ -35,6 +40,8 @@ fn setup_open_handler(app: &MainWindow, state: Rc<RefCell<AppState>>) {
     app.on_open_file(move || {
         let file_path = rfd::FileDialog::new()
             .add_filter("PDF Files", &["pdf"])
+            .add_filter("PDF Files", &["epub"])
+            .add_filter("PDF Files", &["mobi"])
             .add_filter("All Files", &["*"])
             .set_title("Select PDF File")
             .pick_file();
@@ -49,7 +56,7 @@ fn setup_open_handler(app: &MainWindow, state: Rc<RefCell<AppState>>) {
                     }
                 }
                 Err(err) => {
-                    eprintln!("Failed to open PDF: {err}");
+                    error!("Failed to open PDF: {err}");
                 }
             }
         }
@@ -114,7 +121,10 @@ fn refresh_view(app: &MainWindow, state: &mut AppState) {
         })
         .collect();
 
-    println!("[Main] refresh_view {} page_models", page_models.len());
+    debug!(
+        "[Main] refresh_view {} page_models",
+        page_models.len()
+    );
     let model = Rc::new(VecModel::from(page_models));
     app.set_document_pages(ModelRc::from(model));
     app.set_page_count(state.page_count() as i32);

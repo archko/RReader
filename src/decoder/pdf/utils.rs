@@ -1,11 +1,11 @@
 use image::{DynamicImage, ImageBuffer, Rgba};
 use mupdf::{Matrix, Pixmap};
 
-#[derive(Clone)]
+/*#[derive(Clone)]
 pub struct PdfConfig {
     pub zoom: f32,
     pub rotation: f32,
-    pub crop_enabled: bool,
+    pub crop: i32,
 }
 
 impl Default for PdfConfig {
@@ -13,10 +13,10 @@ impl Default for PdfConfig {
         Self {
             zoom: 1.0,
             rotation: 0.0,
-            crop_enabled: false,
+            crop: 0,
         }
     }
-}
+}*/
 
 pub fn create_matrix(zoom: f32, rotation: f32) -> Matrix {
     let mut matrix = Matrix::new(zoom, 0.0, 0.0, zoom, 0.0, 0.0);

@@ -5,5 +5,4 @@ pub mod state;
 pub mod ui;
 
 pub use cache::{ImageCache, PageCache};
-pub use decoder::pdf::{PdfDocument, PdfPage};
 pub use state::{AppState, RenderedPage};

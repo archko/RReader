@@ -2,6 +2,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use anyhow::Result;
+use log::{info, warn, error, debug};
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
 use crate::cache::PageCache;
@@ -62,7 +63,7 @@ impl AppState {
         self.view_state = Some(view_state);
         self.decoder = Some(decoder);
 
-        println!(
+        info!(
             "[STATE] PDF loaded successfully, page count: {}",
             self.page_count()
         );
@@ -134,30 +135,30 @@ impl AppState {
     pub fn collect_visible_pages(&mut self) -> Vec<RenderedPage> {
         let mut result = Vec::new();
         let Some(view_state) = self.view_state.as_mut() else {
-            println!("[STATE] No view state available");
+            warn!("[STATE] No view state available");
             return result;
         };
         if self.viewport.0 <= 0.0 || self.viewport.1 <= 0.0 {
-            println!("[STATE] Invalid viewport size: {:?}", self.viewport);
+            warn!("[STATE] Invalid viewport size: {:?}", self.viewport);
             return result;
         }
         let Some(service) = self.decode_service.as_ref() else {
-            println!("[STATE] No decode service available");
+            warn!("[STATE] No decode service available");
             return result;
         };
 
         // Ensure visibility list reflects the latest offset
         view_state.update_offset(self.view_offset.0, self.view_offset.1);
-        println!(
+        debug!(
             "[STATE] Processing {} visible pages",
             view_state.visible_pages.len()
         );
 
         for &idx in &view_state.visible_pages {
-            println!("[STATE] Processing visible page index: {}", idx);
+            debug!("[STATE] Processing visible page index: {}", idx);
             if let Some(page) = view_state.pages.get(idx) {
                 if page.width <= 0.0 || page.height <= 0.0 {
-                    eprintln!(
+                    info!(
                         "[STATE] Invalid page dimensions for page {}: {}x{}",
                         idx, page.width, page.height
                     );
@@ -165,7 +166,7 @@ impl AppState {
                 }
                 match service.render_full_page(&page.info, view_state.crop) {
                     Ok(image) => {
-                        println!(
+                        debug!(
                             "[STATE] Successfully rendered page {}: {}x{}",
                             idx,
                             image.width(),
@@ -181,11 +182,11 @@ impl AppState {
                         });
                     }
                     Err(err) => {
-                        eprintln!("Failed to render page {}: {err}", page.info.index);
+                        warn!("Failed to render page {}: {err}", page.info.index);
                     }
                 }
             } else {
-                eprintln!("[STATE] Page {} not found in view state", idx);
+                warn!("[STATE] Page {} not found in view state", idx);
             }
         }
 
@@ -202,7 +203,7 @@ impl AppState {
 }
 
 fn convert_to_slint_image(image: &image::DynamicImage) -> Image {
-    println!(
+    debug!(
         "[STATE] Converting image with dimensions: {}x{}",
         image.width(),
         image.height()
@@ -213,6 +214,6 @@ fn convert_to_slint_image(image: &image::DynamicImage) -> Image {
     let slint_image = Image::from_rgba8_premultiplied(
         SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&rgba_image, width, height),
     );
-    println!("[STATE] Successfully converted image to Slint image");
+    debug!("[STATE] Successfully converted image to Slint image");
     slint_image
 }

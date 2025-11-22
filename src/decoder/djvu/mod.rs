@@ -1,3 +1,3 @@
-pub mod djvu_document;
+pub mod djvu_decoder;
 
-pub use djvu_document::DjvuDocument;
+pub use djvu_decoder::DjvuDecoder;

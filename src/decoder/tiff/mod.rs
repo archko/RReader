@@ -1,3 +1,3 @@
-pub mod tiff_document;
+pub mod tiff_decoder;
 
-pub use tiff_document::TiffDocument;
+pub use tiff_decoder::TiffDecoder;
