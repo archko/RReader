@@ -161,7 +161,7 @@ export component MainWindow inherits Window {
         alignment: start;
 
         VerticalBox {
-            visible: root.document-opened;
+            visible: !root.document-opened;
             
             Rectangle {
                 height: 48px;
@@ -225,7 +225,7 @@ export component MainWindow inherits Window {
         }
         
         VerticalBox {
-            visible: !root.document-opened;
+            visible: root.document-opened;
 
             Rectangle {
                 height: 48px;
