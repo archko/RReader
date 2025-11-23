@@ -86,10 +86,16 @@ component HistoryItem inherits Rectangle {
     in property <string> path;
     in property <image> thumbnail;
     
-    background: #ffffff;
+    // 使用TouchArea的has-hover属性来检测悬停状态
+    in property <bool> hovered: touch-area.has-hover;
+    
+    background: hovered ? #f5f5f5 : #ffffff;
     border-radius: 4px;
     border-width: 1px;
-    border-color: #e0e0e0;
+    border-color: hovered ? #6200ee : #e0e0e0;
+    // 添加阴影效果增强悬停视觉效果
+    drop-shadow-color: hovered ? #00000020 : #00000000;
+    drop-shadow-blur: hovered ? 4px : 0px;
     
     VerticalBox {
         padding: 8px;
@@ -113,18 +119,22 @@ component HistoryItem inherits Rectangle {
             font-weight: 700;
             horizontal-alignment: left;
             wrap: word-wrap;
+            color: root.hovered ? #6200ee : #000000;
         }
         
         Text {
             text: path;
             font-size: 12px;
-            color: #666666;
+            color: root.hovered ? #3700b3 : #666666;
             horizontal-alignment: left;
             wrap: word-wrap;
         }
     }
     
-    TouchArea {
+    touch-area := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        
         clicked => {
             // Handle click event
         }
@@ -189,42 +199,42 @@ export component MainWindow inherits Window {
 
                 HistoryItem {
                     width: 160px;
-                    height: 180px;
+                    height: 200px;
                     title: "Sample Document 1";
                     path: "/path/to/document1.pdf";
                 }
 
                 HistoryItem {
                     width: 160px;
-                    height: 180px;
+                    height: 200px;
                     title: "Sample Document 1";
                     path: "/path/to/document1.pdf";
                 }
                 
                 HistoryItem {
                     width: 160px;
-                    height: 180px;
+                    height: 200px;
                     title: "Sample Document 2";
                     path: "/path/to/document2.pdf";
                 }
                 
                 HistoryItem {
                     width: 160px;
-                    height: 180px;
+                    height: 200px;
                     title: "Sample Document 3";
                     path: "/path/to/document3.pdf";
                 }
                 
                 HistoryItem {
                     width: 160px;
-                    height: 180px;
+                    height: 200px;
                     title: "Sample Document 4";
                     path: "/path/to/document4.pdf";
                 }
                     
                 HistoryItem {
                     width: 160px;
-                    height: 180px;
+                    height: 200px;
                     title: "Sample Document 5";
                     path: "/path/to/document5.pdf";
                 }
