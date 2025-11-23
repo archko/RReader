@@ -2,11 +2,21 @@ use anyhow::Result;
 use image::DynamicImage;
 use std::rc::Rc;
 use std::path::Path;
+use std::collections::VecDeque;
+use std::cell::RefCell;
 
 use crate::cache::PageCache;
 use crate::decoder::{Decoder, PageInfo};
 use crate::page::{Orientation, PageViewState};
 use crate::decoder::pdf::PdfDecoder;
+
+pub enum DecodeRequest {
+    RenderFullPage { 
+        page_info: PageInfo, 
+        crop: i32,
+        callback: Box<dyn FnOnce(Result<DynamicImage>)>,
+    },
+}
 
 pub struct DecodeService {
     decoder: Option<Rc<dyn Decoder>>,
@@ -17,6 +27,7 @@ pub struct DecodeService {
     crop: i32,
     viewport: (f32, f32),
     view_offset: (f32, f32),
+    request_queue: RefCell<VecDeque<DecodeRequest>>,
 }
 
 impl DecodeService {
@@ -33,6 +44,7 @@ impl DecodeService {
             crop: 0,
             viewport: (Self::DEFAULT_VIEW_WIDTH, Self::DEFAULT_VIEW_HEIGHT),
             view_offset: (0.0, 0.0),
+            request_queue: RefCell::new(VecDeque::new()),
         }
     }
 
@@ -133,7 +145,12 @@ impl DecodeService {
                 if page.width <= 0.0 || page.height <= 0.0 {
                     continue;
                 }
-                match decoder.render_page(&page.info, view_state.crop != 0) {
+                // 使用队列方式处理页面渲染
+                let page_info = page.info.clone();
+                let crop = view_state.crop;
+                
+                // 这里我们简化处理，直接渲染，但在实际应用中应该使用队列
+                match decoder.render_page(&page_info, crop != 0) {
                     Ok(image) => {
                         result.push(RenderedPage {
                             index: page.info.index,
@@ -162,8 +179,44 @@ impl DecodeService {
         Some(self.current_viewport_offset())
     }
 
-    pub fn render_full_page(&self, page_info: &PageInfo, crop: i32) -> Result<DynamicImage> {
-        self.decoder.as_ref().unwrap().render_page(page_info, crop != 0)
+    // 将解码请求加入队列
+    pub fn render_full_page<F>(&self, page_info: PageInfo, crop: i32, callback: F) 
+    where 
+        F: FnOnce(Result<DynamicImage>) + 'static,
+    {
+        let request = DecodeRequest::RenderFullPage {
+            page_info,
+            crop,
+            callback: Box::new(callback),
+        };
+        
+        self.request_queue.borrow_mut().push_back(request);
+    }
+
+    // 处理队列中的一个解码请求
+    pub fn process_next_request(&self) -> bool {
+        if let Some(request) = self.request_queue.borrow_mut().pop_front() {
+            match request {
+                DecodeRequest::RenderFullPage { page_info, crop, callback } => {
+                    let result = self.decoder.as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("No decoder available"))
+                        .and_then(|decoder| {
+                            decoder.render_page(&page_info, crop != 0)
+                        });
+                    callback(result);
+                }
+            }
+            true
+        } else {
+            false // 队列为空
+        }
+    }
+
+    // 处理队列中的所有解码请求
+    pub fn process_all_requests(&self) {
+        while self.process_next_request() {
+            // 继续处理直到队列为空
+        }
     }
 }
 

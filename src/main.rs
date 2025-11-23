@@ -142,6 +142,9 @@ fn refresh_view(app: &MainWindow, service: &mut DecodeService) {
     app.set_offset_x(offset_x);
     app.set_offset_y(offset_y);
     app.set_scroll_events_enabled(true);
+    
+    // 处理解码请求
+    service.process_all_requests();
 }
 
 fn convert_to_slint_image(image: &image::DynamicImage) -> slint::Image {
