@@ -1,6 +1,8 @@
 use super::Page;
-use crate::decoder::{Decoder, Rect};
+use crate::decoder::{Decoder, Rect, DecodeService};
 use std::rc::Rc;
+use std::cell::RefCell;
+use std::path::Path;
 
 /// 滚动方向
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -14,8 +16,8 @@ pub struct PageViewState {
     /// 所有页面
     pub pages: Vec<Page>,
 
-    /// 解码器（使用 Rc 而不是 Arc，因为不需要跨线程）
-    decoder: std::rc::Rc<dyn Decoder>,
+    /// 解码服务
+    decode_service: Rc<RefCell<DecodeService>>,
 
     /// 滚动方向
     pub orientation: Orientation,
@@ -46,20 +48,10 @@ pub struct PageViewState {
 }
 
 impl PageViewState {
-    pub fn new(
-        decoder: Rc<dyn Decoder>,
-        orientation: Orientation,
-        crop: i32,
-    ) -> anyhow::Result<Self> {
-        let pages_info = decoder.get_all_pages()?;
-        let pages = pages_info
-            .into_iter()
-            .map(|info| Page::new(info, 0.0, 0.0, 0.0, 0.0))
-            .collect();
-
-        Ok(Self {
-            pages,
-            decoder,
+    pub fn new(orientation: Orientation, crop: i32) -> Self {
+        Self {
+            pages: Vec::new(),
+            decode_service: Rc::new(RefCell::new(DecodeService::new())),
             orientation,
             view_offset: (0.0, 0.0),
             zoom: 1.0,
@@ -69,7 +61,22 @@ impl PageViewState {
             view_size: (0.0, 0.0),
             preload_screens: 1.0,
             visible_pages: Vec::new(),
-        })
+        }
+    }
+
+    /// 打开文档
+    pub fn open_document<P: AsRef<Path>>(&mut self, path: P) -> anyhow::Result<()> {
+        self.decode_service.borrow_mut().load_pdf(path)?;
+        // 获取解码器并初始化页面
+        if let Some(decoder) = self.decode_service.borrow().decoder.clone() {
+            let pages_info = decoder.get_all_pages()?;
+            let pages = pages_info
+                .into_iter()
+                .map(|info| Page::new(info, 0.0, 0.0, 0.0, 0.0))
+                .collect();
+            self.pages = pages;
+        }
+        Ok(())
     }
 
     /// 更新视图尺寸和缩放
@@ -85,6 +92,17 @@ impl PageViewState {
         self.zoom = zoom;
 
         self.recalculate_layout();
+        // 注意：这里不直接更新可见页面，由调用者决定何时更新
+    }
+
+    pub fn update_zoom(&mut self, zoom: f32) {
+        self.update_view_size(self.view_size.0, self.view_size.1, zoom);
+    }
+
+    /// 更新偏移量
+    pub fn update_offset(&mut self, x: f32, y: f32) {
+        self.view_offset = (x, y);
+        // 注意：这里不直接更新可见页面，由调用者决定何时更新
     }
 
     /// 重新计算页面布局
@@ -151,14 +169,8 @@ impl PageViewState {
         self.total_height = scaled_height;
     }
 
-    /// 更新偏移量
-    pub fn update_offset(&mut self, x: f32, y: f32) {
-        self.view_offset = (x, y);
-        self.update_visible_pages();
-    }
-
     /// 更新可见页面列表
-    fn update_visible_pages(&mut self) {
+    pub fn update_visible_pages(&mut self) {
         self.visible_pages.clear();
 
         let (offset_x, offset_y) = self.view_offset;
@@ -175,14 +187,14 @@ impl PageViewState {
             Orientation::Vertical => Rect::new(
                 -offset_x,
                 -offset_y,
-                view_width - offset_x,
-                view_height - offset_y + preload_distance,
+                -offset_x + view_width,
+                -offset_y + view_height + preload_distance,
             ),
             Orientation::Horizontal => Rect::new(
                 -offset_x,
                 -offset_y,
-                view_width - offset_x + preload_distance,
-                view_height - offset_y,
+                -offset_x + view_width + preload_distance,
+                -offset_y + view_height,
             ),
         };
 
@@ -193,8 +205,22 @@ impl PageViewState {
         if first <= last && first < self.pages.len() {
             for i in first..=last.min(self.pages.len() - 1) {
                 self.visible_pages.push(i);
+                
+                // 触发解码服务进行页面解码
+                let page = &self.pages[i];
+                if page.width > 0.0 && page.height > 0.0 {
+                    let page_info = page.info.clone();
+                    let crop = self.crop;
+                    self.decode_service.borrow().render_full_page(page_info, crop, |_result| {
+                        // 解码完成后的回调处理
+                        // 在实际应用中，这里可以更新UI或缓存
+                    });
+                }
             }
         }
+        
+        // 处理所有解码请求
+        self.decode_service.borrow().process_all_requests();
     }
 
     /// 二分查找第一个可见页面
@@ -299,6 +325,9 @@ impl PageViewState {
             for page in &mut self.pages {
                 page.recycle();
             }
+            
+            // 更新可见页面以触发重新解码
+            self.update_visible_pages();
         }
     }
 
