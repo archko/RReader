@@ -86,4 +86,9 @@ impl DecodeService {
             .map(|decoder| decoder.page_count())
             .unwrap_or(0)
     }
+
+    pub fn destroy(&mut self) {
+        self.decoder = None;
+        self.cache.clear();
+    }
 }

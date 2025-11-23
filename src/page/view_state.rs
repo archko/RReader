@@ -338,5 +338,7 @@ impl PageViewState {
         }
         self.pages.clear();
         self.visible_pages.clear();
+
+        self.decode_service.borrow().destroy();
     }
 }

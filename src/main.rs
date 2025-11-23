@@ -4,7 +4,7 @@ use std::rc::{Rc, Weak};
 use anyhow::Result;
 use env_logger::Env;
 use log::{debug, error};
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, ModelRc, VecModel, SharedString};
 
 mod cache;
 mod decoder;
@@ -28,6 +28,7 @@ async fn main() -> Result<()> {
     setup_scroll_handler(&app, Rc::downgrade(&page_view_state));
     setup_page_handler(&app, Rc::downgrade(&page_view_state));
     setup_zoom_handler(&app, Rc::downgrade(&page_view_state));
+    setup_back_to_history_handler(&app, Rc::downgrade(&page_view_state));
 
     app.run()?;
     Ok(())
@@ -37,21 +38,25 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Weak<RefCell<PageViewSt
     let weak_app = app.as_weak();
 
     app.on_open_file(move || {
-        if let Some(state) = page_view_state.upgrade() {
-            let file_path = rfd::FileDialog::new()
-                .add_filter("PDF Files", &["pdf"])
-                .add_filter("PDF Files", &["epub"])
-                .add_filter("PDF Files", &["mobi"])
-                .add_filter("All Files", &["*"])
-                .set_title("Select PDF File")
-                .pick_file();
+        let file_path = rfd::FileDialog::new()
+            .add_filter("PDF Files", &["pdf"])
+            .add_filter("PDF Files", &["epub"])
+            .add_filter("PDF Files", &["mobi"])
+            .add_filter("All Files", &["*"])
+            .set_title("Select PDF File")
+            .pick_file();
 
-            if let Some(path) = file_path {
-                // 加载PDF文档
+        if let Some(path) = file_path {
+            if let Some(app) = weak_app.upgrade() {
+                app.set_file_path(path.to_string_lossy().to_string().into());
+            }
+            
+            if let Some(state) = page_view_state.upgrade() {
                 match state.borrow_mut().open_document(&path) {
                     Ok(_) => {
                         if let Some(app) = weak_app.upgrade() {
                             app.set_zoom(1.0);
+                            app.set_document_opened(true);
                         }
                     }
                     Err(err) => {
@@ -174,6 +179,25 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
     app.set_offset_x(offset_x);
     app.set_offset_y(offset_y);
     app.set_scroll_events_enabled(true);
+}
+
+fn setup_back_to_history_handler(app: &MainWindow, page_view_state: Weak<RefCell<PageViewState>>) {
+    let weak_app = app.as_weak();
+    app.on_back_to_history(move || {
+        // 清空文件路径
+        if let Some(app) = weak_app.upgrade() {
+            app.set_file_path("".into());
+            app.set_document_opened(false);
+        }
+        
+        if let Some(state) = page_view_state.upgrade() {
+            {
+                // 重置页面状态
+                let mut borrowed_state = state.borrow_mut();
+                borrowed_state.shutdown();
+            }
+        }
+    });
 }
 
 fn convert_to_slint_image(image: &image::DynamicImage) -> slint::Image {
