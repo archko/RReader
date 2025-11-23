@@ -9,10 +9,9 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 mod cache;
 mod decoder;
 mod page;
-mod state;
 mod ui;
 
-use state::AppState;
+use decoder::DecodeService;
 
 slint::include_modules!();
 
@@ -22,19 +21,19 @@ async fn main() -> Result<()> {
         Env::default().default_filter_or("debug")  // 默认日志级别：info
     ).init();
     let app = MainWindow::new()?;
-    let app_state = Rc::new(RefCell::new(AppState::new()));
+    let decode_service = Rc::new(RefCell::new(DecodeService::new()));
 
-    setup_open_handler(&app, app_state.clone());
-    setup_viewport_handler(&app, app_state.clone());
-    setup_scroll_handler(&app, app_state.clone());
-    setup_page_handler(&app, app_state.clone());
-    setup_zoom_handler(&app, app_state.clone());
+    setup_open_handler(&app, decode_service.clone());
+    setup_viewport_handler(&app, decode_service.clone());
+    setup_scroll_handler(&app, decode_service.clone());
+    setup_page_handler(&app, decode_service.clone());
+    setup_zoom_handler(&app, decode_service.clone());
 
     app.run()?;
     Ok(())
 }
 
-fn setup_open_handler(app: &MainWindow, state: Rc<RefCell<AppState>>) {
+fn setup_open_handler(app: &MainWindow, service: Rc<RefCell<DecodeService>>) {
     let weak_app = app.as_weak();
 
     app.on_open_file(move || {
@@ -47,12 +46,12 @@ fn setup_open_handler(app: &MainWindow, state: Rc<RefCell<AppState>>) {
             .pick_file();
 
         if let Some(path) = file_path {
-            let mut state = state.borrow_mut();
-            match state.load_pdf(&path) {
+            let mut service = service.borrow_mut();
+            match service.load_pdf(&path) {
                 Ok(_) => {
                     if let Some(app) = weak_app.upgrade() {
-                        app.set_zoom(state.zoom());
-                        refresh_view(&app, &mut state);
+                        app.set_zoom(service.zoom());
+                        refresh_view(&app, &mut service);
                     }
                 }
                 Err(err) => {
@@ -63,53 +62,53 @@ fn setup_open_handler(app: &MainWindow, state: Rc<RefCell<AppState>>) {
     });
 }
 
-fn setup_viewport_handler(app: &MainWindow, state: Rc<RefCell<AppState>>) {
+fn setup_viewport_handler(app: &MainWindow, service: Rc<RefCell<DecodeService>>) {
     let weak_app = app.as_weak();
     app.on_viewport_changed(move |width, height| {
-        let mut state = state.borrow_mut();
-        state.update_viewport(width, height);
+        let mut service = service.borrow_mut();
+        service.update_viewport(width, height);
         if let Some(app) = weak_app.upgrade() {
-            refresh_view(&app, &mut state);
+            refresh_view(&app, &mut service);
         }
     });
 }
 
-fn setup_scroll_handler(app: &MainWindow, state: Rc<RefCell<AppState>>) {
+fn setup_scroll_handler(app: &MainWindow, service: Rc<RefCell<DecodeService>>) {
     let weak_app = app.as_weak();
     app.on_scroll_changed(move |offset_x, offset_y| {
-        let mut state = state.borrow_mut();
-        state.update_scroll_from_viewport(offset_x, offset_y);
+        let mut service = service.borrow_mut();
+        service.update_scroll_from_viewport(offset_x, offset_y);
         if let Some(app) = weak_app.upgrade() {
-            refresh_view(&app, &mut state);
+            refresh_view(&app, &mut service);
         }
     });
 }
 
-fn setup_page_handler(app: &MainWindow, state: Rc<RefCell<AppState>>) {
+fn setup_page_handler(app: &MainWindow, service: Rc<RefCell<DecodeService>>) {
     let weak_app = app.as_weak();
     app.on_page_changed(move |page_index| {
-        let mut state = state.borrow_mut();
-        if state.jump_to_page(page_index as usize).is_some() {
+        let mut service = service.borrow_mut();
+        if service.jump_to_page(page_index as usize).is_some() {
             if let Some(app) = weak_app.upgrade() {
-                refresh_view(&app, &mut state);
+                refresh_view(&app, &mut service);
             }
         }
     });
 }
 
-fn setup_zoom_handler(app: &MainWindow, state: Rc<RefCell<AppState>>) {
+fn setup_zoom_handler(app: &MainWindow, service: Rc<RefCell<DecodeService>>) {
     let weak_app = app.as_weak();
     app.on_zoom_changed(move |zoom| {
-        let mut state = state.borrow_mut();
-        state.set_zoom(zoom);
+        let mut service = service.borrow_mut();
+        service.set_zoom(zoom);
         if let Some(app) = weak_app.upgrade() {
-            refresh_view(&app, &mut state);
+            refresh_view(&app, &mut service);
         }
     });
 }
 
-fn refresh_view(app: &MainWindow, state: &mut AppState) {
-    let rendered_pages = state.collect_visible_pages();
+fn refresh_view(app: &MainWindow, service: &mut DecodeService) {
+    let rendered_pages = service.collect_visible_pages();
     let page_models: Vec<PageData> = rendered_pages
         .into_iter()
         .map(|page| PageData {
@@ -117,7 +116,7 @@ fn refresh_view(app: &MainWindow, state: &mut AppState) {
             y: page.y,
             width: page.width,
             height: page.height,
-            image: page.image,
+            image: convert_to_slint_image(&page.image),
         })
         .collect();
 
@@ -127,20 +126,36 @@ fn refresh_view(app: &MainWindow, state: &mut AppState) {
     );
     let model = Rc::new(VecModel::from(page_models));
     app.set_document_pages(ModelRc::from(model));
-    app.set_page_count(state.page_count() as i32);
-    app.set_zoom(state.zoom());
+    app.set_page_count(service.page_count() as i32);
+    app.set_zoom(service.zoom());
 
-    if let Some(first_visible) = state.first_visible_page() {
+    if let Some(first_visible) = service.first_visible_page() {
         app.set_current_page(first_visible as i32);
     }
 
-    let (total_width, total_height) = state.total_size();
+    let (total_width, total_height) = service.total_size();
     app.set_total_width(total_width);
     app.set_total_height(total_height);
 
-    let (offset_x, offset_y) = state.current_viewport_offset();
+    let (offset_x, offset_y) = service.current_viewport_offset();
     app.set_scroll_events_enabled(false);
     app.set_offset_x(offset_x);
     app.set_offset_y(offset_y);
     app.set_scroll_events_enabled(true);
+}
+
+fn convert_to_slint_image(image: &image::DynamicImage) -> slint::Image {
+    debug!(
+        "[STATE] Converting image with dimensions: {}x{}",
+        image.width(),
+        image.height()
+    );
+    let rgba_image = image.to_rgba8();
+    let (width, height) = rgba_image.dimensions();
+
+    let slint_image = slint::Image::from_rgba8_premultiplied(
+        slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&rgba_image, width, height),
+    );
+    debug!("[STATE] Successfully converted image to Slint image");
+    slint_image
 }
