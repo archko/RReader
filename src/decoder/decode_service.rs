@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::path::Path;
 use std::collections::VecDeque;
 use std::cell::RefCell;
+use log::debug;
 
 use crate::cache::PageCache;
 use crate::decoder::{Decoder, PageInfo};
@@ -88,6 +89,9 @@ impl DecodeService {
     }
 
     pub fn destroy(&mut self) {
+        debug!("[DecodeService] Destroying decoder service and clearing queue");
+
+        self.request_queue.borrow_mut().clear();
         self.decoder = None;
         self.cache.clear();
     }
