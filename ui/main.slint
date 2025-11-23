@@ -81,6 +81,56 @@ component DocumentView inherits Rectangle {
     }
 }
 
+component HistoryItem inherits Rectangle {
+    in property <string> title;
+    in property <string> path;
+    in property <image> thumbnail;
+    
+    background: #ffffff;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: #e0e0e0;
+    
+    VerticalBox {
+        padding: 8px;
+        spacing: 6px;
+        
+        Rectangle {
+            background: #f5f5f5;
+            height: 120px;
+            
+            Image {
+                source: thumbnail;
+                width: 100%;
+                height: 100%;
+                image-fit: contain;
+            }
+        }
+        
+        Text {
+            text: title;
+            font-size: 14px;
+            font-weight: 700;
+            horizontal-alignment: left;
+            wrap: word-wrap;
+        }
+        
+        Text {
+            text: path;
+            font-size: 12px;
+            color: #666666;
+            horizontal-alignment: left;
+            wrap: word-wrap;
+        }
+    }
+    
+    TouchArea {
+        clicked => {
+            // Handle click event
+        }
+    }
+}
+
 export component MainWindow inherits Window {
     title: "PDF Reader";
     width: 1024px;
@@ -95,107 +145,172 @@ export component MainWindow inherits Window {
     in-out property <length> offset-x: 0px;
     in-out property <length> offset-y: 0px;
     in-out property <bool> scroll-events-enabled: true;
+    in property <string> file-path: "/book/sample.pdf";
+    in property <bool> document-opened: false;
+    in property <[string]> history-items: [];
     
     callback open-file();
     callback page-changed(int);
     callback zoom-changed(float);
     callback viewport-changed(length, length);
     callback scroll-changed(length, length);
+    callback back-to-history();
     
     VerticalBox {
         spacing: 0px;
-        
-        Rectangle {
-            height: 48px;
-            background: #f5f5f5;
-            border-width: 1px;
-            border-color: #e0e0e0;
+        alignment: start;
+
+        VerticalBox {
+            visible: root.document-opened;
             
-            HorizontalBox {
-                padding: 12px;
-                spacing: 8px;
+            Rectangle {
+                height: 48px;
+                background: #f5f5f5;
+                border-width: 1px;
+                border-color: #e0e0e0;
                 
-                Button {
-                    text: "Open";
-                    clicked => { open-file(); }
-                }
-                
-                Button {
-                    text: "Previous";
-                    enabled: root.current-page > 0;
-                    clicked => { page-changed(root.current-page - 1); }
-                }
-                
-                Button {
-                    text: "Next";
-                    enabled: root.current-page < root.page-count - 1;
-                    clicked => { page-changed(root.current-page + 1); }
-                }
-                
-                Button {
-                    text: "Zoom -";
-                    clicked => {
-                        zoom = Math.max(0.5, zoom - 0.1);
-                        zoom-changed(zoom);
+                HorizontalBox {
+                    alignment: start;
+                    padding: 12px;
+                    spacing: 8px;
+                    
+                    Button {
+                        text: "Clear";
+                        clicked => { }
+                    }
+                    
+                    Button {
+                        text: "Open";
+                        clicked => { open-file(); }
                     }
                 }
-                
-                Button {
-                    text: "Zoom +";
-                    clicked => {
-                        zoom = Math.min(4.0, zoom + 0.1);
-                        zoom-changed(zoom);
+            }
+            
+            GridLayout {
+                spacing: 0px;
+                HistoryItem {
+                        width: 160px;
+                        height: 180px;
+                        title: "Sample Document 1";
+                        path: "/path/to/document1.pdf";
+                }
+                HistoryItem {
+                        width: 160px;
+                        height: 180px;
+                        title: "Sample Document 1";
+                        path: "/path/to/document1.pdf";
                     }
-                }
-
-                Text {
-                    text: Math.round(zoom * 100) + "%";
-                    vertical-alignment: center;
-                }
-
-                Text {
-                    text: "Page " + (root.current-page + 1) + " / " + Math.max(root.page-count, 1);
-                    vertical-alignment: center;
-                }
+                    
+                    HistoryItem {
+                        width: 160px;
+                        height: 180px;
+                        title: "Sample Document 2";
+                        path: "/path/to/document2.pdf";
+                    }
+                    
+                    HistoryItem {
+                        width: 160px;
+                        height: 180px;
+                        title: "Sample Document 3";
+                        path: "/path/to/document3.pdf";
+                    }
+                    
+                    HistoryItem {
+                        width: 160px;
+                        height: 180px;
+                        title: "Sample Document 4";
+                        path: "/path/to/document4.pdf";
+                    }
             }
         }
         
-        DocumentView {
-            vertical-stretch: 1;
-            min-height: 0px;
-            pages: root.document-pages;
-            total-width: root.total-width;
-            total-height: root.total-height;
-            offset-x <=> root.offset-x;
-            offset-y <=> root.offset-y;
-            enable-scroll-events: root.scroll-events-enabled;
-            viewport-changed(width, height) => { root.viewport-changed(width, height); }
-            scroll-changed(x, y) => { root.scroll-changed(x, y); }
-        }
-        
-        Rectangle {
-            height: 48px;
-            background: #f5f5f5;
-            border-width: 1px;
-            border-color: #e0e0e0;
-            
-            HorizontalBox {
-                padding: 12px;
-                spacing: 16px;
-                
-                Text {
-                    text: "Status: Ready";
-                    font-size: 12px;
-                    color: #666666;
-                    vertical-alignment: center;
-                }
+        VerticalBox {
+            visible: !root.document-opened;
 
-                Text {
-                    text: "Visible Page: " + (root.current-page + 1);
-                    font-size: 12px;
-                    color: #666666;
-                    vertical-alignment: center;
+            Rectangle {
+                height: 48px;
+                background: #f5f5f5;
+                border-width: 1px;
+                border-color: #e0e0e0;
+                
+                HorizontalLayout {
+                    alignment: space-between;
+                    HorizontalLayout {
+                        alignment: start;
+                        padding: 12px;
+                        spacing: 8px;
+
+                        Button {
+                            text: "Back";
+                            clicked => { back-to-history(); }
+                        }
+                    
+                        Text {
+                            text: root.file-path;
+                            vertical-alignment: center;
+                            horizontal-alignment: left;
+                            wrap: word-wrap;
+                        }
+                    }
+                
+                    HorizontalLayout {
+                        alignment: end;
+
+                        padding: 12px;
+                        spacing: 8px;
+
+                        Button {
+                            text: "Previous";
+                            enabled: root.current-page > 0;
+                            clicked => { page-changed(root.current-page - 1); }
+                        }
+                    
+                        Button {
+                            text: "Next";
+                            enabled: root.current-page < root.page-count - 1;
+                            clicked => { page-changed(root.current-page + 1); }
+                        }
+                        
+                        Button {
+                            text: "Zoom -";
+                            clicked => {
+                                zoom = Math.max(0.5, zoom - 0.1);
+                                zoom-changed(zoom);
+                            }
+                        }
+                    
+                        Button {
+                            text: "Zoom +";
+                            clicked => {
+                                zoom = Math.min(4.0, zoom + 0.1);
+                                zoom-changed(zoom);
+                            }
+                        }
+    
+                        Text {
+                            text: Math.round(zoom * 100) + "%";
+                            vertical-alignment: center;
+                        }
+    
+                        Text {
+                            text: "Page " + (root.current-page + 1) + " / " + Math.max(root.page-count, 1);
+                            vertical-alignment: center;
+                        }
+                    }
                 }
+            }
+            
+            DocumentView {
+                vertical-stretch: 1;
+                min-height: 0px;
+                pages: root.document-pages;
+                total-width: root.total-width;
+                total-height: root.total-height;
+                offset-x <=> root.offset-x;
+                offset-y <=> root.offset-y;
+                enable-scroll-events: root.scroll-events-enabled;
+                viewport-changed(width, height) => { root.viewport-changed(width, height); }
+                scroll-changed(x, y) => { root.scroll-changed(x, y); }
             }
         }
     }
