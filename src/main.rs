@@ -19,7 +19,7 @@ slint::include_modules!();
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     env_logger::Builder::from_env(
-        Env::default().default_filter_or("info")  // 默认日志级别：info
+        Env::default().default_filter_or("debug")  // 默认日志级别：info
     ).init();
     let app = MainWindow::new()?;
     let app_state = Rc::new(RefCell::new(AppState::new()));

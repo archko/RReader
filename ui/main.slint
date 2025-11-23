@@ -83,8 +83,8 @@ component DocumentView inherits Rectangle {
 
 export component MainWindow inherits Window {
     title: "PDF Reader";
-    preferred-width: 1024px;
-    preferred-height: 768px;
+    width: 1024px;
+    height: 768px;
     
     in property <int> page-count: 0;
     in-out property <int> current-page: 0;
@@ -132,8 +132,6 @@ export component MainWindow inherits Window {
                     clicked => { page-changed(root.current-page + 1); }
                 }
                 
-                Rectangle { width: 1px; height: 100%; background: #d0d0d0; }
-                
                 Button {
                     text: "Zoom -";
                     clicked => {
@@ -154,8 +152,6 @@ export component MainWindow inherits Window {
                     text: Math.round(zoom * 100) + "%";
                     vertical-alignment: center;
                 }
-                
-                Rectangle { width: 1px; height: 100%; background: #d0d0d0; }
 
                 Text {
                     text: "Page " + (root.current-page + 1) + " / " + Math.max(root.page-count, 1);
