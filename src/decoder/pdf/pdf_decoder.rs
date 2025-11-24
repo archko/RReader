@@ -2,7 +2,7 @@ use crate::decoder::pdf::utils::mupdf_to_image;
 use crate::decoder::{Decoder, Link, LinkType, PageInfo, Rect};
 use anyhow::Result;
 use image::DynamicImage;
-use log::{info, warn, error, debug};
+use log::{info, debug};
 use mupdf::{Colorspace, Device, Document, Matrix, Pixmap};
 use std::cell::RefCell;
 use std::path::Path;

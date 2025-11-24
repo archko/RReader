@@ -1,7 +1,7 @@
 use log::debug;
 
 use super::Page;
-use crate::decoder::{Decoder, Rect, DecodeService};
+use crate::decoder::{Rect, DecodeService};
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::path::Path;
@@ -82,22 +82,30 @@ impl PageViewState {
     }
 
     /// 更新视图尺寸和缩放
-    pub fn update_view_size(&mut self, width: f32, height: f32, zoom: f32) {
+    pub fn update_view_size(&mut self, width: f32, height: f32, zoom: f32, force : bool) {
         let size_changed = self.view_size.0 != width || self.view_size.1 != height;
         let zoom_changed = (self.zoom - zoom).abs() > 0.001;
 
-        if !size_changed && !zoom_changed {
+        if !size_changed && !zoom_changed &&!force {
+            debug!(
+                "[PageViewState] don't update_view_size. w-h:{:?}-{:?}, zoom:{:?}",
+                width, height, zoom
+            );
             return;
         }
 
         self.view_size = (width, height);
         self.zoom = zoom;
+        debug!(
+            "[PageViewState] update_view_size. w-h:{:?}-{:?}, zoom:{:?}, view:{:?}-{:?}",
+            width, height, zoom, self.view_size.0, self.view_size.1
+        );
 
         self.recalculate_layout();
     }
 
     pub fn update_zoom(&mut self, zoom: f32) {
-        self.update_view_size(self.view_size.0, self.view_size.1, zoom);
+        self.update_view_size(self.view_size.0, self.view_size.1, zoom, true);
     }
 
     /// 更新偏移量
@@ -137,8 +145,16 @@ impl PageViewState {
             page.info.scale = scale;
 
             current_y += scaled_height;
+            debug!(
+                "[PageViewState] layout_vertical pages_len:{} view_size:{:?}, offset:{:?}, w-h:{:?}-{:?}",
+                page.info.index, self.view_size, self.view_offset, scaled_width, scaled_height
+            );
         }
 
+        debug!(
+            "[PageViewState] layout_vertical.end:total_width:{:?}-total_height:{:?}",
+            scaled_width, current_y
+        );
         self.total_width = scaled_width;
         self.total_height = current_y;
     }
@@ -171,6 +187,10 @@ impl PageViewState {
 
     /// 更新可见页面列表
     pub fn update_visible_pages(&mut self) {
+        debug!(
+            "[PageViewState] update_visible_pages pages_len:{} view_size:{:?} offset:{:?}",
+            self.pages.len(), self.view_size, self.view_offset
+        );
         self.visible_pages.clear();
 
         let (offset_x, offset_y) = self.view_offset;

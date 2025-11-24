@@ -1,10 +1,10 @@
 use std::cell::RefCell;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 
 use anyhow::Result;
 use env_logger::Env;
 use log::{debug, error};
-use slint::{ComponentHandle, ModelRc, VecModel, SharedString};
+use slint::{ComponentHandle, ModelRc, VecModel};
 
 mod cache;
 mod decoder;
@@ -12,7 +12,6 @@ mod page;
 mod ui;
 
 use page::{PageViewState, Orientation};
-use cache::PageCache;
 
 slint::include_modules!();
 
@@ -58,10 +57,22 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
                     if let Some(app) = weak_app.upgrade() {
                         app.set_zoom(1.0);
                         app.set_document_opened(true);
+
+                        let zoom = 1.0; // 初始缩放值
+                        let mut borrowed_state = page_view_state.borrow_mut();
+                        let width = borrowed_state.view_size.0;
+                        let height = borrowed_state.view_size.1;
+                        borrowed_state.update_view_size(
+                            width, 
+                            height, 
+                            zoom,
+                            true
+                        );
                     }
                     
                     // 文档打开后立即刷新视图
                     if let Some(app) = weak_app.upgrade() {
+                        page_view_state.borrow_mut().update_visible_pages();
                         refresh_view(&app, &page_view_state.borrow());
                     }
                 }
@@ -76,11 +87,12 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
 fn setup_viewport_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
     let weak_app = app.as_weak();
     app.on_viewport_changed(move |width, height| {
-        // 视口变化处理
+        debug!("[Main] setup_viewport_handler.width: {:?}, height: {:?}", width, height);
+        /// 视口变化处理
         {
             let mut borrowed_state = page_view_state.borrow_mut();
             let zoom = borrowed_state.zoom;
-            borrowed_state.update_view_size(width, height, zoom);
+            borrowed_state.update_view_size(width, height, zoom, false);
             borrowed_state.update_visible_pages();
         }
         debug!("[Main] setup_viewport_handler");
@@ -130,7 +142,7 @@ fn setup_zoom_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
         {
             let mut borrowed_state = page_view_state.borrow_mut();
             let (view_width, view_height) = borrowed_state.view_size;
-            borrowed_state.update_view_size(view_width, view_height, zoom);
+            borrowed_state.update_view_size(view_width, view_height, zoom, true);
             borrowed_state.update_visible_pages();
         }
         
@@ -141,7 +153,7 @@ fn setup_zoom_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
 }
 
 fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
-    let mut state = page_view_state;
+    let state = page_view_state;
     if state.pages.is_empty() {
         debug!("[Main] No pages to refresh");
         return;
