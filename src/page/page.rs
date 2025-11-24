@@ -1,7 +1,6 @@
 use super::PageNode;
 use crate::decoder::{Link, PageInfo, Rect};
 
-/// 单个页面
 pub struct Page {
     /// 页面信息
     pub info: PageInfo,
@@ -43,7 +42,7 @@ impl Page {
         self.width = width;
         self.height = height;
         self.bounds = bounds;
-        self.invalidate_nodes();
+        //self.invalidate_nodes();
     }
 
     /// 获取 X 偏移

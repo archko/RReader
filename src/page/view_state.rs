@@ -1,3 +1,5 @@
+use log::debug;
+
 use super::Page;
 use crate::decoder::{Decoder, Rect, DecodeService};
 use std::rc::Rc;
@@ -92,7 +94,6 @@ impl PageViewState {
         self.zoom = zoom;
 
         self.recalculate_layout();
-        // 注意：这里不直接更新可见页面，由调用者决定何时更新
     }
 
     pub fn update_zoom(&mut self, zoom: f32) {
@@ -102,7 +103,6 @@ impl PageViewState {
     /// 更新偏移量
     pub fn update_offset(&mut self, x: f32, y: f32) {
         self.view_offset = (x, y);
-        // 注意：这里不直接更新可见页面，由调用者决定何时更新
     }
 
     /// 重新计算页面布局
@@ -201,25 +201,26 @@ impl PageViewState {
         // 使用二分查找优化
         let first = self.find_first_visible(&visible_rect);
         let last = self.find_last_visible(&visible_rect);
+        debug!(
+            "[PageViewState] update_visible_pages first:{}, last:{}, rect:{:?}",
+            first, last, visible_rect
+        );
 
         if first <= last && first < self.pages.len() {
             for i in first..=last.min(self.pages.len() - 1) {
                 self.visible_pages.push(i);
                 
-                // 触发解码服务进行页面解码
                 let page = &self.pages[i];
                 if page.width > 0.0 && page.height > 0.0 {
                     let page_info = page.info.clone();
                     let crop = self.crop;
                     self.decode_service.borrow().render_full_page(page_info, crop, |_result| {
                         // 解码完成后的回调处理
-                        // 在实际应用中，这里可以更新UI或缓存
                     });
                 }
             }
         }
         
-        // 处理所有解码请求
         self.decode_service.borrow().process_all_requests();
     }
 
