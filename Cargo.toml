@@ -29,3 +29,8 @@ lto = "fat"            # 链接时优化（消除跨模块冗余）
 codegen-units = 1      # 单代码生成单元（提升优化效果）
 strip = "debuginfo"    # 移除调试信息（不影响性能，减少二进制体积）
 panic = "abort"
+optimize = "s" # 体积优化（可选："z" 极致体积，3 速度优化）
+
+[slint]
+# 禁用所有 Slint 警告（等价于 --no-warnings）
+no-warnings = true

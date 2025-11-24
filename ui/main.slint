@@ -15,9 +15,12 @@ component DocumentView inherits Rectangle {
     in-out property <length> offset-x: 0px;
     in-out property <length> offset-y: 0px;
     in property <bool> enable-scroll-events: true;
+    in-out property <length> viewport-height: 0px;
     
     callback viewport-changed(length, length);
     callback scroll-changed(length, length);
+    callback page-down();
+    callback page-up();
     
     background: #fafafa;
     border-width: 1px;
@@ -67,6 +70,22 @@ component DocumentView inherits Rectangle {
         }
     }
     
+    focus := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Space) {
+                root.page-down();
+                return accept;
+            } else if (event.text == Key.PageDown) {
+                root.page-down();
+                return accept;
+            } else if (event.text == Key.PageUp) {
+                root.page-up();
+                return accept;
+            }
+            reject
+        }
+    }
+    
     viewport_timer := Timer {
         interval: 120ms;
         running: true;
@@ -74,7 +93,8 @@ component DocumentView inherits Rectangle {
             if (root.last-visible-width != scroller.visible-width || root.last-visible-height != scroller.visible-height) {
                 root.last-visible-width = scroller.visible-width;
                 root.last-visible-height = scroller.visible-height;
-            root.viewport-changed(scroller.visible-width, scroller.visible-height);
+                root.viewport-height = scroller.visible-height;
+                root.viewport-changed(scroller.visible-width, scroller.visible-height);
             }
             viewport_timer.restart();
         }
@@ -158,6 +178,7 @@ export component MainWindow inherits Window {
     in property <string> file-path: "/book/sample.pdf";
     in property <bool> document-opened: false;
     in property <[string]> history-items: [];
+    in-out property <length> viewport-height: 0px;
     
     callback open-file();
     callback page-changed(int);
@@ -165,6 +186,8 @@ export component MainWindow inherits Window {
     callback viewport-changed(length, length);
     callback scroll-changed(length, length);
     callback back-to-history();
+    callback page-down();
+    callback page-up();
     
     Rectangle {
 
@@ -321,7 +344,7 @@ export component MainWindow inherits Window {
                 }
             }
             
-            DocumentView {
+            doc_view := DocumentView {
                 vertical-stretch: 1;
                 min-height: 0px;
                 pages: root.document-pages;
@@ -330,8 +353,11 @@ export component MainWindow inherits Window {
                 offset-x <=> root.offset-x;
                 offset-y <=> root.offset-y;
                 enable-scroll-events: root.scroll-events-enabled;
+                viewport-height <=> root.viewport-height;
                 viewport-changed(width, height) => { root.viewport-changed(width, height); }
                 scroll-changed(x, y) => { root.scroll-changed(x, y); }
+                page-down() => { root.page-down(); }
+                page-up() => { root.page-up(); }
             }
         }
 
@@ -358,5 +384,22 @@ export component MainWindow inherits Window {
             }
             }
         }
+    }
+    
+    page-down() => {
+        // 向下翻一屏：视口向下移动 → 减少offset-y（内容向下滚）
+        // 边界：最小offset-y = 0（不能超出文档顶部）
+        let new_offset_y = root.offset-y - (root.viewport-height - 10px);
+        root.offset-y = Math.max(0px, new_offset_y);
+        root.scroll-changed(root.offset-x, root.offset-y);
+    }
+    
+    page-up() => {
+        // 向上翻一屏：视口向上移动 → 增加offset-y（内容向上滚）
+        // 边界：最大offset-y = 文档总高度 - 视口高度（不能超出文档底部）
+        let max_offset_y = Math.max(0px, root.total-height - root.viewport-height);
+        let new_offset_y = root.offset-y + (root.viewport-height - 10px);
+        root.offset-y = Math.min(max_offset_y, new_offset_y);
+        root.scroll-changed(root.offset-x, root.offset-y);
     }
 }

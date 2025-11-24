@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -29,6 +31,8 @@ async fn main() -> Result<()> {
     setup_page_handler(&app, page_view_state.clone());
     setup_zoom_handler(&app, page_view_state.clone());
     setup_back_to_history_handler(&app, page_view_state.clone());
+    setup_page_down_handler(&app, page_view_state.clone());
+    setup_page_up_handler(&app, page_view_state.clone());
 
     app.run()?;
     Ok(())
@@ -88,7 +92,6 @@ fn setup_viewport_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageView
     let weak_app = app.as_weak();
     app.on_viewport_changed(move |width, height| {
         debug!("[Main] setup_viewport_handler.width: {:?}, height: {:?}", width, height);
-        /// 视口变化处理
         {
             let mut borrowed_state = page_view_state.borrow_mut();
             let zoom = borrowed_state.zoom;
@@ -225,5 +228,45 @@ fn setup_back_to_history_handler(app: &MainWindow, page_view_state: Rc<RefCell<P
         // 重置页面状态
         let mut borrowed_state = page_view_state.borrow_mut();
         borrowed_state.shutdown();
+    });
+}
+
+fn setup_page_down_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
+    let weak_app = app.as_weak();
+    app.on_page_down(move || {
+        if let Some(app) = weak_app.upgrade() {
+            let viewport_height = app.get_viewport_height();
+            let current_offset_y = app.get_offset_y();
+            
+            // 向下翻页（增加Y轴偏移量）
+            let new_offset_y = current_offset_y + viewport_height - 10.0;
+            
+            app.set_offset_y(new_offset_y);
+            
+            // 触发滚动事件
+            if let Some(app) = weak_app.upgrade() {
+                app.invoke_scroll_changed(app.get_offset_x(), new_offset_y);
+            }
+        }
+    });
+}
+
+fn setup_page_up_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
+    let weak_app = app.as_weak();
+    app.on_page_up(move || {
+        if let Some(app) = weak_app.upgrade() {
+            let viewport_height = app.get_viewport_height();
+            let current_offset_y = app.get_offset_y();
+            
+            // 向上翻页（减少Y轴偏移量，但不低于0）
+            let new_offset_y = (current_offset_y - viewport_height + 10.0).max(0.0);
+            
+            app.set_offset_y(new_offset_y);
+            
+            // 触发滚动事件
+            if let Some(app) = weak_app.upgrade() {
+                app.invoke_scroll_changed(app.get_offset_x(), new_offset_y);
+            }
+        }
     });
 }
