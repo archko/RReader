@@ -232,11 +232,15 @@ impl PageViewState {
                 
                 let page = &self.pages[i];
                 if page.width > 0.0 && page.height > 0.0 {
-                    let page_info = page.info.clone();
-                    let crop = self.crop;
-                    self.decode_service.borrow().render_full_page(page_info, crop, |_result| {
-                        // 解码完成后的回调处理
-                    });
+                    // 先检查缓存中是否已有该页面
+                    if self.decode_service.borrow().cache.get_page_image(page.info.index, page.info.scale).is_none() {
+                        // 只有当页面不在缓存中时才发送解码请求
+                        let page_info = page.info.clone();
+                        let crop = self.crop;
+                        self.decode_service.borrow().render_full_page(page_info, crop, |_result| {
+                            // 解码完成后的回调处理
+                        });
+                    }
                 }
             }
         }

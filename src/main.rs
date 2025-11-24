@@ -202,13 +202,13 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
     app.set_total_width(total_width);
     app.set_total_height(total_height);
 
-    let (offset_x, offset_y) = (-page_view_state.view_offset.0, -page_view_state.view_offset.1);
+    let (offset_x, offset_y) = (page_view_state.view_offset.0, page_view_state.view_offset.1);
     app.set_scroll_events_enabled(false);
     app.set_offset_x(offset_x);
     app.set_offset_y(offset_y);
     app.set_scroll_events_enabled(true);
     debug!(
-        "[Main] refresh_view.offset: ({}, {}), w-h: ({}, {})",
+        "[Main] refresh_view.offset: ({}, {}), total.w-h: ({}, {})",
         offset_x, offset_y, total_width, total_height
     );
 }
