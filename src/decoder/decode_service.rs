@@ -65,7 +65,15 @@ impl DecodeService {
                         .and_then(|decoder| {
                             decoder.render_page(&page_info, crop != 0)
                         });
-                    callback(result);
+
+                    if let Ok(image) = result {
+                        // 由于当前是在 process 阶段，无其他借用，可安全获取可变引用
+                        self.cache.put_page_image(page_info.index, page_info.scale, image);
+                        debug!("[DecodeService] 页面 {} 渲染并缓存完成", page_info.index);
+                    } else if let Err(e) = result {
+                        debug!("[DecodeService] 页面 {} 渲染失败: {}", page_info.index, e);
+                    }
+                    //callback(result);
                 }
             }
             true
