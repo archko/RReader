@@ -12,6 +12,7 @@ mod page;
 mod ui;
 
 use page::{PageViewState, Orientation};
+use cache::PageCache;
 
 slint::include_modules!();
 
@@ -148,12 +149,23 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
     let rendered_pages = page_view_state.visible_pages
         .iter()
         .filter_map(|&idx| page_view_state.pages.get(idx))
-        .map(|page| PageData {
-            x: page.bounds.left,
-            y: page.bounds.top,
-            width: page.width,
-            height: page.height,
-            image: slint::Image::default(), // 实际应用中需要从解码服务获取图像
+        .map(|page| {
+            // 尝试从缓存获取图像，如果不存在则使用默认图像
+            let image = {
+                if let Some(cached_image) = page_view_state.decode_service.borrow().cache.get_page_image(page.info.index, page.info.scale) {
+                    convert_to_slint_image(&(*cached_image))
+                } else {
+                    slint::Image::default()
+                }
+            };
+            
+            PageData {
+                x: page.bounds.left,
+                y: page.bounds.top,
+                width: page.width,
+                height: page.height,
+                image,
+            }
         })
         .collect::<Vec<_>>();
 

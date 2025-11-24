@@ -19,7 +19,7 @@ pub struct PageViewState {
     pub pages: Vec<Page>,
 
     /// 解码服务
-    decode_service: Rc<RefCell<DecodeService>>,
+    pub decode_service: Rc<RefCell<DecodeService>>,
 
     /// 滚动方向
     pub orientation: Orientation,

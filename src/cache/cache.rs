@@ -133,12 +133,12 @@ impl PageCache {
 
 impl Default for ImageCache {
     fn default() -> Self {
-        Self::new(100) // 默认最大100张图片
+        Self::new(10)
     }
 }
 
 impl Default for PageCache {
     fn default() -> Self {
-        Self::new(50, 200) // 默认50张页面图片，200张缩略图
+        Self::new(8, 20)
     }
 }

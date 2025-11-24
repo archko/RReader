@@ -21,7 +21,7 @@ pub enum DecodeRequest {
 
 pub struct DecodeService {
     pub(crate) decoder: Option<Rc<dyn Decoder>>,
-    cache: Rc<PageCache>,
+    pub cache: Rc<PageCache>,
     request_queue: RefCell<VecDeque<DecodeRequest>>,
 }
 
@@ -29,7 +29,7 @@ impl DecodeService {
     pub fn new() -> Self {
         Self {
             decoder: None,
-            cache: Rc::new(PageCache::new(80, 200)),
+            cache: Rc::new(PageCache::new(8, 20)),
             request_queue: RefCell::new(VecDeque::new()),
         }
     }
