@@ -52,6 +52,11 @@ impl PageNode {
             self.bounds.bottom * page_height + y_offset,
         )
     }
+    
+    // 检查是否需要解码
+    pub fn needs_decoding(&self) -> bool {
+        self.bitmap.is_none() && !self.is_decoding
+    }
 
     /// 回收资源
     pub fn recycle(&mut self) {

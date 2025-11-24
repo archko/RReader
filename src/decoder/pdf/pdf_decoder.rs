@@ -16,9 +16,13 @@ pub struct PdfDecoder {
 impl PdfDecoder {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         info!("[PDF] Opening document: {:?}", path.as_ref());
-        let document = Document::open(path.as_ref().to_str().unwrap())?;
+        let mut document = Document::open(path.as_ref().to_str().unwrap())?;
         let page_count = document.page_count()? as usize;
         debug!("[PDF] Document opened with {} pages", page_count);
+        let path_str = path.as_ref().to_string_lossy().to_lowercase();
+        if path_str.ends_with(".epub") || path_str.ends_with(".mobi") {
+            document.layout(1024.0, 1280.0, 35.0)?;
+        }
 
         // 预加载所有页面尺寸
         let mut pages_info = Vec::with_capacity(page_count);

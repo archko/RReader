@@ -112,7 +112,7 @@ fn setup_scroll_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewSt
     app.on_scroll_changed(move |offset_x, offset_y| {
         // 滚动处理
         {
-            //debug!("[Main] setup_scroll_handler, {offset_x}, {offset_y}");
+            debug!("[Main] setup_scroll_handler, {offset_x}, {offset_y}");
             let mut borrowed_state = page_view_state.borrow_mut();
             borrowed_state.update_offset(offset_x, offset_y);
             borrowed_state.update_visible_pages();
@@ -185,6 +185,7 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
                 width: page.width,
                 height: page.height,
                 image,
+                page_index: page.info.index as i32,
             }
         })
         .collect::<Vec<_>>();

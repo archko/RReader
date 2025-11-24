@@ -19,6 +19,12 @@ pub struct Page {
 
     /// 缩放后的高度
     pub height: f32,
+
+    /// 页面渲染的图片（缓存）
+    //pub image: Option<Arc<Image>>,
+
+    /// 是否正在解码
+    pub is_decoding: bool,
 }
 
 impl Page {
@@ -32,6 +38,8 @@ impl Page {
             links: Vec::new(),
             width,
             height,
+            //image: None,
+            is_decoding: false,
         };
         page.invalidate_nodes();
         page
@@ -61,6 +69,8 @@ impl Page {
             node.recycle();
         }
         self.nodes.clear();
+        //self.bitmap = None;
+        self.is_decoding = false;
     }
 
     /// 查找指定坐标的链接
@@ -75,6 +85,11 @@ impl Page {
                 && page_y >= link.bounds.top
                 && page_y <= link.bounds.bottom
         })
+    }
+    
+    // 检查是否需要解码
+    pub fn needs_decoding(&self) -> bool {
+        !self.is_decoding //&& self.bitmap.is_none()
     }
 }
 
