@@ -107,7 +107,7 @@ fn setup_scroll_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewSt
     app.on_scroll_changed(move |offset_x, offset_y| {
         // 滚动处理
         {
-            debug!("[Main] setup_scroll_handler, {offset_x}, {offset_y}");
+            //debug!("[Main] setup_scroll_handler, {offset_x}, {offset_y}");
             let mut borrowed_state = page_view_state.borrow_mut();
             borrowed_state.update_offset(offset_x, offset_y);
             borrowed_state.update_visible_pages();
@@ -168,7 +168,7 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
             // 尝试从缓存获取图像，如果不存在则使用默认图像
             let image = {
                 if let Some(cached_image) = page_view_state.decode_service.borrow().cache.get_page_image(page.info.index, page.info.scale) {
-                    convert_to_slint_image(&(*cached_image))
+                    (*cached_image).clone()
                 } else {
                     slint::Image::default()
                 }
@@ -184,10 +184,10 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
         })
         .collect::<Vec<_>>();
 
-    debug!(
+    /*debug!(
         "[Main] refresh_view {} page_models",
         rendered_pages.len()
-    );
+    );*/
     let model = Rc::new(VecModel::from(rendered_pages));
     app.set_document_pages(ModelRc::from(model));
     app.set_page_count(page_view_state.pages.len() as i32);
@@ -195,7 +195,7 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
 
     if let Some(first_visible) = page_view_state.get_first_visible_page() {
         app.set_current_page(first_visible as i32);
-        debug!("[Main] refresh_view set_current_page: {}", first_visible)
+        //debug!("[Main] refresh_view set_current_page: {}", first_visible)
     }
 
     let (total_width, total_height) = (page_view_state.total_width, page_view_state.total_height);
@@ -207,10 +207,10 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
     app.set_offset_x(offset_x);
     app.set_offset_y(offset_y);
     app.set_scroll_events_enabled(true);
-    debug!(
+    /*debug!(
         "[Main] refresh_view.offset: ({}, {}), total.w-h: ({}, {})",
         offset_x, offset_y, total_width, total_height
-    );
+    );*/
 }
 
 fn setup_back_to_history_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
@@ -226,20 +226,4 @@ fn setup_back_to_history_handler(app: &MainWindow, page_view_state: Rc<RefCell<P
         let mut borrowed_state = page_view_state.borrow_mut();
         borrowed_state.shutdown();
     });
-}
-
-fn convert_to_slint_image(image: &image::DynamicImage) -> slint::Image {
-    debug!(
-        "[STATE] Converting image with dimensions: {}x{}",
-        image.width(),
-        image.height()
-    );
-    let rgba_image = image.to_rgba8();
-    let (width, height) = rgba_image.dimensions();
-
-    let slint_image = slint::Image::from_rgba8_premultiplied(
-        slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&rgba_image, width, height),
-    );
-    //debug!("[STATE] Successfully converted image to Slint image");
-    slint_image
 }

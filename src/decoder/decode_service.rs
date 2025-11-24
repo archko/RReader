@@ -1,10 +1,12 @@
 use anyhow::Result;
 use image::DynamicImage;
+use std::time::Instant; // 新增：用于计时
+use slint::Image;
 use std::rc::Rc;
 use std::path::Path;
 use std::collections::VecDeque;
 use std::cell::RefCell;
-use log::debug;
+use log::{debug, info};
 
 use crate::cache::PageCache;
 use crate::decoder::{Decoder, PageInfo};
@@ -60,16 +62,19 @@ impl DecodeService {
         if let Some(request) = self.request_queue.borrow_mut().pop_front() {
             match request {
                 DecodeRequest::RenderFullPage { page_info, crop, callback } => {
+                    let start_time = Instant::now();
                     let result = self.decoder.as_ref()
                         .ok_or_else(|| anyhow::anyhow!("No decoder available"))
                         .and_then(|decoder| {
                             decoder.render_page(&page_info, crop != 0)
                         });
 
+                    let duration = start_time.elapsed();
                     if let Ok(image) = result {
-                        // 由于当前是在 process 阶段，无其他借用，可安全获取可变引用
-                        self.cache.put_page_image(page_info.index, page_info.scale, image);
-                        debug!("[DecodeService] 页面 {} 渲染并缓存完成", page_info.index);
+                        //self.cache.put_page_image(page_info.index, page_info.scale, image);
+                        let slint_image = Self::convert_to_slint_image(&image);
+                        self.cache.put_page_image(page_info.index, page_info.scale, slint_image);
+                        info!("[DecodeService] 页面 {} 渲染并缓存完成，耗时: {:?}", page_info.index, duration);
                     } else if let Err(e) = result {
                         debug!("[DecodeService] 页面 {} 渲染失败: {}", page_info.index, e);
                     }
@@ -102,5 +107,23 @@ impl DecodeService {
         self.request_queue.borrow_mut().clear();
         self.decoder = None;
         self.cache.clear();
+    }
+
+    pub fn convert_to_slint_image(image: &image::DynamicImage) -> slint::Image {
+        let start_time = Instant::now();
+        /*debug!(
+            "[STATE] Converting image with dimensions: {}x{}",
+            image.width(),
+            image.height()
+        );*/
+        let rgba_image = image.to_rgba8();
+        let (width, height) = rgba_image.dimensions();
+    
+        let slint_image = slint::Image::from_rgba8_premultiplied(
+            slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&rgba_image, width, height),
+        );
+        let duration = start_time.elapsed();
+        info!("[STATE] Successfully converted image to Slint image，耗时: {:?}", duration);
+        slint_image
     }
 }

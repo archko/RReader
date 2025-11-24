@@ -1,4 +1,4 @@
-use image::DynamicImage;
+use slint::Image;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -9,7 +9,7 @@ pub struct ImageCache {
 
 #[derive(Clone)]
 pub struct CachedImage {
-    pub image: Arc<DynamicImage>,
+    pub image: Arc<Image>,
     pub timestamp: std::time::Instant,
     pub access_count: u64,
 }
@@ -22,7 +22,7 @@ impl ImageCache {
         }
     }
 
-    pub fn get(&self, key: &str) -> Option<Arc<DynamicImage>> {
+    pub fn get(&self, key: &str) -> Option<Arc<Image>> {
         let mut cache = self.cache.lock().unwrap();
 
         if let Some(cached) = cache.get_mut(key) {
@@ -34,7 +34,7 @@ impl ImageCache {
         None
     }
 
-    pub fn put(&self, key: String, image: DynamicImage) -> Arc<DynamicImage> {
+    pub fn put(&self, key: String, image: Image) -> Arc<Image> {
         let mut cache = self.cache.lock().unwrap();
 
         // 如果缓存已满，清理最久未使用的项
@@ -100,7 +100,7 @@ impl PageCache {
         }
     }
 
-    pub fn get_page_image(&self, page_index: usize, zoom: f32) -> Option<Arc<DynamicImage>> {
+    pub fn get_page_image(&self, page_index: usize, zoom: f32) -> Option<Arc<Image>> {
         let key = format!("page_{}_{:.2}", page_index, zoom);
         self.image_cache.get(&key)
     }
@@ -109,18 +109,18 @@ impl PageCache {
         &self,
         page_index: usize,
         zoom: f32,
-        image: DynamicImage,
-    ) -> Arc<DynamicImage> {
+        image: Image,
+    ) -> Arc<Image> {
         let key = format!("page_{}_{:.2}", page_index, zoom);
         self.image_cache.put(key, image)
     }
 
-    pub fn get_thumbnail(&self, page_index: usize) -> Option<Arc<DynamicImage>> {
+    pub fn get_thumbnail(&self, page_index: usize) -> Option<Arc<Image>> {
         let key = format!("thumb_{}", page_index);
         self.thumbnail_cache.get(&key)
     }
 
-    pub fn put_thumbnail(&self, page_index: usize, image: DynamicImage) -> Arc<DynamicImage> {
+    pub fn put_thumbnail(&self, page_index: usize, image: Image) -> Arc<Image> {
         let key = format!("thumb_{}", page_index);
         self.thumbnail_cache.put(key, image)
     }

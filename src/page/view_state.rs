@@ -145,10 +145,10 @@ impl PageViewState {
             page.info.scale = scale;
 
             current_y += scaled_height;
-            debug!(
+            /*debug!(
                 "[PageViewState] layout_vertical pages_len:{} view_size:{:?}, offset:{:?}, w-h:{:?}-{:?}",
                 page.info.index, self.view_size, self.view_offset, scaled_width, scaled_height
-            );
+            );*/
         }
 
         debug!(
@@ -187,10 +187,10 @@ impl PageViewState {
 
     /// 更新可见页面列表
     pub fn update_visible_pages(&mut self) {
-        debug!(
+        /*debug!(
             "[PageViewState] update_visible_pages pages_len:{} view_size:{:?} offset:{:?}",
             self.pages.len(), self.view_size, self.view_offset
-        );
+        );*/
         self.visible_pages.clear();
 
         let (offset_x, offset_y) = self.view_offset;
@@ -221,10 +221,10 @@ impl PageViewState {
         // 使用二分查找优化
         let first = self.find_first_visible(&visible_rect);
         let last = self.find_last_visible(&visible_rect);
-        debug!(
+        /*debug!(
             "[PageViewState] update_visible_pages first:{}, last:{}, rect:{:?}",
             first, last, visible_rect
-        );
+        );*/
 
         if first <= last && first < self.pages.len() {
             for i in first..=last.min(self.pages.len() - 1) {
