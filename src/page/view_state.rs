@@ -308,6 +308,7 @@ impl PageViewState {
             Orientation::Horizontal => (-page.bounds.left, self.view_offset.1),
         };
 
+        self.view_offset = new_offset;
         Some(new_offset)
     }
 

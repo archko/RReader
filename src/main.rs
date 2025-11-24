@@ -107,6 +107,7 @@ fn setup_scroll_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewSt
     app.on_scroll_changed(move |offset_x, offset_y| {
         // 滚动处理
         {
+            debug!("[Main] setup_scroll_handler, {offset_x}, {offset_y}");
             let mut borrowed_state = page_view_state.borrow_mut();
             borrowed_state.update_offset(offset_x, offset_y);
             borrowed_state.update_visible_pages();
@@ -194,6 +195,7 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
 
     if let Some(first_visible) = page_view_state.get_first_visible_page() {
         app.set_current_page(first_visible as i32);
+        debug!("[Main] refresh_view set_current_page: {}", first_visible)
     }
 
     let (total_width, total_height) = (page_view_state.total_width, page_view_state.total_height);
@@ -205,6 +207,10 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
     app.set_offset_x(offset_x);
     app.set_offset_y(offset_y);
     app.set_scroll_events_enabled(true);
+    debug!(
+        "[Main] refresh_view.offset: ({}, {}), w-h: ({}, {})",
+        offset_x, offset_y, total_width, total_height
+    );
 }
 
 fn setup_back_to_history_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
@@ -234,6 +240,6 @@ fn convert_to_slint_image(image: &image::DynamicImage) -> slint::Image {
     let slint_image = slint::Image::from_rgba8_premultiplied(
         slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&rgba_image, width, height),
     );
-    debug!("[STATE] Successfully converted image to Slint image");
+    //debug!("[STATE] Successfully converted image to Slint image");
     slint_image
 }
