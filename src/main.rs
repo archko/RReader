@@ -66,6 +66,8 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
                         let mut borrowed_state = page_view_state.borrow_mut();
                         let width = borrowed_state.view_size.0;
                         let height = borrowed_state.view_size.1;
+                        //重置页面位置
+                        borrowed_state.update_offset(0.0, 0.0);
                         borrowed_state.update_view_size(
                             width, 
                             height, 

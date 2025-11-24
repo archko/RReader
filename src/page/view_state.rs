@@ -68,6 +68,7 @@ impl PageViewState {
 
     /// 打开文档
     pub fn open_document<P: AsRef<Path>>(&mut self, path: P) -> anyhow::Result<()> {
+        Self::reset(self);
         self.decode_service.borrow_mut().load_pdf(path)?;
         // 获取解码器并初始化页面
         if let Some(decoder) = self.decode_service.borrow().decoder.clone() {
@@ -79,6 +80,14 @@ impl PageViewState {
             self.pages = pages;
         }
         Ok(())
+    }
+
+    pub fn reset(&mut self) {
+        debug!("[PageViewState] reset");
+        self.pages.clear();
+        self.total_width = 0.0;
+        self.total_height = 0.0;
+        self.visible_pages.clear();
     }
 
     /// 更新视图尺寸和缩放
