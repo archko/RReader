@@ -24,18 +24,18 @@ async fn main() -> Result<()> {
     let app = MainWindow::new()?;
     let page_view_state: Rc<RefCell<PageViewState>> = Rc::new(RefCell::new(PageViewState::new(Orientation::Vertical, 0)));
 
-    setup_open_handler(&app, Rc::downgrade(&page_view_state));
-    setup_viewport_handler(&app, Rc::downgrade(&page_view_state));
-    setup_scroll_handler(&app, Rc::downgrade(&page_view_state));
-    setup_page_handler(&app, Rc::downgrade(&page_view_state));
-    setup_zoom_handler(&app, Rc::downgrade(&page_view_state));
-    setup_back_to_history_handler(&app, Rc::downgrade(&page_view_state));
+    setup_open_handler(&app, page_view_state.clone());
+    setup_viewport_handler(&app, page_view_state.clone());
+    setup_scroll_handler(&app, page_view_state.clone());
+    setup_page_handler(&app, page_view_state.clone());
+    setup_zoom_handler(&app, page_view_state.clone());
+    setup_back_to_history_handler(&app, page_view_state.clone());
 
     app.run()?;
     Ok(())
 }
 
-fn setup_open_handler(app: &MainWindow, page_view_state: Weak<RefCell<PageViewState>>) {
+fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
     let weak_app = app.as_weak();
 
     app.on_open_file(move || {
@@ -52,99 +52,101 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Weak<RefCell<PageViewSt
                 app.set_file_path(path.to_string_lossy().to_string().into());
             }
             
-            if let Some(state) = page_view_state.upgrade() {
-                match state.borrow_mut().open_document(&path) {
-                    Ok(_) => {
-                        if let Some(app) = weak_app.upgrade() {
-                            app.set_zoom(1.0);
-                            app.set_document_opened(true);
-                        }
+            let open_result = page_view_state.borrow_mut().open_document(&path);
+            match open_result {
+                Ok(_) => {
+                    if let Some(app) = weak_app.upgrade() {
+                        app.set_zoom(1.0);
+                        app.set_document_opened(true);
                     }
-                    Err(err) => {
-                        error!("Failed to open PDF: {err}");
+                    
+                    // 文档打开后立即刷新视图
+                    if let Some(app) = weak_app.upgrade() {
+                        refresh_view(&app, &page_view_state.borrow());
                     }
+                }
+                Err(err) => {
+                    error!("Failed to open PDF: {err}");
                 }
             }
         }
     });
 }
 
-fn setup_viewport_handler(app: &MainWindow, page_view_state: Weak<RefCell<PageViewState>>) {
+fn setup_viewport_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
     let weak_app = app.as_weak();
     app.on_viewport_changed(move |width, height| {
-        if let Some(state) = page_view_state.upgrade() {
-            // 视口变化处理
-            {
-                let mut borrowed_state = state.borrow_mut();
-                let zoom = borrowed_state.zoom;
-                borrowed_state.update_view_size(width, height, zoom);
-                borrowed_state.update_visible_pages();
-            }
-            
-            if let Some(app) = weak_app.upgrade() {
-                refresh_view(&app, &state.borrow());
-            }
+        // 视口变化处理
+        {
+            let mut borrowed_state = page_view_state.borrow_mut();
+            let zoom = borrowed_state.zoom;
+            borrowed_state.update_view_size(width, height, zoom);
+            borrowed_state.update_visible_pages();
+        }
+        debug!("[Main] setup_viewport_handler");
+        if let Some(app) = weak_app.upgrade() {
+            refresh_view(&app, &page_view_state.borrow());
         }
     });
 }
 
-fn setup_scroll_handler(app: &MainWindow, page_view_state: Weak<RefCell<PageViewState>>) {
+fn setup_scroll_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
     let weak_app = app.as_weak();
     app.on_scroll_changed(move |offset_x, offset_y| {
-        if let Some(state) = page_view_state.upgrade() {
-            // 滚动处理
-            {
-                let mut borrowed_state = state.borrow_mut();
-                borrowed_state.update_offset(offset_x, offset_y);
-                borrowed_state.update_visible_pages();
-            }
-            
-            if let Some(app) = weak_app.upgrade() {
-                refresh_view(&app, &state.borrow());
-            }
+        // 滚动处理
+        {
+            let mut borrowed_state = page_view_state.borrow_mut();
+            borrowed_state.update_offset(offset_x, offset_y);
+            borrowed_state.update_visible_pages();
+        }
+        
+        if let Some(app) = weak_app.upgrade() {
+            refresh_view(&app, &page_view_state.borrow());
         }
     });
 }
 
-fn setup_page_handler(app: &MainWindow, page_view_state: Weak<RefCell<PageViewState>>) {
+fn setup_page_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
     let weak_app = app.as_weak();
     app.on_page_changed(move |page_index| {
-        if let Some(state) = page_view_state.upgrade() {
-            // 页面跳转处理
-            {
-                let mut borrowed_state = state.borrow_mut();
-                if borrowed_state.jump_to_page(page_index as usize).is_some() {
-                    borrowed_state.update_visible_pages();
-                    
-                    if let Some(app) = weak_app.upgrade() {
-                        refresh_view(&app, &*borrowed_state);
-                    }
+        // 页面跳转处理
+        {
+            let mut borrowed_state = page_view_state.borrow_mut();
+            if borrowed_state.jump_to_page(page_index as usize).is_some() {
+                borrowed_state.update_visible_pages();
+                
+                if let Some(app) = weak_app.upgrade() {
+                    refresh_view(&app, &*borrowed_state);
                 }
             }
         }
     });
 }
 
-fn setup_zoom_handler(app: &MainWindow, page_view_state: Weak<RefCell<PageViewState>>) {
+fn setup_zoom_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
     let weak_app = app.as_weak();
     app.on_zoom_changed(move |zoom| {
-        if let Some(state) = page_view_state.upgrade() {
-            // 缩放处理
-            {
-                let mut borrowed_state = state.borrow_mut();
-                let (view_width, view_height) = borrowed_state.view_size;
-                borrowed_state.update_view_size(view_width, view_height, zoom);
-                borrowed_state.update_visible_pages();
-            }
-            
-            if let Some(app) = weak_app.upgrade() {
-                refresh_view(&app, &state.borrow());
-            }
+        // 缩放处理
+        {
+            let mut borrowed_state = page_view_state.borrow_mut();
+            let (view_width, view_height) = borrowed_state.view_size;
+            borrowed_state.update_view_size(view_width, view_height, zoom);
+            borrowed_state.update_visible_pages();
+        }
+        
+        if let Some(app) = weak_app.upgrade() {
+            refresh_view(&app, &page_view_state.borrow());
         }
     });
 }
 
 fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
+    let mut state = page_view_state;
+    if state.pages.is_empty() {
+        debug!("[Main] No pages to refresh");
+        return;
+    }
+
     // 刷新视图显示
     let rendered_pages = page_view_state.visible_pages
         .iter()
@@ -193,7 +195,7 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
     app.set_scroll_events_enabled(true);
 }
 
-fn setup_back_to_history_handler(app: &MainWindow, page_view_state: Weak<RefCell<PageViewState>>) {
+fn setup_back_to_history_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
     let weak_app = app.as_weak();
     app.on_back_to_history(move || {
         // 清空文件路径
@@ -202,13 +204,9 @@ fn setup_back_to_history_handler(app: &MainWindow, page_view_state: Weak<RefCell
             app.set_document_opened(false);
         }
         
-        if let Some(state) = page_view_state.upgrade() {
-            {
-                // 重置页面状态
-                let mut borrowed_state = state.borrow_mut();
-                borrowed_state.shutdown();
-            }
-        }
+        // 重置页面状态
+        let mut borrowed_state = page_view_state.borrow_mut();
+        borrowed_state.shutdown();
     });
 }
 

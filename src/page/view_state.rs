@@ -72,9 +72,9 @@ impl PageViewState {
         // 获取解码器并初始化页面
         if let Some(decoder) = self.decode_service.borrow().decoder.clone() {
             let pages_info = decoder.get_all_pages()?;
-            let pages = pages_info
+            let pages: Vec<Page> = pages_info
                 .into_iter()
-                .map(|info| Page::new(info, 0.0, 0.0, 0.0, 0.0))
+                .map(|info: crate::decoder::PageInfo| Page::new(info, 0.0, 0.0, 0.0, 0.0))
                 .collect();
             self.pages = pages;
         }
@@ -334,6 +334,8 @@ impl PageViewState {
 
     /// 回收资源
     pub fn shutdown(&mut self) {
+        debug!("[PageViewState] shutdown");
+
         for page in &mut self.pages {
             page.recycle();
         }
