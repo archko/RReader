@@ -111,15 +111,9 @@ fn setup_scroll_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewSt
     let weak_app = app.as_weak();
     app.on_scroll_changed(move |offset_x, offset_y| {
         // 滚动处理
-        {
-            debug!("[Main] setup_scroll_handler, {offset_x}, {offset_y}");
-            let mut borrowed_state = page_view_state.borrow_mut();
-            borrowed_state.update_offset(offset_x, offset_y);
-            borrowed_state.update_visible_pages();
-        }
-        
         if let Some(app) = weak_app.upgrade() {
-            refresh_view(&app, &page_view_state.borrow());
+            debug!("[Main] setup_scroll_handler, {offset_x}, {offset_y}");
+            update_view_offset(&app, &mut page_view_state.borrow_mut(), offset_x, offset_y);
         }
     });
 }
@@ -241,18 +235,13 @@ fn setup_page_down_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageVie
             let viewport_height = app.get_viewport_height();
             let current_offset_y = app.get_offset_y();
             
-            // 向下翻页（增加Y轴偏移量）
+            // 向下翻页（减少Y轴偏移量）,开始偏移量是0,
             let offset_y = current_offset_y - viewport_height + 16.0;
             let offset_x = app.get_offset_x();
 
             debug!("[Main] on_page_down, {offset_x}, {current_offset_y}, {offset_y}, height:{viewport_height}");
-            let mut borrowed_state = page_view_state.borrow_mut();
-            borrowed_state.update_offset(offset_x, offset_y);
-            borrowed_state.update_visible_pages();
-        }
 
-        if let Some(app) = weak_app.upgrade() {
-            refresh_view(&app, &page_view_state.borrow());
+            update_view_offset(&app, &mut page_view_state.borrow_mut(), offset_x, offset_y);
         }
     });
 }
@@ -264,18 +253,22 @@ fn setup_page_up_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewS
             let viewport_height = app.get_viewport_height();
             let current_offset_y = app.get_offset_y();
             
-            // 向下翻页（增加Y轴偏移量）
+            // 向上翻页（增加Y轴偏移量）
             let offset_y = current_offset_y + viewport_height - 16.0;
             let offset_x = app.get_offset_x();
 
             debug!("[Main] on_page_up, {offset_x}, {current_offset_y}, {offset_y}, height:{viewport_height}");
-            let mut borrowed_state = page_view_state.borrow_mut();
-            borrowed_state.update_offset(offset_x, offset_y);
-            borrowed_state.update_visible_pages();
-        }
 
-        if let Some(app) = weak_app.upgrade() {
-            refresh_view(&app, &page_view_state.borrow());
+            update_view_offset(&app, &mut page_view_state.borrow_mut(), offset_x, offset_y);
         }
     });
+}
+
+fn update_view_offset(app: &MainWindow, page_view_state: &mut PageViewState, offset_x:f32, offset_y:f32) {
+    //debug!("[Main] update_view_offset, {offset_x}, {offset_y}");
+    let mut borrowed_state = page_view_state;
+    borrowed_state.update_offset(offset_x, offset_y);
+    borrowed_state.update_visible_pages();
+
+    refresh_view(&app, borrowed_state);
 }
