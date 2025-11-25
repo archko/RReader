@@ -21,7 +21,7 @@ impl PdfDecoder {
         debug!("[PDF] Document opened with {} pages", page_count);
         let path_str = path.as_ref().to_string_lossy().to_lowercase();
         if path_str.ends_with(".epub") || path_str.ends_with(".mobi") {
-            document.layout(1024.0, 1280.0, 35.0)?;
+            document.layout(1024.0, 1280.0, 25.0)?;
         }
 
         // 预加载所有页面尺寸
