@@ -38,6 +38,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// 打开文档事件
 fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
     let weak_app = app.as_weak();
 
@@ -90,6 +91,7 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
     });
 }
 
+/// 视图创建事件
 fn setup_viewport_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
     let weak_app = app.as_weak();
     app.on_viewport_changed(move |width, height| {
@@ -107,10 +109,10 @@ fn setup_viewport_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageView
     });
 }
 
+/// 滚动处理
 fn setup_scroll_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
     let weak_app = app.as_weak();
     app.on_scroll_changed(move |offset_x, offset_y| {
-        // 滚动处理
         if let Some(app) = weak_app.upgrade() {
             debug!("[Main] setup_scroll_handler, {offset_x}, {offset_y}");
             update_view_offset(&app, &mut page_view_state.borrow_mut(), offset_x, offset_y);
@@ -118,10 +120,10 @@ fn setup_scroll_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewSt
     });
 }
 
+/// 页面跳转处理
 fn setup_page_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
     let weak_app = app.as_weak();
     app.on_page_changed(move |page_index| {
-        // 页面跳转处理
         {
             let mut borrowed_state = page_view_state.borrow_mut();
             if borrowed_state.jump_to_page(page_index as usize).is_some() {
@@ -135,10 +137,10 @@ fn setup_page_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
     });
 }
 
+/// 缩放处理
 fn setup_zoom_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
     let weak_app = app.as_weak();
     app.on_zoom_changed(move |zoom| {
-        // 缩放处理
         {
             let mut borrowed_state = page_view_state.borrow_mut();
             let (view_width, view_height) = borrowed_state.view_size;
@@ -152,6 +154,7 @@ fn setup_zoom_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
     });
 }
 
+/// 刷新视图显示
 fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
     let state = page_view_state;
     if state.pages.is_empty() {
@@ -159,7 +162,6 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
         return;
     }
 
-    // 刷新视图显示
     let rendered_pages = page_view_state.visible_pages
         .iter()
         .filter_map(|&idx| page_view_state.pages.get(idx))
@@ -228,6 +230,7 @@ fn setup_back_to_history_handler(app: &MainWindow, page_view_state: Rc<RefCell<P
     });
 }
 
+/// 向下翻页（减少Y轴偏移量）,开始偏移量是0,
 fn setup_page_down_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
     let weak_app = app.as_weak();
     app.on_page_down(move || {
@@ -235,7 +238,6 @@ fn setup_page_down_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageVie
             let viewport_height = app.get_viewport_height();
             let current_offset_y = app.get_offset_y();
             
-            // 向下翻页（减少Y轴偏移量）,开始偏移量是0,
             let offset_y = current_offset_y - viewport_height + 16.0;
             let offset_x = app.get_offset_x();
 
@@ -246,6 +248,7 @@ fn setup_page_down_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageVie
     });
 }
 
+/// 向上翻页（增加Y轴偏移量）
 fn setup_page_up_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
     let weak_app = app.as_weak();
     app.on_page_up(move || {
@@ -253,7 +256,6 @@ fn setup_page_up_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewS
             let viewport_height = app.get_viewport_height();
             let current_offset_y = app.get_offset_y();
             
-            // 向上翻页（增加Y轴偏移量）
             let offset_y = current_offset_y + viewport_height - 16.0;
             let offset_x = app.get_offset_x();
 
@@ -266,9 +268,8 @@ fn setup_page_up_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewS
 
 fn update_view_offset(app: &MainWindow, page_view_state: &mut PageViewState, offset_x:f32, offset_y:f32) {
     //debug!("[Main] update_view_offset, {offset_x}, {offset_y}");
-    let mut borrowed_state = page_view_state;
-    borrowed_state.update_offset(offset_x, offset_y);
-    borrowed_state.update_visible_pages();
+    page_view_state.update_offset(offset_x, offset_y);
+    page_view_state.update_visible_pages();
 
-    refresh_view(&app, borrowed_state);
+    refresh_view(&app, page_view_state);
 }
