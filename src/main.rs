@@ -242,14 +242,17 @@ fn setup_page_down_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageVie
             let current_offset_y = app.get_offset_y();
             
             // 向下翻页（增加Y轴偏移量）
-            let new_offset_y = current_offset_y + viewport_height - 10.0;
-            
-            app.set_offset_y(new_offset_y);
-            
-            // 触发滚动事件
-            if let Some(app) = weak_app.upgrade() {
-                app.invoke_scroll_changed(app.get_offset_x(), new_offset_y);
-            }
+            let offset_y = current_offset_y - viewport_height + 16.0;
+            let offset_x = app.get_offset_x();
+
+            debug!("[Main] on_page_down, {offset_x}, {current_offset_y}, {offset_y}, height:{viewport_height}");
+            let mut borrowed_state = page_view_state.borrow_mut();
+            borrowed_state.update_offset(offset_x, offset_y);
+            borrowed_state.update_visible_pages();
+        }
+
+        if let Some(app) = weak_app.upgrade() {
+            refresh_view(&app, &page_view_state.borrow());
         }
     });
 }
@@ -261,15 +264,18 @@ fn setup_page_up_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewS
             let viewport_height = app.get_viewport_height();
             let current_offset_y = app.get_offset_y();
             
-            // 向上翻页（减少Y轴偏移量，但不低于0）
-            let new_offset_y = (current_offset_y - viewport_height + 10.0).max(0.0);
-            
-            app.set_offset_y(new_offset_y);
-            
-            // 触发滚动事件
-            if let Some(app) = weak_app.upgrade() {
-                app.invoke_scroll_changed(app.get_offset_x(), new_offset_y);
-            }
+            // 向下翻页（增加Y轴偏移量）
+            let offset_y = current_offset_y + viewport_height - 16.0;
+            let offset_x = app.get_offset_x();
+
+            debug!("[Main] on_page_up, {offset_x}, {current_offset_y}, {offset_y}, height:{viewport_height}");
+            let mut borrowed_state = page_view_state.borrow_mut();
+            borrowed_state.update_offset(offset_x, offset_y);
+            borrowed_state.update_visible_pages();
+        }
+
+        if let Some(app) = weak_app.upgrade() {
+            refresh_view(&app, &page_view_state.borrow());
         }
     });
 }
