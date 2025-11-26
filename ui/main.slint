@@ -23,19 +23,21 @@ component DocumentView inherits Rectangle {
     in-out property <length> offset-y: 0px;
     in property <bool> enable-scroll-events: true;
     in-out property <length> viewport-height: 0px;
-    
+
     callback viewport-changed(length, length);
     callback scroll-changed(length, length);
     callback page-down();
     callback page-up();
-    
+
     background: #fafafa;
     border-width: 1px;
     border-color: #e0e0e0;
     clip: true;
-    
+
     property <length> last-visible-width: 0px;
     property <length> last-visible-height: 0px;
+    property <length> desired_offset_x: 0px;
+    property <length> desired_offset_y: 0px;
     
     scroller := ScrollView {
         width: root.width;
@@ -72,7 +74,13 @@ component DocumentView inherits Rectangle {
         
         scrolled => {
             if (root.enable-scroll-events) {
-                root.scroll-changed(scroller.viewport-x, scroller.viewport-y);
+                root.desired_offset_x = scroller.viewport-x;
+                root.desired_offset_y = scroller.viewport-y;
+                if (!scroll_timer.running) {
+                    scroll_timer.running = true;
+                } else {
+                    scroll_timer.restart();
+                }
             }
         }
     }
@@ -104,6 +112,15 @@ component DocumentView inherits Rectangle {
                 root.viewport-changed(scroller.visible-width, scroller.visible-height);
             }
             viewport_timer.restart();
+        }
+    }
+
+    scroll_timer := Timer {
+        interval: 100ms;
+        running: false;
+        triggered => {
+            scroll-changed(root.desired_offset_x, root.desired_offset_y);
+            self.running = false;
         }
     }
 }
