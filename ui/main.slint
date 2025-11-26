@@ -102,7 +102,7 @@ component DocumentView inherits Rectangle {
     }
     
     viewport_timer := Timer {
-        interval: 120ms;
+        interval: 200ms;
         running: true;
         triggered => {
             if (root.last-visible-width != scroller.visible-width || root.last-visible-height != scroller.visible-height) {
@@ -116,7 +116,7 @@ component DocumentView inherits Rectangle {
     }
 
     scroll_timer := Timer {
-        interval: 100ms;
+        interval: 200ms;
         running: false;
         triggered => {
             scroll-changed(root.desired_offset_x, root.desired_offset_y);
@@ -189,7 +189,7 @@ export component MainWindow inherits Window {
     title: "PDF Reader";
     width: 1024px;
     height: 768px;
-    
+
     in property <int> page-count: 0;
     in-out property <int> current-page: 0;
     in-out property <float> zoom: 1.0;
@@ -203,6 +203,7 @@ export component MainWindow inherits Window {
     in property <bool> document-opened: false;
     in property <[UIRecent]> history-items: [];
     in-out property <length> viewport-height: 0px;
+    in-out property <bool> outline-visible: false;
     
     callback open-file();
     callback page-changed(int);
@@ -295,6 +296,8 @@ export component MainWindow inherits Window {
                         padding: 12px;
                         spacing: 8px;
 
+
+
                         Button {
                             text: "Previous";
                             enabled: root.current-page > 0;
@@ -336,44 +339,52 @@ export component MainWindow inherits Window {
                 }
             }
             
-            doc_view := DocumentView {
+            HorizontalLayout {
                 vertical-stretch: 1;
-                min-height: 0px;
-                pages: root.document-pages;
-                total-width: root.total-width;
-                total-height: root.total-height;
-                offset-x <=> root.offset-x;
-                offset-y <=> root.offset-y;
-                enable-scroll-events: root.scroll-events-enabled;
-                viewport-height <=> root.viewport-height;
-                viewport-changed(width, height) => { root.viewport-changed(width, height); }
-                scroll-changed(x, y) => { root.scroll-changed(x, y); }
-                page-down() => { root.page-down(); }
-                page-up() => { root.page-up(); }
-            }
-        }
 
-        ListView {
-            visible:false;
-            width: 150px;
-            for data in [
-            { text: "Blue", color: #0000ff, bg: #eeeeee},
-            { text: "Red", color: #ff0000, bg: #eeeeee},
-            { text: "Green", color: #00ff00, bg: #eeeeee},
-            { text: "Yellow", color: #ffff00, bg: #222222 },
-            { text: "Black", color: #000000, bg: #eeeeee },
-            { text: "White", color: #ffffff, bg: #222222 },
-            { text: "Magenta", color: #ff00ff, bg: #eeeeee },
-            { text: "Cyan", color: #00ffff, bg: #222222 },
-            ] : Rectangle {
-            height: 30px;
-            background: data.bg;
-            width: parent.width;
-            Text {
-                x: 0;
-                text: data.text;
-                color: data.color;
-            }
+                if root.outline-visible: ListView {
+                    width: 150px;
+                    for data in [
+                    { text: "Blue", color: #0000ff, bg: #eeeeee},
+                    { text: "Red", color: #ff0000, bg: #eeeeee},
+                    { text: "Green", color: #00ff00, bg: #eeeeee},
+                    { text: "Yellow", color: #ffff00, bg: #222222 },
+                    { text: "Black", color: #000000, bg: #eeeeee },
+                    { text: "White", color: #ffffff, bg: #222222 },
+                    { text: "Magenta", color: #ff00ff, bg: #eeeeee },
+                    { text: "Cyan", color: #00ffff, bg: #222222 },
+                    ] : Rectangle {
+                    height: 30px;
+                    background: data.bg;
+                    width: parent.width;
+                    Text {
+                        x: 0;
+                        text: data.text;
+                        color: data.color;
+                    }
+                    }
+                }
+
+                Button {
+                    width: 16px;
+                    text: root.outline-visible ? "▶" : "◀";
+                    clicked => { outline-visible = !outline-visible; }
+                }
+
+                doc_view := DocumentView {
+                    horizontal-stretch: 1;
+                    pages: root.document-pages;
+                    total-width: root.total-width;
+                    total-height: root.total-height;
+                    offset-x <=> root.offset-x;
+                    offset-y <=> root.offset-y;
+                    enable-scroll-events: root.scroll-events-enabled;
+                    viewport-height <=> root.viewport-height;
+                    viewport-changed(width, height) => { root.viewport-changed(width, height); }
+                    scroll-changed(x, y) => { root.scroll-changed(x, y); }
+                    page-down() => { root.page-down(); }
+                    page-up() => { root.page-up(); }
+                }
             }
         }
     }
