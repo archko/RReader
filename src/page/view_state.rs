@@ -1,3 +1,4 @@
+use image::DynamicImage;
 use log::debug;
 
 use super::Page;
@@ -23,6 +24,9 @@ pub enum Orientation {
 pub struct PageViewState {
     /// 页面缓存
     pub cache: Arc<Mutex<PageCache>>,
+
+    /// 缓存更新队列，用于从监听线程接收数据
+    pub cache_updates: Arc<Mutex<Vec<(String, DynamicImage)>>>,
 
     /// 所有页面
     pub pages: Rc<RefCell<Vec<Page>>>,
@@ -62,20 +66,28 @@ impl PageViewState {
     pub fn new(orientation: Orientation, crop: i32) -> Self {
         let cache = Arc::new(Mutex::new(PageCache::new(168, 10)));
         let decode_service = Rc::new(RefCell::new(DecodeService::new()));
+        let cache_updates = Arc::new(Mutex::new(Vec::<(String, DynamicImage)>::new()));
 
         // 启动异步监听
         let result_rx = decode_service.borrow_mut().take_result_rx();
-        let cache_clone = Arc::clone(&cache);
-        tokio::spawn(async move {
-            while let Some(result) = result_rx.recv().await {
-                if let Ok((key, image)) = result {
-                    cache_clone.lock().unwrap().put_thumbnail(key, convert_to_slint_image(&image));
+        let cache_updates_clone = Arc::clone(&cache_updates);
+
+        std::thread::spawn(move || {
+            loop {
+                if let Ok(result) = result_rx.recv() {
+                    if let Ok((key, image)) = result {
+                        // 推送数据到队列
+                        cache_updates_clone.lock().unwrap().push((key, image));
+                    }
+                } else {
+                    break; // channel closed
                 }
             }
         });
 
         Self {
             cache,
+            cache_updates,
             pages: Rc::new(RefCell::new(Vec::new())),
             decode_service,
             orientation,
@@ -277,6 +289,13 @@ impl PageViewState {
                     }
                 }
             }
+        }
+
+        // 处理缓存更新队列
+        let mut updates = self.cache_updates.lock().unwrap();
+        for (key, image) in updates.drain(..) {
+            let slint_image = convert_to_slint_image(&image);
+            self.cache.lock().unwrap().put_thumbnail(key, slint_image);
         }
     }
 
