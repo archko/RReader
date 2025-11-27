@@ -1,5 +1,6 @@
 use image::{DynamicImage, ImageBuffer, Rgba};
 use mupdf::{Matrix, Pixmap};
+use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
 /*#[derive(Clone)]
 pub struct PdfConfig {
@@ -60,4 +61,22 @@ pub fn mupdf_to_image(pixmap: &Pixmap) -> DynamicImage {
     }
 
     DynamicImage::ImageRgba8(img_buffer)
+}
+
+pub fn convert_to_slint_image(image: &image::DynamicImage) -> Image {
+    //let start_time = Instant::now();
+    /*debug!(
+        "[STATE] Converting image with dimensions: {}x{}",
+        image.width(),
+        image.height()
+    );*/
+    let rgba_image = image.to_rgba8();
+    let (width, height) = rgba_image.dimensions();
+
+    let slint_image = Image::from_rgba8_premultiplied(
+        SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&rgba_image, width, height),
+    );
+    //let duration = start_time.elapsed();
+    //info!("[STATE] Successfully converted image to Slint image，耗时: {:?}", duration);
+    slint_image
 }

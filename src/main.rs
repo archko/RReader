@@ -172,8 +172,8 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
                 page.info.index, page.info.width, page.info.height
             );
             let image = {
-                if let Some(cached_image) = page_view_state.decode_service.borrow().cache.get_thumbnail(&key) {
-                    (*cached_image).clone()
+                if let Some(cached_image) = page_view_state.cache.get_thumbnail(&key) {
+                    cached_image.as_ref().clone()
                 } else {
                     slint::Image::default()
                 }

@@ -1,8 +1,10 @@
 use log::debug;
 
 use super::Page;
+use crate::cache::PageCache;
 use crate::decoder::decode_service::DecodeTask;
-use crate::decoder::{DecodeService, Rect};
+use crate::decoder::pdf::utils::convert_to_slint_image;
+use crate::decoder::{DecodeService, Priority, Rect};
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
@@ -16,6 +18,9 @@ pub enum Orientation {
 
 /// 页面视图状态管理
 pub struct PageViewState {
+    /// 页面缓存
+    pub cache: Rc<PageCache>,
+
     /// 所有页面
     pub pages: Vec<Page>,
 
@@ -53,6 +58,7 @@ pub struct PageViewState {
 impl PageViewState {
     pub fn new(orientation: Orientation, crop: i32) -> Self {
         Self {
+            cache: Rc::new(PageCache::new(168, 10)),
             pages: Vec::new(),
             decode_service: Rc::new(RefCell::new(DecodeService::new())),
             orientation,
@@ -89,6 +95,7 @@ impl PageViewState {
         self.total_width = 0.0;
         self.total_height = 0.0;
         self.visible_pages.clear();
+        self.cache.clear();
     }
 
     /// 更新视图尺寸和缩放
@@ -247,28 +254,27 @@ impl PageViewState {
                 );
                 if page.width > 0.0 && page.height > 0.0 {
                     // 先检查缓存中是否已有该页面
-                    if self
-                        .decode_service
+                if self.cache.get_thumbnail(&key).is_none() {
+                    // 只有当页面不在缓存中时才发送解码请求
+                    let page_info = page.info.clone();
+                    let crop = self.crop;
+                    let cache = Rc::clone(&self.cache);
+                    let decode_task = DecodeTask {
+                        key: key.clone(),
+                        page_info,
+                        crop,
+                        priority: Priority::Thumbnail,
+                        callback: Box::new(move |result| {
+                            // 解码完成后的回调处理
+                            if let Ok(image) = result {
+                                cache.put_thumbnail(key, convert_to_slint_image(&image));
+                            }
+                        }),
+                    };
+                    self.decode_service
                         .borrow()
-                        .cache
-                        .get_thumbnail(&key)
-                        .is_none()
-                    {
-                        // 只有当页面不在缓存中时才发送解码请求
-                        let page_info = page.info.clone();
-                        let crop = self.crop;
-                        let decode_task = DecodeTask {
-                            key,
-                            page_info,
-                            crop,
-                            callback: Box::new(|_result| {
-                                // 解码完成后的回调处理
-                            }),
-                        };
-                        self.decode_service
-                            .borrow()
-                            .render_page(decode_task);
-                    }
+                        .render_page(decode_task);
+                }
                 }
             }
         }

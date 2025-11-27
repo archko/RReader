@@ -7,6 +7,7 @@ pub mod rect;
 
 pub use self::decode_service::DecodeService;
 pub use self::decode_service::DecodeTask;
+pub use self::decode_service::Priority;
 pub use self::decoder::Decoder;
 pub use self::link::Link;
 pub use self::link::LinkType;

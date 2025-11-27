@@ -1,26 +1,31 @@
 use anyhow::Result;
+use image::DynamicImage;
 use log::{debug, info};
-use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::rc::Rc;
 use std::time::Instant;
 
-use crate::cache::PageCache;
 use crate::decoder::pdf::PdfDecoder;
 use crate::decoder::{Decoder, PageInfo};
 
 pub struct DecodeTask {
-    pub(crate) key: String,
-    pub(crate) page_info: PageInfo,
-    pub(crate) crop: i32,
-    pub(crate) callback: Box<dyn FnOnce(Result<Image>)>,
+    pub key: String,
+    pub page_info: PageInfo,
+    pub crop: i32,
+    pub priority: Priority,
+    pub callback: Box<dyn FnOnce(Result<DynamicImage>)>,
+}
+
+pub enum Priority {
+    Thumbnail = 0,     // 最高优先级
+    FullImage = 1,     // 中优先级
+    Cropped = 2,       // 低优先级
 }
 
 pub struct DecodeService {
     pub(crate) decoder: Option<Rc<dyn Decoder>>,
-    pub cache: Rc<PageCache>,
     request_queue: RefCell<VecDeque<DecodeTask>>,
 }
 
@@ -28,14 +33,12 @@ impl DecodeService {
     pub fn new() -> Self {
         Self {
             decoder: None,
-            cache: Rc::new(PageCache::new(8, 20)),
             request_queue: RefCell::new(VecDeque::new()),
         }
     }
 
     pub fn load_pdf<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
         let decoder = Rc::new(PdfDecoder::open(path)?);
-        self.cache.clear();
         self.decoder = Some(decoder);
         Ok(())
     }
@@ -57,15 +60,11 @@ impl DecodeService {
 
             let duration = start_time.elapsed();
             if let Ok(image) = result {
-                //self.cache.put_page_image(page_info.index, page_info.scale, image);
-                let slint_image = Self::convert_to_slint_image(&image);
-                self.cache
-                    .put_thumbnail(request.key, slint_image);
                 info!(
                     "[DecodeService] 页面 {} 渲染并缓存完成，耗时: {:?}",
                     request.page_info.index, duration
                 );
-                //callback(Ok(slint_image));
+                (request.callback)(Ok(image));
             } else if let Err(e) = result {
                 debug!("[DecodeService] 页面 {} 渲染失败: {}", request.page_info.index, e);
             }
@@ -94,24 +93,6 @@ impl DecodeService {
 
         self.request_queue.borrow_mut().clear();
         self.decoder = None;
-        self.cache.clear();
     }
 
-    pub fn convert_to_slint_image(image: &image::DynamicImage) -> Image {
-        //let start_time = Instant::now();
-        /*debug!(
-            "[STATE] Converting image with dimensions: {}x{}",
-            image.width(),
-            image.height()
-        );*/
-        let rgba_image = image.to_rgba8();
-        let (width, height) = rgba_image.dimensions();
-
-        let slint_image = Image::from_rgba8_premultiplied(
-            SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&rgba_image, width, height),
-        );
-        //let duration = start_time.elapsed();
-        //info!("[STATE] Successfully converted image to Slint image，耗时: {:?}", duration);
-        slint_image
-    }
 }
