@@ -158,19 +158,19 @@ fn setup_zoom_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
 /// 刷新视图显示
 fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
     let state = page_view_state;
-    if state.pages.is_empty() {
+    if state.pages.borrow().is_empty() {
         debug!("[Main] No pages to refresh");
         return;
     }
 
     let rendered_pages = page_view_state.visible_pages
         .iter()
-        .filter_map(|&idx| page_view_state.pages.get(idx))
+        .filter_map(|&idx| page_view_state.pages.borrow().get(idx).cloned())
         .map(|page| {
             // 尝试从缓存获取图像，如果不存在则使用默认图像
-            let key = generate_thumbnail_key(page);
+            let key = generate_thumbnail_key(&page);
             let image = {
-                if let Some(cached_image) = page_view_state.cache.get_thumbnail(&key) {
+                if let Some(cached_image) = page_view_state.cache.lock().unwrap().get_thumbnail(&key) {
                     cached_image.as_ref().clone()
                 } else {
                     slint::Image::default()
@@ -194,7 +194,7 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
     );*/
     let model = Rc::new(VecModel::from(rendered_pages));
     app.set_document_pages(ModelRc::from(model));
-    app.set_page_count(page_view_state.pages.len() as i32);
+    app.set_page_count(page_view_state.pages.borrow().len() as i32);
     app.set_zoom(page_view_state.zoom);
 
     if let Some(first_visible) = page_view_state.get_first_visible_page() {

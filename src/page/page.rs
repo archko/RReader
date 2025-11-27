@@ -1,6 +1,7 @@
 use super::PageNode;
 use crate::decoder::{Link, PageInfo, Rect};
 
+#[derive(Clone, Debug)]
 pub struct Page {
     /// 页面信息
     pub info: PageInfo,

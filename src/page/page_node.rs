@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 /// 页面渲染块（Tile）
 /// 用于大页面的分块渲染
+#[derive(Clone, Debug)]
 pub struct PageNode {
     /// 页面索引
     pub page_index: usize,

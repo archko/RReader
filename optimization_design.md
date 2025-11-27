@@ -49,8 +49,11 @@ pub struct PageInfo {
 ```rust
 #[derive(Clone)]
 pub struct DecodeTask {
-    pub priority: Priority,
+    pub key: String,
     pub page_info: PageInfo,
+    pub crop: i32,
+    pub priority: Priority,
+    pub callback: Box<dyn FnOnce(Result<DynamicImage>)>,
 }
 
 #[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
@@ -77,16 +80,15 @@ struct DecodeState {
 **问题**：现有 `PageCache` 包含两个 `ImageCache`，但回收策略会相互影响，无法保证缩略图优先级。
 
 **新设计**：
-- 分离为两个完全独立的缓存类：`ThumbnailCache` 和 `ImageCache`
-- `ThumbnailCache`：专用于缩略图，容量小，LRU回收
-- `ImageCache`：专用于高清图片，容量大，LRU回收
+- 分离为两个完全独立的缓存
+- `thumbnails`：专用于缩略图，容量小，LRU回收
+- `images`：专用于高清图片，容量大，LRU回收
 - 各自独立回收，不相互影响
 
 ```rust
-pub struct ThumbnailCache { /* LRU cache for thumbnails */ }
 pub struct ImageCache { /* LRU cache for images */ }
 pub struct PageCache {
-    pub thumbnails: ThumbnailCache,
+    pub thumbnails: ImageCache,
     pub images: ImageCache,
 }
 ```

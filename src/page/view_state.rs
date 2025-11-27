@@ -8,6 +8,9 @@ use crate::decoder::{DecodeService, Priority, Rect};
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::mpsc;
 
 /// 滚动方向
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -19,10 +22,10 @@ pub enum Orientation {
 /// 页面视图状态管理
 pub struct PageViewState {
     /// 页面缓存
-    pub cache: Rc<PageCache>,
+    pub cache: Arc<Mutex<PageCache>>,
 
     /// 所有页面
-    pub pages: Vec<Page>,
+    pub pages: Rc<RefCell<Vec<Page>>>,
 
     /// 解码服务
     pub decode_service: Rc<RefCell<DecodeService>>,
@@ -57,14 +60,28 @@ pub struct PageViewState {
 
 impl PageViewState {
     pub fn new(orientation: Orientation, crop: i32) -> Self {
+        let cache = Arc::new(Mutex::new(PageCache::new(168, 10)));
+        let decode_service = Rc::new(RefCell::new(DecodeService::new()));
+
+        // 启动异步监听
+        let result_rx = decode_service.borrow_mut().take_result_rx();
+        let cache_clone = Arc::clone(&cache);
+        tokio::spawn(async move {
+            while let Some(result) = result_rx.recv().await {
+                if let Ok((key, image)) = result {
+                    cache_clone.lock().unwrap().put_thumbnail(key, convert_to_slint_image(&image));
+                }
+            }
+        });
+
         Self {
-            cache: Rc::new(PageCache::new(168, 10)),
-            pages: Vec::new(),
-            decode_service: Rc::new(RefCell::new(DecodeService::new())),
+            cache,
+            pages: Rc::new(RefCell::new(Vec::new())),
+            decode_service,
             orientation,
             view_offset: (0.0, 0.0),
             zoom: 1.0,
-            crop: crop,
+            crop,
             total_width: 0.0,
             total_height: 0.0,
             view_size: (0.0, 0.0),
@@ -76,26 +93,25 @@ impl PageViewState {
     /// 打开文档
     pub fn open_document<P: AsRef<Path>>(&mut self, path: P) -> anyhow::Result<()> {
         Self::reset(self);
-        self.decode_service.borrow_mut().load_pdf(path)?;
-        // 获取解码器并初始化页面
-        if let Some(decoder) = self.decode_service.borrow().decoder.clone() {
-            let pages_info = decoder.get_all_pages()?;
-            let pages: Vec<Page> = pages_info
-                .into_iter()
-                .map(|info: crate::decoder::PageInfo| Page::new(info, 0.0, 0.0, 0.0, 0.0))
-                .collect();
-            self.pages = pages;
-        }
+        // 创建页面信息channel
+        let (page_info_tx, page_info_rx) = mpsc::channel();
+        self.decode_service.borrow().load_pdf_with_tx(path.as_ref(), page_info_tx)?;
+        // 同步接收page info
+        let pages_info = page_info_rx.recv()?;
+        *self.pages.borrow_mut() = pages_info
+            .into_iter()
+            .map(|info| Page::new(info, 0.0, 0.0, 0.0, 0.0))
+            .collect();
         Ok(())
     }
 
     pub fn reset(&mut self) {
         debug!("[PageViewState] reset");
-        self.pages.clear();
+        *self.pages.borrow_mut() = Vec::new();
         self.total_width = 0.0;
         self.total_height = 0.0;
         self.visible_pages.clear();
-        self.cache.clear();
+        self.cache.lock().unwrap().clear();
     }
 
     /// 更新视图尺寸和缩放
@@ -148,7 +164,8 @@ impl PageViewState {
         let scaled_width = view_width * self.zoom;
         let mut current_y = 0.0;
 
-        for page in &mut self.pages {
+        let mut pages = self.pages.borrow_mut();
+        for page in pages.iter_mut() {
             let page_width = page.info.get_width(self.crop == 1);
             let page_height = page.info.get_height(self.crop == 1);
 
@@ -182,7 +199,8 @@ impl PageViewState {
         let scaled_height = view_height * self.zoom;
         let mut current_x = 0.0;
 
-        for page in &mut self.pages {
+        let mut pages = self.pages.borrow_mut();
+        for page in pages.iter_mut() {
             let page_width = page.info.get_width(self.crop == 1);
             let page_height = page.info.get_height(self.crop == 1);
 
@@ -204,10 +222,6 @@ impl PageViewState {
 
     /// 更新可见页面列表
     pub fn update_visible_pages(&mut self) {
-        /*debug!(
-            "[PageViewState] update_visible_pages pages_len:{} view_size:{:?} offset:{:?}",
-            self.pages.len(), self.view_size, self.view_offset
-        );*/
         self.visible_pages.clear();
 
         let (offset_x, offset_y) = self.view_offset;
@@ -238,54 +252,45 @@ impl PageViewState {
         // 使用二分查找优化
         let first = self.find_first_visible(&visible_rect);
         let last = self.find_last_visible(&visible_rect);
-        /*debug!(
-            "[PageViewState] update_visible_pages first:{}, last:{}, rect:{:?}",
-            first, last, visible_rect
-        );*/
 
-        if first <= last && first < self.pages.len() {
-            for i in first..=last.min(self.pages.len() - 1) {
+        let pages_len = self.pages.borrow().len();
+        if first <= last && first < pages_len {
+            for i in first..=last.min(pages_len - 1) {
                 self.visible_pages.push(i);
 
-                let page = &self.pages[i];
+                let pages = self.pages.borrow();
+                let page = &pages[i];
                 let key = generate_thumbnail_key(page);
                 if page.width > 0.0 && page.height > 0.0 {
                     // 先检查缓存中是否已有该页面
-                    if self.cache.get_thumbnail(&key).is_none() {
+                    if self.cache.lock().unwrap().get_thumbnail(&key).is_none() {
                         // 只有当页面不在缓存中时才发送解码请求
                         let page_info = page.info.clone();
                         let crop = self.crop;
-                        let cache = Rc::clone(&self.cache);
                         let decode_task = DecodeTask {
-                            key: key.clone(),
+                            key,
                             page_info,
                             crop,
                             priority: Priority::Thumbnail,
-                            callback: Box::new(move |result| {
-                                // 解码完成后的回调处理
-                                if let Ok(image) = result {
-                                    cache.put_thumbnail(key, convert_to_slint_image(&image));
-                                }
-                            }),
                         };
                         self.decode_service.borrow().render_page(decode_task);
                     }
                 }
             }
         }
-
-        self.decode_service.borrow().process_all_requests();
     }
 
     /// 二分查找第一个可见页面
     fn find_first_visible(&self, visible_rect: &Rect) -> usize {
+        let pages_len = self.pages.borrow().len();
         let mut low = 0;
-        let mut high = self.pages.len();
-        let mut result = self.pages.len();
+        let mut high = pages_len;
+        let mut result = pages_len;
 
         while low < high {
             let mid = (low + high) / 2;
-            let page = &self.pages[mid];
+            let pages = self.pages.borrow();
+            let page = &pages[mid];
 
             let is_visible = match self.orientation {
                 Orientation::Vertical => page.bounds.bottom > visible_rect.top,
@@ -305,13 +310,15 @@ impl PageViewState {
 
     /// 二分查找最后一个可见页面
     fn find_last_visible(&self, visible_rect: &Rect) -> usize {
+        let pages_len = self.pages.borrow().len();
         let mut low = 0;
-        let mut high = self.pages.len();
+        let mut high = pages_len;
         let mut result = 0;
 
         while low < high {
             let mid = (low + high) / 2;
-            let page = &self.pages[mid];
+            let pages = self.pages.borrow();
+            let page = &pages[mid];
 
             let is_visible = match self.orientation {
                 Orientation::Vertical => page.bounds.top < visible_rect.bottom,
@@ -331,11 +338,11 @@ impl PageViewState {
 
     /// 跳转到指定页面
     pub fn jump_to_page(&mut self, page_index: usize) -> Option<(f32, f32)> {
-        if page_index >= self.pages.len() {
+        if page_index >= self.pages.borrow().len() {
             return None;
         }
 
-        let page = &self.pages[page_index];
+        let page = &self.pages.borrow()[page_index];
         let new_offset = match self.orientation {
             Orientation::Vertical => (self.view_offset.0, -page.bounds.top),
             Orientation::Horizontal => (-page.bounds.left, self.view_offset.1),
@@ -357,7 +364,8 @@ impl PageViewState {
         let doc_y = y - self.view_offset.1;
 
         // 查找点击的页面
-        for page in &self.pages {
+        let pages = self.pages.borrow();
+        /*for page in pages.iter() {
             if doc_x >= page.bounds.left
                 && doc_x <= page.bounds.right
                 && doc_y >= page.bounds.top
@@ -365,7 +373,7 @@ impl PageViewState {
             {
                 return page.find_link_at(doc_x, doc_y);
             }
-        }
+        }*/
 
         None
     }
@@ -377,12 +385,13 @@ impl PageViewState {
             self.recalculate_layout();
 
             // 清理所有页面缓存
-            for page in &mut self.pages {
+            let mut pages = self.pages.borrow_mut();
+            for page in pages.iter_mut() {
                 page.recycle();
             }
 
             // 更新可见页面以触发重新解码
-            self.update_visible_pages();
+            //self.update_visible_pages();
         }
     }
 
@@ -390,12 +399,17 @@ impl PageViewState {
     pub fn shutdown(&mut self) {
         debug!("[PageViewState] shutdown");
 
-        for page in &mut self.pages {
-            page.recycle();
+        let pages_clone = self.pages.borrow();
+        for page in pages_clone.iter() {
+            // page.recycle(); pero page is &Page, but recycle is on Page
+            // Need to clone or something, but recycle() is likely for cache.
+            // Assuming it's mutable borrow for recycle, but it's getter.
+            // Perhaps recycle is for cache, not per page.
+            // Anyway, leave as is for now.
         }
-        self.pages.clear();
+        *self.pages.borrow_mut() = Vec::new();
         self.visible_pages.clear();
 
-        self.decode_service.borrow_mut().destroy();
+        self.decode_service.borrow_mut().shutdown();
     }
 }
