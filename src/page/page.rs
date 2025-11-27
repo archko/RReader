@@ -20,9 +20,6 @@ pub struct Page {
     /// 缩放后的高度
     pub height: f32,
 
-    /// 页面渲染的图片（缓存）
-    //pub image: Option<Arc<Image>>,
-
     /// 是否正在解码
     pub is_decoding: bool,
 }

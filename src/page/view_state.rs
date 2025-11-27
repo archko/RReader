@@ -3,7 +3,7 @@ use log::debug;
 use super::Page;
 use crate::cache::PageCache;
 use crate::decoder::decode_service::DecodeTask;
-use crate::decoder::pdf::utils::convert_to_slint_image;
+use crate::decoder::pdf::utils::{convert_to_slint_image, generate_thumbnail_key};
 use crate::decoder::{DecodeService, Priority, Rect};
 use std::cell::RefCell;
 use std::path::Path;
@@ -248,33 +248,28 @@ impl PageViewState {
                 self.visible_pages.push(i);
 
                 let page = &self.pages[i];
-                let key = format!(
-                    "{}-{}-{}",
-                    page.info.index, page.info.width, page.info.height
-                );
+                let key = generate_thumbnail_key(page);
                 if page.width > 0.0 && page.height > 0.0 {
                     // 先检查缓存中是否已有该页面
-                if self.cache.get_thumbnail(&key).is_none() {
-                    // 只有当页面不在缓存中时才发送解码请求
-                    let page_info = page.info.clone();
-                    let crop = self.crop;
-                    let cache = Rc::clone(&self.cache);
-                    let decode_task = DecodeTask {
-                        key: key.clone(),
-                        page_info,
-                        crop,
-                        priority: Priority::Thumbnail,
-                        callback: Box::new(move |result| {
-                            // 解码完成后的回调处理
-                            if let Ok(image) = result {
-                                cache.put_thumbnail(key, convert_to_slint_image(&image));
-                            }
-                        }),
-                    };
-                    self.decode_service
-                        .borrow()
-                        .render_page(decode_task);
-                }
+                    if self.cache.get_thumbnail(&key).is_none() {
+                        // 只有当页面不在缓存中时才发送解码请求
+                        let page_info = page.info.clone();
+                        let crop = self.crop;
+                        let cache = Rc::clone(&self.cache);
+                        let decode_task = DecodeTask {
+                            key: key.clone(),
+                            page_info,
+                            crop,
+                            priority: Priority::Thumbnail,
+                            callback: Box::new(move |result| {
+                                // 解码完成后的回调处理
+                                if let Ok(image) = result {
+                                    cache.put_thumbnail(key, convert_to_slint_image(&image));
+                                }
+                            }),
+                        };
+                        self.decode_service.borrow().render_page(decode_task);
+                    }
                 }
             }
         }

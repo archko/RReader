@@ -2,6 +2,8 @@ use image::{DynamicImage, ImageBuffer, Rgba};
 use mupdf::{Matrix, Pixmap};
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
+use crate::page::Page;
+
 /*#[derive(Clone)]
 pub struct PdfConfig {
     pub zoom: f32,
@@ -79,4 +81,8 @@ pub fn convert_to_slint_image(image: &image::DynamicImage) -> Image {
     //let duration = start_time.elapsed();
     //info!("[STATE] Successfully converted image to Slint image，耗时: {:?}", duration);
     slint_image
+}
+
+pub fn generate_thumbnail_key(page: &Page) -> String {
+    format!("{}-{}-{}", page.info.index, page.info.width, page.info.height)
 }
