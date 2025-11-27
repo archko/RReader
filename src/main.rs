@@ -167,8 +167,12 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
         .filter_map(|&idx| page_view_state.pages.get(idx))
         .map(|page| {
             // 尝试从缓存获取图像，如果不存在则使用默认图像
+            let key = format!(
+                "{}-{}-{}",
+                page.info.index, page.info.width, page.info.height
+            );
             let image = {
-                if let Some(cached_image) = page_view_state.decode_service.borrow().cache.get_page_image(page.info.index, page.info.scale) {
+                if let Some(cached_image) = page_view_state.decode_service.borrow().cache.get_thumbnail(&key) {
                     (*cached_image).clone()
                 } else {
                     slint::Image::default()

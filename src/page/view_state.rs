@@ -1,10 +1,11 @@
 use log::debug;
 
 use super::Page;
-use crate::decoder::{Rect, DecodeService};
-use std::rc::Rc;
+use crate::decoder::decode_service::DecodeTask;
+use crate::decoder::{DecodeService, Rect};
 use std::cell::RefCell;
 use std::path::Path;
+use std::rc::Rc;
 
 /// 滚动方向
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -91,11 +92,11 @@ impl PageViewState {
     }
 
     /// 更新视图尺寸和缩放
-    pub fn update_view_size(&mut self, width: f32, height: f32, zoom: f32, force : bool) {
+    pub fn update_view_size(&mut self, width: f32, height: f32, zoom: f32, force: bool) {
         let size_changed = self.view_size.0 != width || self.view_size.1 != height;
         let zoom_changed = (self.zoom - zoom).abs() > 0.001;
 
-        if !size_changed && !zoom_changed &&!force {
+        if !size_changed && !zoom_changed && !force {
             debug!(
                 "[PageViewState] don't update_view_size. w-h:{:?}-{:?}, zoom:{:?}",
                 width, height, zoom
@@ -238,22 +239,40 @@ impl PageViewState {
         if first <= last && first < self.pages.len() {
             for i in first..=last.min(self.pages.len() - 1) {
                 self.visible_pages.push(i);
-                
+
                 let page = &self.pages[i];
+                let key = format!(
+                    "{}-{}-{}",
+                    page.info.index, page.info.width, page.info.height
+                );
                 if page.width > 0.0 && page.height > 0.0 {
                     // 先检查缓存中是否已有该页面
-                    if self.decode_service.borrow().cache.get_page_image(page.info.index, page.info.scale).is_none() {
+                    if self
+                        .decode_service
+                        .borrow()
+                        .cache
+                        .get_thumbnail(&key)
+                        .is_none()
+                    {
                         // 只有当页面不在缓存中时才发送解码请求
                         let page_info = page.info.clone();
                         let crop = self.crop;
-                        self.decode_service.borrow().render_full_page(page_info, crop, |_result| {
-                            // 解码完成后的回调处理
-                        });
+                        let decode_task = DecodeTask {
+                            key,
+                            page_info,
+                            crop,
+                            callback: Box::new(|_result| {
+                                // 解码完成后的回调处理
+                            }),
+                        };
+                        self.decode_service
+                            .borrow()
+                            .render_page(decode_task);
                     }
                 }
             }
         }
-        
+
         self.decode_service.borrow().process_all_requests();
     }
 
@@ -360,7 +379,7 @@ impl PageViewState {
             for page in &mut self.pages {
                 page.recycle();
             }
-            
+
             // 更新可见页面以触发重新解码
             self.update_visible_pages();
         }

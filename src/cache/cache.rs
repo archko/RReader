@@ -88,8 +88,8 @@ impl ImageCache {
 }
 
 pub struct PageCache {
-    image_cache: ImageCache,
-    thumbnail_cache: ImageCache,
+    pub image_cache: ImageCache,
+    pub thumbnail_cache: ImageCache,
 }
 
 impl PageCache {
@@ -115,13 +115,11 @@ impl PageCache {
         self.image_cache.put(key, image)
     }
 
-    pub fn get_thumbnail(&self, page_index: usize) -> Option<Arc<Image>> {
-        let key = format!("thumb_{}", page_index);
-        self.thumbnail_cache.get(&key)
+    pub fn get_thumbnail(&self, key: &str) -> Option<Arc<Image>> {
+        self.thumbnail_cache.get(key)
     }
 
-    pub fn put_thumbnail(&self, page_index: usize, image: Image) -> Arc<Image> {
-        let key = format!("thumb_{}", page_index);
+    pub fn put_thumbnail(&self, key: String, image: Image) -> Arc<Image> {
         self.thumbnail_cache.put(key, image)
     }
 
@@ -139,6 +137,6 @@ impl Default for ImageCache {
 
 impl Default for PageCache {
     fn default() -> Self {
-        Self::new(8, 20)
+        Self::new(24, 10)
     }
 }

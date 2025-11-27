@@ -11,19 +11,17 @@ use crate::cache::PageCache;
 use crate::decoder::pdf::PdfDecoder;
 use crate::decoder::{Decoder, PageInfo};
 
-// 解码请求类型
-pub enum DecodeRequest {
-    RenderFullPage {
-        page_info: PageInfo,
-        crop: i32,
-        callback: Box<dyn FnOnce(Result<Image>)>,
-    },
+pub struct DecodeTask {
+    pub(crate) key: String,
+    pub(crate) page_info: PageInfo,
+    pub(crate) crop: i32,
+    pub(crate) callback: Box<dyn FnOnce(Result<Image>)>,
 }
 
 pub struct DecodeService {
     pub(crate) decoder: Option<Rc<dyn Decoder>>,
     pub cache: Rc<PageCache>,
-    request_queue: RefCell<VecDeque<DecodeRequest>>,
+    request_queue: RefCell<VecDeque<DecodeTask>>,
 }
 
 impl DecodeService {
@@ -42,51 +40,34 @@ impl DecodeService {
         Ok(())
     }
 
-    // 将解码请求加入队列
-    pub fn render_full_page<F>(&self, page_info: PageInfo, crop: i32, callback: F)
-    where
-        F: FnOnce(Result<Image>) + 'static,
-    {
-        let request = DecodeRequest::RenderFullPage {
-            page_info,
-            crop,
-            callback: Box::new(callback),
-        };
-
-        self.request_queue.borrow_mut().push_back(request);
+    // 解码缩略图
+    pub fn render_page(&self, decode_task: DecodeTask) {
+        self.request_queue.borrow_mut().push_back(decode_task);
     }
 
     // 处理队列中的一个解码请求
     pub fn process_next_request(&self) -> bool {
         if let Some(request) = self.request_queue.borrow_mut().pop_front() {
-            match request {
-                DecodeRequest::RenderFullPage {
-                    page_info,
-                    crop,
-                    callback,
-                } => {
-                    let start_time = Instant::now();
-                    let result = self
-                        .decoder
-                        .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("No decoder available"))
-                        .and_then(|decoder| decoder.render_page(&page_info, crop != 0));
+            let start_time = Instant::now();
+            let result = self
+                .decoder
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("No decoder available"))
+                .and_then(|decoder| decoder.render_page(&request.page_info, request.crop != 0));
 
-                    let duration = start_time.elapsed();
-                    if let Ok(image) = result {
-                        //self.cache.put_page_image(page_info.index, page_info.scale, image);
-                        let slint_image = Self::convert_to_slint_image(&image);
-                        self.cache
-                            .put_page_image(page_info.index, page_info.scale, slint_image);
-                        info!(
-                            "[DecodeService] 页面 {} 渲染并缓存完成，耗时: {:?}",
-                            page_info.index, duration
-                        );
-                        //callback(Ok(slint_image));
-                    } else if let Err(e) = result {
-                        debug!("[DecodeService] 页面 {} 渲染失败: {}", page_info.index, e);
-                    }
-                }
+            let duration = start_time.elapsed();
+            if let Ok(image) = result {
+                //self.cache.put_page_image(page_info.index, page_info.scale, image);
+                let slint_image = Self::convert_to_slint_image(&image);
+                self.cache
+                    .put_thumbnail(request.key, slint_image);
+                info!(
+                    "[DecodeService] 页面 {} 渲染并缓存完成，耗时: {:?}",
+                    request.page_info.index, duration
+                );
+                //callback(Ok(slint_image));
+            } else if let Err(e) = result {
+                debug!("[DecodeService] 页面 {} 渲染失败: {}", request.page_info.index, e);
             }
             true
         } else {
