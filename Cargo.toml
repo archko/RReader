@@ -20,6 +20,10 @@ arc-swap = "1.7.1"
 rfd = "0.15.4"                                           # 文件对话框，用于文件选择
 log="0.4.28"                                             # 日志记录框架
 env_logger="0.11.8"                                      # 日志输出配置
+diesel = { version = "2.3.4", features = ["sqlite", "returning_clauses_for_sqlite_3_35", "r2d2"] }
+libsqlite3-sys = "0.35.0"
+dotenvy = "0.15"
+lazy_static = "1.5.0"
 
 [build-dependencies]
 slint-build = "1.14.1"

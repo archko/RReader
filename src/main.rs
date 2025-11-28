@@ -12,9 +12,17 @@ mod cache;
 mod decoder;
 mod page;
 mod ui;
+mod dao;
+mod entity;
 
 use page::{PageViewState, Orientation};
 use crate::decoder::pdf::utils::{generate_thumbnail_key};
+
+use crate::ui::MainViewmodel;
+use crate::dao::RecentDao;
+use crate::dao::db_utils::init_db;
+use crate::entity::Recent;
+use crate::entity::NewRecent;
 
 slint::include_modules!();
 
@@ -26,7 +34,15 @@ async fn main() -> Result<()> {
     let app = MainWindow::new()?;
     let page_view_state: Rc<RefCell<PageViewState>> = Rc::new(RefCell::new(PageViewState::new(Orientation::Vertical, 0)));
 
-    setup_open_handler(&app, page_view_state.clone());
+    // 初始化数据库
+    init_db("rreader.db");
+    RecentDao::init();
+
+    // 创建主视图模型
+    let viewmodel: Rc<RefCell<rreader::ui::MainViewmodel>> = Rc::new(RefCell::new(rreader::ui::MainViewmodel::new()));
+    viewmodel.borrow_mut().load_history(0); // 加载第一页历史记录
+
+    setup_open_handler(&app, page_view_state.clone(), viewmodel.clone());
     setup_viewport_handler(&app, page_view_state.clone());
     setup_scroll_handler(&app, page_view_state.clone());
     setup_page_handler(&app, page_view_state.clone());
@@ -40,7 +56,7 @@ async fn main() -> Result<()> {
 }
 
 /// 打开文档事件
-fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
+fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>, viewmodel: Rc<RefCell<rreader::ui::MainViewmodel>>) {
     let weak_app = app.as_weak();
 
     app.on_open_file(move || {
@@ -53,13 +69,37 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
             .pick_file();
 
         if let Some(path) = file_path {
+            let path_str = path.to_string_lossy().to_string();
             if let Some(app) = weak_app.upgrade() {
-                app.set_file_path(path.to_string_lossy().to_string().into());
+                app.set_file_path(path_str.clone().into());
             }
-            
+
             let open_result = page_view_state.borrow_mut().open_document(&path);
             match open_result {
                 Ok(_) => {
+                    // 添加到历史记录
+                    let recent = rreader::entity::Recent::encode(
+                        Some(path_str.clone()),
+                        0, // 默认页
+                        0, // 默认页数，会被更新
+                        1, // crop
+                        1, // scroll_ori (vertical)
+                        0, // reflow
+                        1.0, // zoom
+                        0, // scroll_x
+                        0, // scroll_y
+                        Some(path_str.split('/').last().unwrap_or("").to_string()), // name
+                        Some(path_str.split('.').last().unwrap_or("").to_string()), // ext
+                        None, // size
+                        Some(1), // read_times
+                        Some(1), // progress
+                        None, // favorited
+                        Some(0), // in_recent
+                    );
+                    if let Err(e) = viewmodel.borrow().add_recent(recent) {
+                        error!("Failed to add recent: {e}");
+                    }
+
                     if let Some(app) = weak_app.upgrade() {
                         app.set_zoom(1.0);
                         app.set_document_opened(true);
@@ -71,13 +111,13 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
                         //重置页面位置
                         borrowed_state.update_offset(0.0, 0.0);
                         borrowed_state.update_view_size(
-                            width, 
-                            height, 
+                            width,
+                            height,
                             zoom,
                             true
                         );
                     }
-                    
+
                     // 文档打开后立即刷新视图
                     if let Some(app) = weak_app.upgrade() {
                         page_view_state.borrow_mut().update_visible_pages();
