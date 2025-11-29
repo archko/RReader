@@ -263,8 +263,8 @@ impl PageViewState {
                             priority: Priority::Thumbnail,
                             callback: Box::new(move |result| {
                                 // 解码完成后的回调处理
-                                if let Ok(image) = result {
-                                    cache.put_thumbnail(key, convert_to_slint_image(&image));
+                                if let Ok(result) = result {
+                                    cache.put_thumbnail(key, convert_to_slint_image(&result.image));
                                 }
                             }),
                         };

@@ -8,20 +8,27 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use crate::decoder::pdf::PdfDecoder;
-use crate::decoder::{Decoder, PageInfo};
+use crate::decoder::{Decoder, Link, PageInfo};
+
+/// 解码结果
+pub struct DecodeResult {
+    pub image: DynamicImage,
+    pub page_info: PageInfo,
+    pub links: Vec<Link>,
+}
 
 pub struct DecodeTask {
     pub key: String,
     pub page_info: PageInfo,
     pub crop: i32,
     pub priority: Priority,
-    pub callback: Box<dyn FnOnce(Result<DynamicImage>)>,
+    pub callback: Box<dyn FnOnce(Result<DecodeResult>)>,
 }
 
 pub enum Priority {
-    Thumbnail = 0,     // 最高优先级
-    FullImage = 1,     // 中优先级
-    Cropped = 2,       // 低优先级
+    Thumbnail = 0, // 最高优先级
+    FullImage = 1, // 中优先级
+    Cropped = 2,   // 低优先级
 }
 
 pub struct DecodeService {
@@ -52,21 +59,45 @@ impl DecodeService {
     pub fn process_next_request(&self) -> bool {
         if let Some(request) = self.request_queue.borrow_mut().pop_front() {
             let start_time = Instant::now();
-            let result = self
-                .decoder
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("No decoder available"))
-                .and_then(|decoder| decoder.render_page(&request.page_info, request.crop != 0));
+
+            let decoder = match self.decoder.as_ref() {
+                Some(decoder) => decoder,
+                None => {
+                    debug!(
+                        "[DecodeService] 页面 {} 渲染失败: No decoder available",
+                        request.page_info.index
+                    );
+                    return false;
+                }
+            };
+
+            let result = decoder.render_page(&request.page_info, request.crop != 0);
+
+            let links = if let Ok(links) = decoder.get_page_links(request.page_info.index) {
+                links
+            } else {
+                Vec::new()
+            };
 
             let duration = start_time.elapsed();
             if let Ok(image) = result {
                 info!(
-                    "[DecodeService] 页面 {} 渲染并缓存完成，耗时: {:?}",
-                    request.page_info.index, duration
+                    "[DecodeService] 页面 {} 渲染并缓存完成，耗时: {:?}, links:{:?}",
+                    request.page_info.index, duration, links.len()
                 );
-                (request.callback)(Ok(image));
+
+                let decode_result = DecodeResult {
+                    image,
+                    page_info: request.page_info.clone(),
+                    links,
+                };
+
+                (request.callback)(Ok(decode_result));
             } else if let Err(e) = result {
-                debug!("[DecodeService] 页面 {} 渲染失败: {}", request.page_info.index, e);
+                debug!(
+                    "[DecodeService] 页面 {} 渲染失败: {}",
+                    request.page_info.index, e
+                );
             }
             true
         } else {
@@ -94,5 +125,4 @@ impl DecodeService {
         self.request_queue.borrow_mut().clear();
         self.decoder = None;
     }
-
 }
