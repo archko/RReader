@@ -31,6 +31,7 @@ async fn main() -> Result<()> {
     setup_scroll_handler(&app, page_view_state.clone());
     setup_page_handler(&app, page_view_state.clone());
     setup_zoom_handler(&app, page_view_state.clone());
+    setup_page_click_handler(&app, page_view_state.clone());
     setup_back_to_history_handler(&app, page_view_state.clone());
     setup_page_down_handler(&app, page_view_state.clone());
     setup_page_up_handler(&app, page_view_state.clone());
@@ -266,6 +267,52 @@ fn setup_page_up_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewS
             update_view_offset(&app, &mut page_view_state.borrow_mut(), offset_x, offset_y);
         }
     });
+}
+
+/// 页面点击处理
+fn setup_page_click_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
+    let weak_app = app.as_weak();
+    app.on_page_clicked(move |x, y, page_index| {
+        debug!("[Main] setup_page_click_handler: x={x}, y={y}, page_index={page_index}");
+
+        // The coordinates are already in document space (after adding page.x, page.y)
+        let jump_to_page = if let Some(link) = page_view_state.borrow().handle_click(page_index as usize, x, y) {
+            debug!("[Main] Clicked link: uri={:?}, page={:?}", link.uri, link.page);
+            // TODO: Handle link types
+            if let Some(uri) = &link.uri {
+                debug!("[Main] URI link clicked: {}", uri);
+                None
+            } else if let Some(page) = link.page {
+                debug!("[Main] Page link clicked: {}", page);
+                parse_page_from_param(&page)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(page_num) = jump_to_page {
+            if let Some(app) = weak_app.upgrade() {
+                let mut borrowed_state = page_view_state.borrow_mut();
+                if borrowed_state.jump_to_page(page_num).is_some() {
+                    borrowed_state.update_visible_pages();
+                    refresh_view(&app, &*borrowed_state);
+                }
+            }
+        }
+    });
+}
+
+fn parse_page_from_param(page_param: &str) -> Option<usize> {
+    if page_param.starts_with("#page=") {
+        let start = "#page=".len();
+        let end = page_param[start..].find('&').map(|pos| pos + start).unwrap_or(page_param.len());
+        let num_str = &page_param[start..end];
+        num_str.parse::<usize>().ok()
+    } else {
+        None
+    }
 }
 
 fn update_view_offset(app: &MainWindow, page_view_state: &mut PageViewState, offset_x:f32, offset_y:f32) {

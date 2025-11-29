@@ -28,6 +28,7 @@ component DocumentView inherits Rectangle {
     callback scroll-changed(length, length);
     callback page-down();
     callback page-up();
+    callback page-clicked(float, float, int);
 
     background: #fafafa;
     border-width: 1px;
@@ -62,12 +63,22 @@ component DocumentView inherits Rectangle {
                 border-width: 1px;
                 border-color: #d0d0d0;
                 clip: true;
-                
+
                 Image {
                     width: parent.width;
                     height: parent.height;
                     source: page.image;
                     image-fit: fill;
+                }
+
+                TouchArea {
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                            debug("down.event", (self.mouse-x / 1px), (self.mouse-y / 1px), event);
+                            //root.page-clicked(page.x + self.mouse-x / 1px, page.y + self.mouse-y / 1px, page.page_index);
+                            root.page-clicked(self.mouse-x / 1px, self.mouse-y/ 1px, page.page_index);
+                        }
+                    }
                 }
             }
         }
@@ -213,6 +224,7 @@ export component MainWindow inherits Window {
     callback back-to-history();
     callback page-down();
     callback page-up();
+    callback page-clicked(float, float, int);
     
     Rectangle {
 
@@ -295,8 +307,6 @@ export component MainWindow inherits Window {
 
                         padding: 12px;
                         spacing: 8px;
-
-
 
                         Button {
                             text: "Previous";
@@ -384,6 +394,7 @@ export component MainWindow inherits Window {
                     scroll-changed(x, y) => { root.scroll-changed(x, y); }
                     page-down() => { root.page-down(); }
                     page-up() => { root.page-up(); }
+                    page-clicked(x, y, page_index) => { root.page-clicked(x, y, page_index); }
                 }
             }
         }

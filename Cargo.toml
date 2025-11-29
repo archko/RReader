@@ -20,6 +20,7 @@ arc-swap = "1.7.1"
 rfd = "0.15.4"                                           # 文件对话框，用于文件选择
 log="0.4.28"                                             # 日志记录框架
 env_logger="0.11.8"                                      # 日志输出配置
+#open = "5.3.3"                                           # 外部程序打开库
 
 [build-dependencies]
 slint-build = "1.14.1"

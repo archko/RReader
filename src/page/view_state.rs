@@ -4,7 +4,7 @@ use super::Page;
 use crate::cache::PageCache;
 use crate::decoder::decode_service::DecodeTask;
 use crate::decoder::pdf::utils::{convert_to_slint_image, generate_thumbnail_key};
-use crate::decoder::{DecodeService, Priority, Rect, Link};
+use crate::decoder::{DecodeService, Link, Priority, Rect};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
@@ -272,7 +272,9 @@ impl PageViewState {
                                 // 解码完成后的回调处理
                                 if let Ok(result) = result {
                                     cache.put_thumbnail(key, convert_to_slint_image(&result.image));
-                                    links.borrow_mut().insert(result.page_info.index, result.links);
+                                    links
+                                        .borrow_mut()
+                                        .insert(result.page_info.index, result.links);
                                 }
                             }),
                         };
@@ -359,31 +361,41 @@ impl PageViewState {
     }
 
     /// 处理点击事件
-    pub fn handle_click(&self, index: usize, x: f32, y: f32) -> Option<crate::decoder::Link> {
+    pub fn handle_click(
+        &self,
+        index: usize,
+        doc_x: f32,
+        doc_y: f32,
+    ) -> Option<crate::decoder::Link> {
         // 根据 index 获取链接缓存
         if let Some(links) = self.page_links.borrow().get(&index) {
-            debug!("[PageViewState] handle_click page_index:{}, links_len:{}", index, links.len());
-
-            // 将视图坐标转换为文档坐标
-            let doc_x = x - self.view_offset.0;
-            let doc_y = y - self.view_offset.1;
-
             // 判断点击是否在页面范围内（假设点击的是指定页面）
             if index < self.pages.len() {
                 let page = &self.pages[index];
-                if doc_x >= page.bounds.left && doc_x <= page.bounds.right &&
-                   doc_y >= page.bounds.top && doc_y <= page.bounds.bottom {
-                    // 检查点击位置是否在链接区域内
-                    for link in links {
-                        if doc_x >= link.bounds.left && doc_x <= link.bounds.right &&
-                           doc_y >= link.bounds.top && doc_y <= link.bounds.bottom {
-                            return Some(link.clone());
-                        }
+                // 检查点击位置是否在链接区域内
+                let scale = page.info.scale;
+                for link in links {
+                    let scaled_left = link.bounds.left * scale;
+                    let scaled_right = link.bounds.right * scale;
+                    let scaled_top = link.bounds.top * scale;
+                    let scaled_bottom = link.bounds.bottom * scale;
+                    debug!("[PageViewState] link check: click_x={}, click_y={}, link=({}, {}, {}, {}) scaled to ({}, {}, {}, {})",
+                                   doc_x, doc_y, link.bounds.left, link.bounds.top, link.bounds.right, link.bounds.bottom,
+                                   scaled_left, scaled_top, scaled_right, scaled_bottom);
+                    if doc_x >= scaled_left
+                        && doc_x <= scaled_right
+                        && doc_y >= scaled_top
+                        && doc_y <= scaled_bottom
+                    {
+                        return Some(link.clone());
                     }
                 }
             }
         } else {
-            debug!("[PageViewState] handle_click no links cached for page_index:{}", index);
+            debug!(
+                "[PageViewState] handle_click no links cached for page_index:{}",
+                index
+            );
         }
 
         None
