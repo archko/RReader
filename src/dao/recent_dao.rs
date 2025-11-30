@@ -2,7 +2,7 @@ use sea_orm::{prelude::Expr, *};
 use dotenvy::dotenv;
 use std::env;
 
-use crate::entity::recent::{ActiveModel, Entity, Model as Recent, NewRecent};
+use crate::entity::recent::{ActiveModel, Entity, Model as Recent};
 
 pub struct RecentDao;
 
@@ -15,10 +15,9 @@ impl RecentDao {
         Ok(())
     }
 
-    pub async fn insert(other_recent: NewRecent) -> Result<Recent, DbErr> {
+    pub async fn insert(other_recent: ActiveModel) -> Result<Recent, DbErr> {
         let db = crate::dao::get_connection().await?;
-        let active_model = other_recent.into_active_model();
-        let result = active_model.insert(&*db).await?;
+        let result = other_recent.insert(&*db).await?;
         Ok(result)
     }
 
@@ -34,31 +33,9 @@ impl RecentDao {
         Ok(results)
     }
 
-    pub async fn update(id: i32, other_recent: &NewRecent) -> Result<(), DbErr> {
+    pub async fn update(id: i32, update_data: ActiveModel) -> Result<(), DbErr> {
         let db = crate::dao::get_connection().await?;
-        let mut active_model: ActiveModel = Entity::find_by_id(id).one(&*db).await?
-            .ok_or_else(|| DbErr::Custom("Record not found".to_string()))?
-            .into();
-
-        active_model.book_path = Set(other_recent.book_path.clone());
-        active_model.update_at = Set(other_recent.update_at);
-        active_model.page = Set(other_recent.page);
-        active_model.page_count = Set(other_recent.page_count);
-        active_model.crop = Set(other_recent.crop);
-        active_model.reflow = Set(other_recent.reflow);
-        active_model.scroll_ori = Set(other_recent.scroll_ori);
-        active_model.zoom = Set(other_recent.zoom);
-        active_model.scroll_x = Set(other_recent.scroll_x);
-        active_model.scroll_y = Set(other_recent.scroll_y);
-        active_model.name = Set(other_recent.name.clone());
-        active_model.ext = Set(other_recent.ext.clone());
-        active_model.size = Set(other_recent.size);
-        active_model.read_times = Set(other_recent.read_times);
-        active_model.progress = Set(other_recent.progress);
-        active_model.favorited = Set(other_recent.favorited);
-        active_model.in_recent = Set(other_recent.in_recent);
-
-        active_model.update(&*db).await?;
+        update_data.update(&*db).await?;
         Ok(())
     }
 
@@ -79,26 +56,61 @@ impl RecentDao {
 
     pub async fn update_by_path(
         other_path: &str,
-        other_recent: &NewRecent,
+        update_data: ActiveModel,
     ) -> Result<(), DbErr> {
         let db = crate::dao::get_connection().await?;
-        Entity::update_many()
-            .col_expr(crate::entity::recent::Column::UpdateAt, Expr::value(other_recent.update_at))
-            .col_expr(crate::entity::recent::Column::Page, Expr::value(other_recent.page))
-            .col_expr(crate::entity::recent::Column::PageCount, Expr::value(other_recent.page_count))
-            .col_expr(crate::entity::recent::Column::Crop, Expr::value(other_recent.crop))
-            .col_expr(crate::entity::recent::Column::Reflow, Expr::value(other_recent.reflow))
-            .col_expr(crate::entity::recent::Column::ScrollOri, Expr::value(other_recent.scroll_ori))
-            .col_expr(crate::entity::recent::Column::Zoom, Expr::value(other_recent.zoom))
-            .col_expr(crate::entity::recent::Column::ScrollX, Expr::value(other_recent.scroll_x))
-            .col_expr(crate::entity::recent::Column::ScrollY, Expr::value(other_recent.scroll_y))
-            .col_expr(crate::entity::recent::Column::Name, Expr::value(&other_recent.name))
-            .col_expr(crate::entity::recent::Column::Ext, Expr::value(&other_recent.ext))
-            .col_expr(crate::entity::recent::Column::Size, Expr::value(other_recent.size))
-            .col_expr(crate::entity::recent::Column::ReadTimes, Expr::value(other_recent.read_times))
-            .col_expr(crate::entity::recent::Column::Progress, Expr::value(other_recent.progress))
-            .col_expr(crate::entity::recent::Column::Favorited, Expr::value(other_recent.favorited))
-            .col_expr(crate::entity::recent::Column::InRecent, Expr::value(other_recent.in_recent))
+        let mut updater = Entity::update_many();
+
+        if let ActiveValue::Set(ref val) = update_data.update_at {
+            updater = updater.col_expr(crate::entity::recent::Column::UpdateAt, Expr::value(val.clone()));
+        }
+        if let ActiveValue::Set(ref val) = update_data.page {
+            updater = updater.col_expr(crate::entity::recent::Column::Page, Expr::value(val.clone()));
+        }
+        if let ActiveValue::Set(ref val) = update_data.page_count {
+            updater = updater.col_expr(crate::entity::recent::Column::PageCount, Expr::value(val.clone()));
+        }
+        if let ActiveValue::Set(ref val) = update_data.crop {
+            updater = updater.col_expr(crate::entity::recent::Column::Crop, Expr::value(val.clone()));
+        }
+        if let ActiveValue::Set(ref val) = update_data.reflow {
+            updater = updater.col_expr(crate::entity::recent::Column::Reflow, Expr::value(val.clone()));
+        }
+        if let ActiveValue::Set(ref val) = update_data.scroll_ori {
+            updater = updater.col_expr(crate::entity::recent::Column::ScrollOri, Expr::value(val.clone()));
+        }
+        if let ActiveValue::Set(ref val) = update_data.zoom {
+            updater = updater.col_expr(crate::entity::recent::Column::Zoom, Expr::value(val.clone()));
+        }
+        if let ActiveValue::Set(ref val) = update_data.scroll_x {
+            updater = updater.col_expr(crate::entity::recent::Column::ScrollX, Expr::value(val.clone()));
+        }
+        if let ActiveValue::Set(ref val) = update_data.scroll_y {
+            updater = updater.col_expr(crate::entity::recent::Column::ScrollY, Expr::value(val.clone()));
+        }
+        if let ActiveValue::Set(ref val) = update_data.name {
+            updater = updater.col_expr(crate::entity::recent::Column::Name, Expr::value(val.clone()));
+        }
+        if let ActiveValue::Set(ref val) = update_data.ext {
+            updater = updater.col_expr(crate::entity::recent::Column::Ext, Expr::value(val.clone()));
+        }
+        if let ActiveValue::Set(ref val) = update_data.size {
+            updater = updater.col_expr(crate::entity::recent::Column::Size, Expr::value(val.clone()));
+        }
+        if let ActiveValue::Set(ref val) = update_data.read_times {
+            updater = updater.col_expr(crate::entity::recent::Column::ReadTimes, Expr::value(val.clone()));
+        }
+        if let ActiveValue::Set(ref val) = update_data.progress {
+            updater = updater.col_expr(crate::entity::recent::Column::Progress, Expr::value(val.clone()));
+        }
+        if let ActiveValue::Set(ref val) = update_data.favorited {
+            updater = updater.col_expr(crate::entity::recent::Column::Favorited, Expr::value(val.clone()));
+        }
+        if let ActiveValue::Set(ref val) = update_data.in_recent {
+            updater = updater.col_expr(crate::entity::recent::Column::InRecent, Expr::value(val.clone()));
+        }
+
+        updater
             .filter(crate::entity::recent::Column::BookPath.eq(other_path))
             .exec(&*db)
             .await?;
@@ -123,7 +135,7 @@ impl RecentDao {
         })
     }
 
-    pub fn insert_sync(other_recent: NewRecent) -> Result<Recent, Box<dyn std::error::Error>> {
+    pub fn insert_sync(other_recent: ActiveModel) -> Result<Recent, Box<dyn std::error::Error>> {
         tokio::task::block_in_place(|| {
             futures::executor::block_on(async {
                 Self::insert(other_recent).await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
@@ -147,10 +159,10 @@ impl RecentDao {
         })
     }
 
-    pub fn update_sync(id: i32, other_recent: &NewRecent) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn update_sync(id: i32, update_data: ActiveModel) -> Result<(), Box<dyn std::error::Error>> {
         tokio::task::block_in_place(|| {
             futures::executor::block_on(async {
-                Self::update(id, other_recent).await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+                Self::update(id, update_data).await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
             })
         })
     }
@@ -173,11 +185,11 @@ impl RecentDao {
 
     pub fn update_by_path_sync(
         other_path: &str,
-        other_recent: &NewRecent,
+        update_data: ActiveModel,
     ) -> Result<(), Box<dyn std::error::Error>> {
         tokio::task::block_in_place(|| {
             futures::executor::block_on(async {
-                Self::update_by_path(other_path, other_recent).await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+                Self::update_by_path(other_path, update_data).await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
             })
         })
     }

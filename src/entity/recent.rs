@@ -33,79 +33,33 @@ impl ActiveModelBehavior for ActiveModel {}
 
 pub type Recent = Model;
 
-#[derive(Debug, Clone)]
-pub struct NewRecent {
-    pub book_path: String,
-    pub update_at: i64,
-    pub page: i32,
-    pub page_count: i32,
-    pub create_at: i64,
-    pub crop: i32,
-    pub reflow: i32,
-    pub scroll_ori: i32,
-    pub zoom: f32,
-    pub scroll_x: i32,
-    pub scroll_y: i32,
-    pub name: String,
-    pub ext: String,
-    pub size: i64,
-    pub read_times: i32,
-    pub progress: i64,
-    pub favorited: i32,
-    pub in_recent: i32,
-}
-
-impl NewRecent {
-    pub fn into_active_model(self) -> ActiveModel {
-        ActiveModel {
-            id: NotSet,
-            book_path: Set(self.book_path),
-            update_at: Set(self.update_at),
-            page: Set(self.page),
-            page_count: Set(self.page_count),
-            create_at: Set(self.create_at),
-            crop: Set(self.crop),
-            reflow: Set(self.reflow),
-            scroll_ori: Set(self.scroll_ori),
-            zoom: Set(self.zoom),
-            scroll_x: Set(self.scroll_x),
-            scroll_y: Set(self.scroll_y),
-            name: Set(self.name),
-            ext: Set(self.ext),
-            size: Set(self.size),
-            read_times: Set(self.read_times),
-            progress: Set(self.progress),
-            favorited: Set(self.favorited),
-            in_recent: Set(self.in_recent),
-        }
-    }
-}
-
 impl Recent {
-    pub fn new(book_path: String) -> NewRecent {
+    pub fn new(book_path: String) -> ActiveModel {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
-        NewRecent {
-            book_path,
-            update_at: now,
-            create_at: now,
-            page: 0,
-            page_count: 0,
-            crop: 1,
-            reflow: 0,
-            scroll_ori: 1,
-            zoom: 1.0,
-            scroll_x: 0,
-            scroll_y: 0,
-            name: "".to_string(),
-            ext: "".to_string(),
-            size: 0,
-            read_times: 0,
-            progress: 0,
-            favorited: 0,
-            in_recent: 0,
+
+        ActiveModel {
+            id: NotSet,
+            book_path: Set(book_path),
+            update_at: Set(now),
+            create_at: Set(now),
+            page: Set(0),
+            page_count: Set(0),
+            crop: Set(1),
+            reflow: Set(0),
+            scroll_ori: Set(1),
+            zoom: Set(1.0),
+            scroll_x: Set(0),
+            scroll_y: Set(0),
+            name: Set("".to_string()),
+            ext: Set("".to_string()),
+            size: Set(0),
+            read_times: Set(0),
+            progress: Set(0),
+            favorited: Set(0),
+            in_recent: Set(0),
         }
     }
 
@@ -126,30 +80,32 @@ impl Recent {
         progress: i64,
         favorited: i32,
         in_recent: i32,
-    ) -> NewRecent {
+    ) -> ActiveModel {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
-        NewRecent {
-            book_path,
-            update_at: now,
-            create_at: now,
-            page: page,
-            page_count: page_count,
-            crop: crop,
-            reflow: reflow,
-            scroll_ori: scroll_ori,
-            zoom: zoom,
-            scroll_x: scroll_x,
-            scroll_y: scroll_y,
-            name,
-            ext,
-            size,
-            read_times,
-            progress,
-            favorited,
-            in_recent,
+
+        ActiveModel {
+            id: NotSet,
+            book_path: Set(book_path),
+            update_at: Set(now),
+            create_at: Set(now),
+            page: Set(page),
+            page_count: Set(page_count),
+            crop: Set(crop),
+            reflow: Set(reflow),
+            scroll_ori: Set(scroll_ori),
+            zoom: Set(zoom),
+            scroll_x: Set(scroll_x),
+            scroll_y: Set(scroll_y),
+            name: Set(name),
+            ext: Set(ext),
+            size: Set(size),
+            read_times: Set(read_times),
+            progress: Set(progress),
+            favorited: Set(favorited),
+            in_recent: Set(in_recent),
         }
     }
 }

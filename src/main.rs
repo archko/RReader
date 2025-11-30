@@ -18,7 +18,7 @@ use crate::decoder::pdf::utils::{generate_thumbnail_key};
 
 use crate::ui::MainViewmodel;
 use crate::dao::RecentDao;
-use crate::entity::{Recent, NewRecent};
+use crate::entity::{Recent};
 
 slint::include_modules!();
 
@@ -36,7 +36,24 @@ async fn main() -> Result<()> {
 
     // 创建主视图模型
     let viewmodel: Rc<RefCell<MainViewmodel>> = Rc::new(RefCell::new(MainViewmodel::new()));
-    viewmodel.borrow_mut().load_history(0); // 加载第一页历史记录
+    let _ = viewmodel.borrow_mut().load_history(0); // 加载第一页历史记录
+
+    // 设置历史记录到UI
+    {
+        let viewmodel_binding = viewmodel.borrow();
+        let history_records = viewmodel_binding.get_current_records();
+        let ui_history_items: Vec<UIRecent> = history_records
+            .iter()
+            .map(|record| UIRecent {
+                title: record.name.clone().into(),
+                path: record.book_path.clone().into(),
+                thumbnail: "".into(), // TODO: 可以在这里添加缩略图路径
+            })
+            .collect();
+
+        let history_model = Rc::new(VecModel::from(ui_history_items));
+        app.set_history_items(ModelRc::from(history_model));
+    }
 
     setup_open_handler(&app, page_view_state.clone(), viewmodel.clone());
     setup_viewport_handler(&app, page_view_state.clone());

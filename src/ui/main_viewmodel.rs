@@ -1,6 +1,7 @@
 use crate::dao::RecentDao;
 use crate::entity::Recent;
-use crate::entity::NewRecent;
+use crate::entity::recent::ActiveModel;
+use sea_orm::ActiveValue;
 
 pub const PAGE_SIZE: usize = 16;
 
@@ -78,11 +79,17 @@ impl MainViewmodel {
     }
 
     /// 添加新记录（打开文档时调用）
-    pub fn add_recent(&self, new_recent: NewRecent) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn add_recent(&self, new_recent: ActiveModel) -> Result<(), Box<dyn std::error::Error>> {
+        // 从 ActiveModel 中获取 book_path
+        let book_path = match new_recent.book_path {
+            ActiveValue::Set(ref path) => path.clone(),
+            _ => return Err("book_path must be set".into()),
+        };
+
         // 先查找是否已存在
-        if let Some(existing) = RecentDao::find_by_path_sync(&new_recent.book_path)? {
+        if let Some(_existing) = RecentDao::find_by_path_sync(&book_path)? {
             // 更新现有记录
-            RecentDao::update_by_path_sync(&existing.book_path, &new_recent)?;
+            RecentDao::update_by_path_sync(&book_path, new_recent)?;
         } else {
             // 插入新记录
             RecentDao::insert_sync(new_recent)?;
