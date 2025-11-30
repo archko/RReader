@@ -1,3 +1,6 @@
+#![allow(unused)]
+#![allow(dead_code)]
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -48,6 +51,10 @@ async fn main() -> Result<()> {
                 title: record.name.clone().into(),
                 path: record.book_path.clone().into(),
                 thumbnail: "".into(), // TODO: 可以在这里添加缩略图路径
+                page: record.page,
+                zoom: record.zoom,
+                scroll_x: record.scroll_x,
+                scroll_y: record.scroll_y,
             })
             .collect();
 
@@ -64,6 +71,7 @@ async fn main() -> Result<()> {
     setup_back_to_history_handler(&app, page_view_state.clone());
     setup_page_down_handler(&app, page_view_state.clone());
     setup_page_up_handler(&app, page_view_state.clone());
+    setup_history_item_click_handler(&app, page_view_state.clone(), viewmodel.clone());
 
     app.run()?;
     Ok(())
@@ -110,7 +118,7 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
                         0, // favorited
                         0, // in_recent
                     );
-                    if let Err(e) = viewmodel.borrow().add_recent(recent) {
+                    if let Err(e) = viewmodel.borrow().add_or_update_recent_by_path(recent) {
                         error!("Failed to add recent: {e}");
                     }
 
@@ -366,6 +374,63 @@ fn parse_page_from_param(page_param: &str) -> Option<usize> {
     } else {
         None
     }
+}
+
+/// 历史记录项点击处理
+fn setup_history_item_click_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>, viewmodel: Rc<RefCell<MainViewmodel>>) {
+    let weak_app = app.as_weak();
+
+    app.on_history_item_clicked(move |ui_recent| {
+        let path_str = ui_recent.path.to_string();
+        let path_obj = std::path::Path::new(&path_str);
+
+        if path_obj.exists() {
+            if let Some(app) = weak_app.upgrade() {
+                app.set_file_path(path_str.clone().into());
+            }
+
+            let open_result = page_view_state.borrow_mut().open_document(&path_obj);
+            match open_result {
+                Ok(_) => {
+                    // 更新历史记录的访问次数
+                    let mut vm = viewmodel.borrow_mut();
+
+                    if let Some(app) = weak_app.upgrade() {
+                        app.set_zoom(ui_recent.zoom);
+                        app.set_current_page(ui_recent.page);
+                        app.set_document_opened(true);
+
+                        let zoom = ui_recent.zoom;
+                        let mut borrowed_state = page_view_state.borrow_mut();
+                        let width = borrowed_state.view_size.0;
+                        let height = borrowed_state.view_size.1;
+                        // 设置保存的位置
+                        borrowed_state.update_offset(ui_recent.scroll_x as f32, ui_recent.scroll_y as f32);
+                        if let Some(_) = borrowed_state.jump_to_page(ui_recent.page as usize) {
+                            // 可以在这里做一些处理
+                        }
+                        borrowed_state.update_view_size(
+                            width,
+                            height,
+                            zoom,
+                            true
+                        );
+                    }
+
+                    // 文档打开后立即刷新视图
+                    if let Some(app) = weak_app.upgrade() {
+                        page_view_state.borrow_mut().update_visible_pages();
+                        refresh_view(&app, &page_view_state.borrow());
+                    }
+                }
+                Err(err) => {
+                    error!("Failed to open PDF from history: {err}");
+                }
+            }
+        } else {
+            error!("File does not exist: {path_str}");
+        }
+    });
 }
 
 fn update_view_offset(app: &MainWindow, page_view_state: &mut PageViewState, offset_x:f32, offset_y:f32) {

@@ -13,6 +13,10 @@ export struct UIRecent {
     title: string,
     path: string,
     thumbnail: string,
+    page: int,
+    zoom: float,
+    scroll_x: int,
+    scroll_y: int,
 }
 
 component DocumentView inherits Rectangle {
@@ -74,8 +78,7 @@ component DocumentView inherits Rectangle {
                 TouchArea {
                     pointer-event(event) => {
                         if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
-                            debug("down.event", (self.mouse-x / 1px), (self.mouse-y / 1px), event);
-                            //root.page-clicked(page.x + self.mouse-x / 1px, page.y + self.mouse-y / 1px, page.page_index);
+                            //debug("down.event", (self.mouse-x / 1px), (self.mouse-y / 1px), event);
                             root.page-clicked(self.mouse-x / 1px, self.mouse-y/ 1px, page.page_index);
                         }
                     }
@@ -140,6 +143,8 @@ component HistoryItem inherits Rectangle {
     in property <string> title;
     in property <string> path;
     in property <string> thumbnail;
+
+    callback item-clicked();
     
     // 使用TouchArea的has-hover属性来检测悬停状态
     in property <bool> hovered: touch-area.has-hover;
@@ -173,7 +178,7 @@ component HistoryItem inherits Rectangle {
             font-size: 14px;
             font-weight: 700;
             horizontal-alignment: left;
-            wrap: word-wrap;
+            wrap: no-wrap;
             color: root.hovered ? #6200ee : #000000;
         }
         
@@ -182,16 +187,16 @@ component HistoryItem inherits Rectangle {
             font-size: 12px;
             color: root.hovered ? #3700b3 : #666666;
             horizontal-alignment: left;
-            wrap: word-wrap;
+            wrap: no-wrap;
         }
     }
     
     touch-area := TouchArea {
         width: parent.width;
         height: parent.height;
-        
+
         clicked => {
-            // Handle click event
+            root.item-clicked();
         }
     }
 }
@@ -225,7 +230,8 @@ export component MainWindow inherits Window {
     callback page-down();
     callback page-up();
     callback page-clicked(float, float, int);
-    
+    callback history-item-clicked(UIRecent);
+
     Rectangle {
 
         VerticalBox {
@@ -264,6 +270,10 @@ export component MainWindow inherits Window {
                         title: item.title;
                         path: item.path;
                         thumbnail: item.thumbnail;
+
+                        item-clicked => {
+                            root.history-item-clicked(item);
+                        }
                     }
                 }
             }
