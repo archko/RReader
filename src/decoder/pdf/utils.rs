@@ -1,25 +1,9 @@
 use image::{DynamicImage, ImageBuffer, Rgba};
-use mupdf::{Matrix, Pixmap};
+use mupdf::{Document, Matrix, Outline, Pixmap};
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
+use regex::Regex;
 
-use crate::page::Page;
-
-/*#[derive(Clone)]
-pub struct PdfConfig {
-    pub zoom: f32,
-    pub rotation: f32,
-    pub crop: i32,
-}
-
-impl Default for PdfConfig {
-    fn default() -> Self {
-        Self {
-            zoom: 1.0,
-            rotation: 0.0,
-            crop: 0,
-        }
-    }
-}*/
+use crate::{entity::OutlineItem, page::Page};
 
 pub fn create_matrix(zoom: f32, rotation: f32) -> Matrix {
     let mut matrix = Matrix::new(zoom, 0.0, 0.0, zoom, 0.0, 0.0);
@@ -66,23 +50,63 @@ pub fn mupdf_to_image(pixmap: &Pixmap) -> DynamicImage {
 }
 
 pub fn convert_to_slint_image(image: &image::DynamicImage) -> Image {
-    //let start_time = Instant::now();
-    /*debug!(
-        "[STATE] Converting image with dimensions: {}x{}",
-        image.width(),
-        image.height()
-    );*/
     let rgba_image = image.to_rgba8();
     let (width, height) = rgba_image.dimensions();
 
     let slint_image = Image::from_rgba8_premultiplied(
         SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&rgba_image, width, height),
     );
-    //let duration = start_time.elapsed();
-    //info!("[STATE] Successfully converted image to Slint image，耗时: {:?}", duration);
     slint_image
 }
 
 pub fn generate_thumbnail_key(page: &Page) -> String {
     format!("{}-{}-{}", page.info.index, page.info.width, page.info.height)
+}
+
+/// MuPDF outline processing
+/// Load document outline items
+pub fn load_outline_items(doc: &Document) -> Vec<OutlineItem> {
+    let mut items = Vec::new();
+    if let Ok(outlines) = doc.outlines() {
+        process_outline_hierarchy(doc, &outlines, &mut items, 0);
+    }
+    items
+}
+
+fn process_outline_hierarchy(doc: &Document, outlines: &[Outline], items: &mut Vec<OutlineItem>, level: i32) {
+    for outline in outlines {
+        let title = outline.title.clone();
+        let uri = outline.uri.clone();
+
+        // Extract page from URI
+        let page = extract_page_from_uri(uri.clone().unwrap());
+
+        let item = OutlineItem::new(title, uri.clone().unwrap(), page, level);
+        items.push(item);
+
+        // Recursively process children with increased level
+        if let children = &outline.down {
+            process_outline_hierarchy(doc, &children, items, level + 1);
+        }
+    }
+}
+
+fn extract_page_from_uri(uri: String) -> i32 {
+    let pattern = Regex::new(r"#page=(\d+)").unwrap();
+    if let Some(captures) = pattern.captures(&uri) {
+        if let Some(page_match) = captures.get(1) {
+            if let Ok(page) = page_match.as_str().parse::<i32>() {
+                // PDFs are typically 1-based, but convert to 0-based for array indexing
+                return (page - 1).max(0);
+            }
+        }
+    }
+
+    // Try to parse the whole URI as a page number
+    if let Ok(page) = uri.parse::<i32>() {
+        return (page - 1).max(0);
+    }
+
+    // Default to page 0
+    0
 }

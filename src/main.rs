@@ -21,8 +21,7 @@ use crate::decoder::pdf::utils::{generate_thumbnail_key};
 use crate::ui::MainViewmodel;
 use crate::dao::RecentDao;
 use crate::dao::db_utils::init_db;
-use crate::entity::Recent;
-use crate::entity::NewRecent;
+use crate::entity::{Recent, NewRecent};
 
 slint::include_modules!();
 
@@ -39,7 +38,7 @@ async fn main() -> Result<()> {
     RecentDao::init();
 
     // 创建主视图模型
-    let viewmodel: Rc<RefCell<rreader::ui::MainViewmodel>> = Rc::new(RefCell::new(rreader::ui::MainViewmodel::new()));
+    let viewmodel: Rc<RefCell<MainViewmodel>> = Rc::new(RefCell::new(MainViewmodel::new()));
     viewmodel.borrow_mut().load_history(0); // 加载第一页历史记录
 
     setup_open_handler(&app, page_view_state.clone(), viewmodel.clone());
@@ -57,7 +56,7 @@ async fn main() -> Result<()> {
 }
 
 /// 打开文档事件
-fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>, viewmodel: Rc<RefCell<rreader::ui::MainViewmodel>>) {
+fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>, viewmodel: Rc<RefCell<MainViewmodel>>) {
     let weak_app = app.as_weak();
 
     app.on_open_file(move || {
@@ -79,8 +78,8 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
             match open_result {
                 Ok(_) => {
                     // 添加到历史记录
-                    let recent = rreader::entity::Recent::encode(
-                        Some(path_str.clone()),
+                    let recent = Recent::encode(
+                        path_str.clone(),
                         0, // 默认页
                         0, // 默认页数，会被更新
                         1, // crop
@@ -89,13 +88,13 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
                         1.0, // zoom
                         0, // scroll_x
                         0, // scroll_y
-                        Some(path_str.split('/').last().unwrap_or("").to_string()), // name
-                        Some(path_str.split('.').last().unwrap_or("").to_string()), // ext
-                        None, // size
-                        Some(1), // read_times
-                        Some(1), // progress
-                        None, // favorited
-                        Some(0), // in_recent
+                        path_str.split('/').last().unwrap_or("").to_string(), // name
+                        path_str.split('.').last().unwrap_or("").to_string(), // ext
+                        0, // size
+                        1, // read_times
+                        1, // progress
+                        0, // favorited
+                        0, // in_recent
                     );
                     if let Err(e) = viewmodel.borrow().add_recent(recent) {
                         error!("Failed to add recent: {e}");

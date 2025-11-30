@@ -150,6 +150,11 @@ impl Decoder for TiffDecoder {
         Ok(text_page.to_text()?)
     }
 
+    fn get_outline_items(&self) -> Result<Vec<crate::entity::OutlineItem>> {
+        use crate::decoder::pdf::utils::load_outline_items;
+        Ok(load_outline_items(&*self.document.borrow()))
+    }
+
     fn close(&mut self) {
         // Document 会在 Drop 时自动关闭
     }

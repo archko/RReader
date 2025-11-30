@@ -61,31 +61,31 @@ impl RecentDao {
     }
 
     pub fn find_by_path(other_path: &str) -> Result<Option<Recent>, Box<dyn std::error::Error>> {
-        let mut conn = get_connection()?;
+        /*let mut conn = get_connection()?;
         let result = recents
             .filter(recents::book_path.eq(other_path))
             .select(Recent::as_select())
             .first::<Recent>(&mut conn)
-            .optional()?;
-        Ok(result)
+            .optional()?;*/
+        Ok(None)
     }
 
     pub fn update_by_path(
         other_path: &str,
         other_recent: &NewRecent,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut conn = get_connection()?;
+        /*let mut conn = get_connection()?;
         diesel::update(recents)
             .filter(recents::book_path.eq(other_path))
             .set(other_recent)
             .execute(&mut conn)
-            .is_ok();
+            .is_ok();*/
         Ok(())
     }
 
     pub fn delete_by_path(other_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let mut conn = get_connection()?;
-        diesel::delete(recents.filter(recents::book_path.eq(other_path))).execute(&mut conn)?;
+        //let mut conn = get_connection()?;
+        //diesel::delete(recents.filter(recents::book_path.eq(other_path))).execute(&mut conn)?;
         Ok(())
     }
 }

@@ -5,6 +5,7 @@ use crate::cache::PageCache;
 use crate::decoder::decode_service::DecodeTask;
 use crate::decoder::pdf::utils::{convert_to_slint_image, generate_thumbnail_key};
 use crate::decoder::{DecodeService, Link, Priority, Rect};
+use crate::entity::OutlineItem;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
@@ -57,6 +58,8 @@ pub struct PageViewState {
 
     /// 页面链接缓存，以页码为键存储链接列表
     pub page_links: Rc<RefCell<HashMap<usize, Vec<Link>>>>,
+
+    pub outline_items: Vec<OutlineItem>,
 }
 
 impl PageViewState {
@@ -75,6 +78,7 @@ impl PageViewState {
             preload_screens: 1.0,
             visible_pages: Vec::new(),
             page_links: Rc::new(RefCell::new(HashMap::new())),
+            outline_items: Vec::new(),
         }
     }
 
@@ -90,6 +94,9 @@ impl PageViewState {
                 .map(|info: crate::decoder::PageInfo| Page::new(info, 0.0, 0.0, 0.0, 0.0))
                 .collect();
             self.pages = pages;
+
+            // 加载outline
+            self.outline_items = decoder.get_outline_items()?;
         }
         Ok(())
     }
@@ -102,6 +109,7 @@ impl PageViewState {
         self.visible_pages.clear();
         self.cache.clear();
         self.page_links.borrow_mut().clear();
+        self.outline_items.clear();
     }
 
     /// 更新视图尺寸和缩放

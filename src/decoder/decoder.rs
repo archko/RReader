@@ -1,4 +1,4 @@
-use crate::decoder::{Link, PageInfo, Rect};
+use crate::{decoder::{Link, PageInfo, Rect}, entity::OutlineItem};
 use image::DynamicImage;
 
 /// 文档解码器统一接口
@@ -35,6 +35,8 @@ pub trait Decoder {
 
     /// 获取页面文本（用于搜索/TTS）
     fn get_page_text(&self, page_index: usize) -> anyhow::Result<String>;
+    
+    fn get_outline_items(&self) -> anyhow::Result<Vec<OutlineItem>>;
 
     /// 关闭文档
     fn close(&mut self);
