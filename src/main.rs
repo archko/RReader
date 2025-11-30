@@ -162,11 +162,24 @@ fn setup_viewport_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageView
     let weak_app = app.as_weak();
     app.on_viewport_changed(move |width, height| {
         debug!("[Main] setup_viewport_handler.width: {:?}, height: {:?}", width, height);
+        let mut current_page = None;
+        {
+            let borrowed_state = page_view_state.borrow();
+            if !borrowed_state.pages.is_empty() {
+                current_page = borrowed_state.get_first_visible_page();
+            }
+        }
         {
             let mut borrowed_state = page_view_state.borrow_mut();
             let zoom = borrowed_state.zoom;
             borrowed_state.update_view_size(width, height, zoom, false);
             borrowed_state.update_visible_pages();
+
+            // 如果当前页面不再可见，则跳转到该页面
+            if let Some(page) = current_page {
+                borrowed_state.jump_to_page(page);
+                borrowed_state.update_visible_pages();
+            }
         }
         debug!("[Main] setup_viewport_handler");
         if let Some(app) = weak_app.upgrade() {
