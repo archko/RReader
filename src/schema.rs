@@ -11,7 +11,7 @@ diesel::table! {
         crop -> Integer,
         reflow -> Integer,
         scroll_ori -> Integer,
-        zoom -> Double,
+        zoom -> Float,
         scroll_x -> Integer,
         scroll_y -> Integer,
         name -> Text,

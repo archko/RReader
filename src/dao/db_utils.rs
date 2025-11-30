@@ -27,7 +27,7 @@ pub fn get_connection() -> Result<PooledConnection, Box<dyn std::error::Error>> 
 pub fn create_tables() -> Result<(), Box<dyn std::error::Error>> {
     let mut conn = get_connection()?;
     diesel::sql_query(r#"
-        CREATE TABLE IF NOT EXISTS recent (
+        CREATE TABLE IF NOT EXISTS recents (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             path TEXT,
             update_at BIGINT,
