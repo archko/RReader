@@ -78,10 +78,14 @@ fn process_outline_hierarchy(doc: &Document, outlines: &[Outline], items: &mut V
         let title = outline.title.clone();
         let uri = outline.uri.clone();
 
-        // Extract page from URI
-        let page = extract_page_from_uri(uri.clone().unwrap());
+        // Extract page from URI, default to 0 if uri is None
+        let (page, uri_val) = if let Some(ref uri_str) = uri {
+            (extract_page_from_uri(uri_str.clone()), uri_str.clone())
+        } else {
+            (0, "".to_string())
+        };
 
-        let item = OutlineItem::new(title, uri.clone().unwrap(), page, level);
+        let item = OutlineItem::new(title, uri_val, page, level);
         items.push(item);
 
         // Recursively process children with increased level

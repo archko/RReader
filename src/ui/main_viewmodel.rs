@@ -21,7 +21,7 @@ impl MainViewmodel {
 
     /// 加载历史记录，可分页
     pub fn load_history(&mut self, page: usize) -> Result<(), Box<dyn std::error::Error>> {
-        let all_recent = RecentDao::find_all()?;
+        let all_recent = RecentDao::find_all_sync()?;
         self.total_records = all_recent.len();
         self.page_index = page;
 
@@ -80,12 +80,12 @@ impl MainViewmodel {
     /// 添加新记录（打开文档时调用）
     pub fn add_recent(&self, new_recent: NewRecent) -> Result<(), Box<dyn std::error::Error>> {
         // 先查找是否已存在
-        if let Some(existing) = RecentDao::find_by_path(&new_recent.book_path)? {
+        if let Some(existing) = RecentDao::find_by_path_sync(&new_recent.book_path)? {
             // 更新现有记录
-            RecentDao::update_by_path(&existing.book_path, &new_recent)?;
+            RecentDao::update_by_path_sync(&existing.book_path, &new_recent)?;
         } else {
             // 插入新记录
-            RecentDao::insert(new_recent)?;
+            RecentDao::insert_sync(new_recent)?;
         }
 
         Ok(())

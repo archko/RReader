@@ -4,4 +4,3 @@ pub mod decoder;
 pub mod entity;
 pub mod page;
 pub mod ui;
-pub mod schema;

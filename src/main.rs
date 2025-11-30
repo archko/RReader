@@ -1,5 +1,3 @@
-#![allow(warnings)]
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -20,12 +18,11 @@ use crate::decoder::pdf::utils::{generate_thumbnail_key};
 
 use crate::ui::MainViewmodel;
 use crate::dao::RecentDao;
-use crate::dao::db_utils::init_db;
 use crate::entity::{Recent, NewRecent};
 
 slint::include_modules!();
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> Result<()> {
     env_logger::Builder::from_env(
         Env::default().default_filter_or("debug")  // 默认日志级别：info
@@ -34,8 +31,8 @@ async fn main() -> Result<()> {
     let page_view_state: Rc<RefCell<PageViewState>> = Rc::new(RefCell::new(PageViewState::new(Orientation::Vertical, 0)));
 
     // 初始化数据库
-    init_db("rreader.db");
-    RecentDao::init();
+    std::env::set_var("DATABASE_URL", "sqlite:book.db");
+    RecentDao::init_sync().unwrap();
 
     // 创建主视图模型
     let viewmodel: Rc<RefCell<MainViewmodel>> = Rc::new(RefCell::new(MainViewmodel::new()));

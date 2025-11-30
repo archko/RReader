@@ -1,10 +1,10 @@
-use crate::schema::recents;
-use diesel::{Insertable, Queryable, AsChangeset, Selectable};
+use sea_orm::entity::prelude::*;
+use sea_orm::{Set, NotSet};
 
-#[derive(Queryable, Selectable, Debug, Clone)]
-#[diesel(table_name = recents)]
-#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
-pub struct Recent {
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+#[sea_orm(table_name = "recents")]
+pub struct Model {
+    #[sea_orm(primary_key)]
     pub id: i32,
     pub book_path: String,
     pub update_at: i64,
@@ -26,8 +26,14 @@ pub struct Recent {
     pub in_recent: i32,
 }
 
-#[derive(Debug, Insertable, AsChangeset, Clone)]
-#[diesel(table_name = recents)]
+#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+pub enum Relation {}
+
+impl ActiveModelBehavior for ActiveModel {}
+
+pub type Recent = Model;
+
+#[derive(Debug, Clone)]
 pub struct NewRecent {
     pub book_path: String,
     pub update_at: i64,
@@ -47,6 +53,32 @@ pub struct NewRecent {
     pub progress: i64,
     pub favorited: i32,
     pub in_recent: i32,
+}
+
+impl NewRecent {
+    pub fn into_active_model(self) -> ActiveModel {
+        ActiveModel {
+            id: NotSet,
+            book_path: Set(self.book_path),
+            update_at: Set(self.update_at),
+            page: Set(self.page),
+            page_count: Set(self.page_count),
+            create_at: Set(self.create_at),
+            crop: Set(self.crop),
+            reflow: Set(self.reflow),
+            scroll_ori: Set(self.scroll_ori),
+            zoom: Set(self.zoom),
+            scroll_x: Set(self.scroll_x),
+            scroll_y: Set(self.scroll_y),
+            name: Set(self.name),
+            ext: Set(self.ext),
+            size: Set(self.size),
+            read_times: Set(self.read_times),
+            progress: Set(self.progress),
+            favorited: Set(self.favorited),
+            in_recent: Set(self.in_recent),
+        }
+    }
 }
 
 impl Recent {
