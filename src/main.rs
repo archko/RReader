@@ -3,11 +3,14 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::fs;
+use std::path::PathBuf;
 
 use anyhow::Result;
 use env_logger::Env;
 use log::{debug, error};
 use slint::{ComponentHandle, ModelRc, VecModel};
+use dirs;
 
 mod cache;
 mod decoder;
@@ -34,7 +37,27 @@ async fn main() -> Result<()> {
     let page_view_state: Rc<RefCell<PageViewState>> = Rc::new(RefCell::new(PageViewState::new(Orientation::Vertical, 0)));
 
     // 初始化数据库
-    std::env::set_var("DATABASE_URL", "sqlite:book.db");
+    // 获取用户数据目录，创建缓存目录
+    let data_dir = dirs::data_dir().expect("Unable to get data directory");
+    let app_data_dir = data_dir.join("RReader");
+    fs::create_dir_all(&app_data_dir).expect("Unable to create app data directory");
+
+    // 构建数据库路径
+    let db_path = app_data_dir.join("book.db");
+    let database_url = format!("sqlite:///{}", db_path.display());
+    println!("Database path: {:?}", db_path);
+    println!("Database URL: {}", database_url);
+    std::env::set_var("DATABASE_URL", &database_url);
+
+    // 确保数据库文件和表存在（第一次运行时会创建）
+    tokio::task::block_in_place(|| {
+        futures::executor::block_on(async {
+            crate::dao::ensure_database_ready(&db_path).await.expect("Failed to initialize database");
+        });
+    });
+
+    // 检查数据库版本或初始化
+    // Sea-ORM 不自动升级版本，使用固定的模式
     RecentDao::init_sync().unwrap();
 
     // 创建主视图模型
@@ -202,12 +225,12 @@ fn setup_scroll_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewSt
 /// 页面跳转处理
 fn setup_page_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
     let weak_app = app.as_weak();
-    app.on_page_changed(move |page_index| {
+    app.on_page_changed(move |page_index| {  // page_index is 1-based from UI
         {
             let mut borrowed_state = page_view_state.borrow_mut();
-            if borrowed_state.jump_to_page(page_index as usize).is_some() {
+            if borrowed_state.jump_to_page((page_index - 1) as usize).is_some() {
                 borrowed_state.update_visible_pages();
-                
+
                 if let Some(app) = weak_app.upgrade() {
                     refresh_view(&app, &*borrowed_state);
                 }
@@ -276,7 +299,7 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
     app.set_zoom(page_view_state.zoom);
 
     if let Some(first_visible) = page_view_state.get_first_visible_page() {
-        app.set_current_page(first_visible as i32);
+        app.set_current_page((first_visible + 1) as i32);  // UI expects 1-based page numbers
         //debug!("[Main] refresh_view set_current_page: {}", first_visible)
     }
 
@@ -426,7 +449,7 @@ fn setup_history_item_click_handler(app: &MainWindow, page_view_state: Rc<RefCel
 
                         // 设置保存的位置
                         borrowed_state.update_offset(ui_recent.scroll_x as f32, ui_recent.scroll_y as f32);
-                        if let Some(_) = borrowed_state.jump_to_page(ui_recent.page as usize) {
+                        if let Some(_) = borrowed_state.jump_to_page((ui_recent.page - 1) as usize) {
                             // 可以在这里做一些处理
                         }
                         borrowed_state.update_view_size(

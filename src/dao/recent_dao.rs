@@ -11,7 +11,6 @@ impl RecentDao {
         dotenv().ok();
         let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
         crate::dao::init_db(&database_url).await?;
-        //crate::dao::create_tables().await?;
         Ok(())
     }
 
