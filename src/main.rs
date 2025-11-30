@@ -138,6 +138,9 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
                             zoom,
                             true
                         );
+
+                        // 设置大纲项到UI
+                        set_outline_to_ui(&app, &borrowed_state);
                     }
 
                     // 文档打开后立即刷新视图
@@ -404,6 +407,10 @@ fn setup_history_item_click_handler(app: &MainWindow, page_view_state: Rc<RefCel
                         let mut borrowed_state = page_view_state.borrow_mut();
                         let width = borrowed_state.view_size.0;
                         let height = borrowed_state.view_size.1;
+
+                        // 设置大纲项到UI
+                        set_outline_to_ui(&app, &borrowed_state);
+
                         // 设置保存的位置
                         borrowed_state.update_offset(ui_recent.scroll_x as f32, ui_recent.scroll_y as f32);
                         if let Some(_) = borrowed_state.jump_to_page(ui_recent.page as usize) {
@@ -431,6 +438,16 @@ fn setup_history_item_click_handler(app: &MainWindow, page_view_state: Rc<RefCel
             error!("File does not exist: {path_str}");
         }
     });
+}
+
+/// 设置大纲项到UI
+fn set_outline_to_ui(app: &MainWindow, page_view_state: &PageViewState) {
+    let ui_outline_items: Vec<UIOutlineItem> = page_view_state.outline_items.iter().map(|oi| UIOutlineItem {
+        title: oi.title.clone().into(),
+        page: oi.page,
+        level: oi.level,
+    }).collect();
+    app.set_outline_items(ModelRc::from(Rc::new(VecModel::from(ui_outline_items)) as Rc<dyn slint::Model<Data = UIOutlineItem>>));
 }
 
 fn update_view_offset(app: &MainWindow, page_view_state: &mut PageViewState, offset_x:f32, offset_y:f32) {

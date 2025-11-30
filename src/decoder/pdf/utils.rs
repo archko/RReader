@@ -1,7 +1,8 @@
 use image::{DynamicImage, ImageBuffer, Rgba};
+use log::debug;
 use mupdf::{Document, Matrix, Outline, Pixmap};
-use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 use regex::Regex;
+use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
 use crate::{entity::OutlineItem, page::Page};
 
@@ -60,7 +61,10 @@ pub fn convert_to_slint_image(image: &image::DynamicImage) -> Image {
 }
 
 pub fn generate_thumbnail_key(page: &Page) -> String {
-    format!("{}-{}-{}", page.info.index, page.info.width, page.info.height)
+    format!(
+        "{}-{}-{}",
+        page.info.index, page.info.width, page.info.height
+    )
 }
 
 /// MuPDF outline processing
@@ -73,25 +77,25 @@ pub fn load_outline_items(doc: &Document) -> Vec<OutlineItem> {
     items
 }
 
-fn process_outline_hierarchy(doc: &Document, outlines: &[Outline], items: &mut Vec<OutlineItem>, level: i32) {
+fn process_outline_hierarchy(
+    doc: &Document,
+    outlines: &[Outline],
+    items: &mut Vec<OutlineItem>,
+    level: i32,
+) {
     for outline in outlines {
         let title = outline.title.clone();
         let uri = outline.uri.clone();
+        let page = outline.page.unwrap() as i32;
+        //debug!("extract_page_from_uri:{:?}, {:?}", page, uri.clone());
 
-        // Extract page from URI, default to 0 if uri is None
-        let (page, uri_val) = if let Some(ref uri_str) = uri {
-            (extract_page_from_uri(uri_str.clone()), uri_str.clone())
-        } else {
-            (0, "".to_string())
-        };
-
-        let item = OutlineItem::new(title, uri_val, page, level);
+        let item = OutlineItem::new(title, uri, page, level);
+        //debug!("outline:{:?}, {:?}", level, item.clone());
         items.push(item);
 
         // Recursively process children with increased level
-        if let children = &outline.down {
-            process_outline_hierarchy(doc, &children, items, level + 1);
-        }
+        let children = &outline.down;
+        process_outline_hierarchy(doc, &children, items, level + 1);
     }
 }
 
