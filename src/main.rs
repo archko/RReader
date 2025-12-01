@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use env_logger::Env;
-use log::{debug, error};
+use log::{debug, error, info};
 use slint::{ComponentHandle, ModelRc, VecModel};
 use dirs;
 
@@ -75,9 +75,6 @@ async fn main() -> Result<()> {
                 path: record.book_path.clone().into(),
                 thumbnail: "".into(), // TODO: 可以在这里添加缩略图路径
                 page: record.page,
-                zoom: record.zoom,
-                scroll_x: record.scroll_x,
-                scroll_y: record.scroll_y,
             })
             .collect();
 
@@ -91,7 +88,7 @@ async fn main() -> Result<()> {
     setup_page_handler(&app, page_view_state.clone());
     setup_zoom_handler(&app, page_view_state.clone());
     setup_page_click_handler(&app, page_view_state.clone());
-    setup_back_to_history_handler(&app, page_view_state.clone());
+    setup_back_to_history_handler(&app, page_view_state.clone(), viewmodel.clone());
     setup_page_down_handler(&app, page_view_state.clone());
     setup_page_up_handler(&app, page_view_state.clone());
     setup_history_item_click_handler(&app, page_view_state.clone(), viewmodel.clone());
@@ -122,39 +119,25 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
             let open_result = page_view_state.borrow_mut().open_document(&path);
             match open_result {
                 Ok(_) => {
-                    // 添加到历史记录
-                    let recent = Recent::encode(
-                        path_str.clone(),
-                        0, // 默认页
-                        0, // 默认页数，会被更新
-                        1, // crop
-                        1, // scroll_ori (vertical)
-                        0, // reflow
-                        1.0, // zoom
-                        0, // scroll_x
-                        0, // scroll_y
-                        path_str.split('/').last().unwrap_or("").to_string(), // name
-                        path_str.split('.').last().unwrap_or("").to_string(), // ext
-                        0, // size
-                        1, // read_times
-                        1, // progress
-                        0, // favorited
-                        0, // in_recent
-                    );
-                    if let Err(e) = viewmodel.borrow().add_or_update_recent_by_path(recent) {
-                        error!("Failed to add recent: {e}");
-                    }
+                    // 先查询数据库是否存在记录
+                    let existing_recent = viewmodel.borrow().get_recent_by_path(&path_str).unwrap_or(None);
+
+                    let (zoom, page, scroll_x, scroll_y) = if let Some(ref rec) = existing_recent {
+                        (rec.zoom, rec.page, rec.scroll_x, rec.scroll_y)
+                    } else {
+                        (1.0, 1, 0, 0) // 默认值
+                    };
 
                     if let Some(app) = weak_app.upgrade() {
-                        app.set_zoom(1.0);
+                        app.set_zoom(zoom);
+                        app.set_current_page(page);
                         app.set_document_opened(true);
 
-                        let zoom = 1.0; // 初始缩放值
+                        let zoom = zoom;
                         let mut borrowed_state = page_view_state.borrow_mut();
                         let width = borrowed_state.view_size.0;
                         let height = borrowed_state.view_size.1;
-                        //重置页面位置
-                        borrowed_state.update_offset(0.0, 0.0);
+                        
                         borrowed_state.update_view_size(
                             width,
                             height,
@@ -162,8 +145,39 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
                             true
                         );
 
+                        // 设置保存的位置
+                        if let Some(_) = borrowed_state.jump_to_page((page - 1) as usize) {
+                            // 可以在这里做一些处理
+                        }
+                        //borrowed_state.update_offset(scroll_x as f32, scroll_y as f32);
+
                         // 设置大纲项到UI
                         set_outline_to_ui(&app, &borrowed_state);
+                    }
+
+                    // 如果没有记录，插入新记录
+                    if existing_recent.is_none() {
+                        let recent = Recent::encode(
+                            path_str.clone(),
+                            0, // 默认页
+                            0, // 默认页数，会被更新
+                            1, // crop
+                            1, // scroll_ori (vertical)
+                            0, // reflow
+                            1.0, // zoom
+                            0, // scroll_x
+                            0, // scroll_y
+                            path_str.split('/').last().unwrap_or("").to_string(), // name
+                            path_str.split('.').last().unwrap_or("").to_string(), // ext
+                            0, // size
+                            0, // read_times
+                            1, // progress
+                            0, // favorited
+                            0, // in_recent
+                        );
+                        if let Err(e) = viewmodel.borrow().add_recent(recent) {
+                            error!("Failed to add recent: {e}");
+                        }
                     }
 
                     // 文档打开后立即刷新视图
@@ -198,7 +212,7 @@ fn setup_viewport_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageView
             borrowed_state.update_view_size(width, height, zoom, false);
             borrowed_state.update_visible_pages();
 
-            // 如果当前页面不再可见，则跳转到该页面
+            // 如果当前页面不再可见，则跳转到该页面,大纲显示与隐藏会触发布局变化
             if let Some(page) = current_page {
                 borrowed_state.jump_to_page(page);
                 borrowed_state.update_visible_pages();
@@ -318,15 +332,52 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
     );*/
 }
 
-fn setup_back_to_history_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
+fn setup_back_to_history_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>, viewmodel: Rc<RefCell<MainViewmodel>>) {
     let weak_app = app.as_weak();
+    let weak_viewmodel = Rc::downgrade(&viewmodel);
     app.on_back_to_history(move || {
-        // 清空文件路径
         if let Some(app) = weak_app.upgrade() {
+            let current_path = app.get_file_path().to_string();
+
+            if !current_path.is_empty() {
+                // 获取当前可见页的第一页
+                let page = page_view_state.borrow().get_first_visible_page();
+                let zoom = page_view_state.borrow().zoom;
+                let (offset_x, offset_y) = page_view_state.borrow().view_offset;
+
+                info!("back to history: page:{:?}, zoom:{:?}, offset_x:{:?}, offset_y:{:?}, path:{:?}", page, zoom, offset_x, offset_y, current_path);
+                // 更新记录的状态
+                if let Some(vm) = weak_viewmodel.upgrade() {
+                    let update_result = vm.borrow().update_recent_with_state(&current_path, page, zoom, offset_x, offset_y);
+                    if let Err(e) = update_result {
+                        error!("Failed to update recent state: {e}");
+                    }
+                }
+            }
+
+            // 再刷新当前历史记录
+            if let Some(vm) = weak_viewmodel.upgrade() {
+                let _ = vm.borrow_mut().load_history(0);
+                let vm_binding = vm.borrow();
+                let history_records = vm_binding.get_current_records();
+                let ui_history_items: Vec<UIRecent> = history_records
+                    .iter()
+                    .map(|record| UIRecent {
+                        title: record.name.clone().into(),
+                        path: record.book_path.clone().into(),
+                        thumbnail: "".into(),
+                        page: record.page
+                    })
+                    .collect();
+                let history_model = Rc::new(VecModel::from(ui_history_items));
+                app.set_history_items(ModelRc::from(history_model));
+            }
+
+            // 清空文件路径
             app.set_file_path("".into());
             app.set_document_opened(false);
         }
-        
+
         // 重置页面状态
         let mut borrowed_state = page_view_state.borrow_mut();
         borrowed_state.shutdown();
@@ -428,36 +479,64 @@ fn setup_history_item_click_handler(app: &MainWindow, page_view_state: Rc<RefCel
                 app.set_file_path(path_str.clone().into());
             }
 
+            // 从MainViewmodel的current_page_records查询与ui_recent路径相同的记录
+            let recent_record = viewmodel.borrow().get_current_records()
+                .iter()
+                .find(|rec| rec.book_path == path_str)
+                .cloned();
+
             let open_result = page_view_state.borrow_mut().open_document(&path_obj);
             match open_result {
                 Ok(_) => {
-                    // 更新历史记录的访问次数
-                    let mut vm = viewmodel.borrow_mut();
-
                     if let Some(app) = weak_app.upgrade() {
-                        app.set_zoom(ui_recent.zoom);
-                        app.set_current_page(ui_recent.page);
-                        app.set_document_opened(true);
+                        // 使用从viewmodel查询到的recent对象替换ui_recent
+                        if let Some(ref rec) = recent_record {
+                            app.set_zoom(rec.zoom);
+                            app.set_current_page(rec.page);
+                            app.set_document_opened(true);
+                            info!("history_item.page:{:?}, zoom:{:?}, path:{:?}", rec.page, rec.zoom, rec.book_path);
 
-                        let zoom = ui_recent.zoom;
-                        let mut borrowed_state = page_view_state.borrow_mut();
-                        let width = borrowed_state.view_size.0;
-                        let height = borrowed_state.view_size.1;
+                            let zoom = rec.zoom;
+                            let mut borrowed_state = page_view_state.borrow_mut();
+                            let width = borrowed_state.view_size.0;
+                            let height = borrowed_state.view_size.1;
 
-                        // 设置大纲项到UI
-                        set_outline_to_ui(&app, &borrowed_state);
+                            // 设置大纲项到UI
+                            set_outline_to_ui(&app, &borrowed_state);
 
-                        // 设置保存的位置
-                        borrowed_state.update_offset(ui_recent.scroll_x as f32, ui_recent.scroll_y as f32);
-                        if let Some(_) = borrowed_state.jump_to_page((ui_recent.page - 1) as usize) {
-                            // 可以在这里做一些处理
+                            borrowed_state.update_view_size(
+                                width,
+                                height,
+                                zoom,
+                                true
+                            );
+                            // 设置保存的位置
+                            //borrowed_state.update_offset(rec.scroll_x as f32, rec.scroll_y as f32);
+                            if let Some(_) = borrowed_state.jump_to_page((rec.page - 1) as usize) {
+                                // 可以在这里做一些处理
+                            }
+                        } else {
+                            // 如果没有找到记录，使用默认值
+                            app.set_zoom(1.0);
+                            app.set_current_page(1);
+                            app.set_document_opened(true);
+
+                            let zoom = 1.0;
+                            let mut borrowed_state = page_view_state.borrow_mut();
+                            let width = borrowed_state.view_size.0;
+                            let height = borrowed_state.view_size.1;
+
+                            // 设置大纲项到UI
+                            set_outline_to_ui(&app, &borrowed_state);
+
+                            borrowed_state.update_offset(0.0, 0.0);
+                            borrowed_state.update_view_size(
+                                width,
+                                height,
+                                zoom,
+                                true
+                            );
                         }
-                        borrowed_state.update_view_size(
-                            width,
-                            height,
-                            zoom,
-                            true
-                        );
                     }
 
                     // 文档打开后立即刷新视图

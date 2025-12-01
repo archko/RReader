@@ -32,6 +32,15 @@ impl RecentDao {
         Ok(results)
     }
 
+    pub async fn find_all_ordered_by_update_at_desc() -> Result<Vec<Recent>, DbErr> {
+        let db = crate::dao::get_connection().await?;
+        let results = Entity::find()
+            .order_by_desc(crate::entity::recent::Column::UpdateAt)
+            .all(&*db)
+            .await?;
+        Ok(results)
+    }
+
     pub async fn update(id: i32, update_data: ActiveModel) -> Result<(), DbErr> {
         let db = crate::dao::get_connection().await?;
         update_data.update(&*db).await?;
@@ -154,6 +163,14 @@ impl RecentDao {
         tokio::task::block_in_place(|| {
             futures::executor::block_on(async {
                 Self::find_all().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+            })
+        })
+    }
+
+    pub fn find_all_ordered_by_update_at_desc_sync() -> Result<Vec<Recent>, Box<dyn std::error::Error>> {
+        tokio::task::block_in_place(|| {
+            futures::executor::block_on(async {
+                Self::find_all_ordered_by_update_at_desc().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
             })
         })
     }

@@ -1,6 +1,7 @@
 use crate::dao::RecentDao;
 use crate::entity::Recent;
 use crate::entity::recent::ActiveModel;
+use std::time::SystemTime;
 use log::debug;
 use sea_orm::ActiveValue;
 
@@ -21,9 +22,9 @@ impl MainViewmodel {
         }
     }
 
-    /// 加载历史记录，可分页
+    /// 加载历史记录，可分页，按update_at倒序
     pub fn load_history(&mut self, page: usize) -> Result<(), Box<dyn std::error::Error>> {
-        let all_recent = RecentDao::find_all_sync()?;
+        let all_recent = RecentDao::find_all_ordered_by_update_at_desc_sync()?;
         self.total_records = all_recent.len();
         self.page_index = page;
 
@@ -81,8 +82,54 @@ impl MainViewmodel {
         Ok(())
     }
 
+    /// 获取指定路径的记录
+    pub fn get_recent_by_path(&self, path: &str) -> Result<Option<Recent>, Box<dyn std::error::Error>> {
+        RecentDao::find_by_path_sync(path)
+    }
+
+    /// 更新指定路径的阅读次数
+    pub fn update_read_times(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(mut rec) = RecentDao::find_by_path_sync(path)? {
+            rec.read_times += 1;
+            let now = SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis() as i64;
+            let active = ActiveModel {
+                id: ActiveValue::Set(rec.id),
+                read_times: ActiveValue::Set(rec.read_times),
+                update_at: ActiveValue::Set(now),
+                ..Default::default()
+            };
+            RecentDao::update_by_path_sync(path, active)?;
+        }
+        Ok(())
+    }
+
+    /// 更新指定路径的状态（页面、缩放、滚动位置），同时更新阅读次数和更新时间
+    pub fn update_recent_with_state(&self, path: &str, page: Option<usize>, zoom: f32, scroll_x: f32, scroll_y: f32) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(mut rec) = RecentDao::find_by_path_sync(path)? {
+            let page_val = page.map(|p| (p + 1) as i32).unwrap_or(rec.page); // 如果没有提供页面，使用当前值
+            let read_times = rec.read_times + 1; // 增加阅读次数
+            let now = SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis() as i64;
+            let active = ActiveModel {
+                id: ActiveValue::Set(rec.id),
+                page: ActiveValue::Set(page_val),
+                zoom: ActiveValue::Set(zoom),
+                scroll_x: ActiveValue::Set(scroll_x as i32),
+                scroll_y: ActiveValue::Set(scroll_y as i32),
+                read_times: ActiveValue::Set(read_times),
+                update_at: ActiveValue::Set(now),
+                ..Default::default()
+            };
+            RecentDao::update_by_path_sync(path, active)?;
+        }
+        Ok(())
+    }
+
     /// 添加新记录（打开文档时调用）
-    pub fn add_or_update_recent_by_path(&self, new_recent: ActiveModel) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn add_recent(&self, new_recent: ActiveModel) -> Result<(), Box<dyn std::error::Error>> {
         // 从 ActiveModel 中获取 book_path
         let book_path = match new_recent.book_path {
             ActiveValue::Set(ref path) => path.clone(),

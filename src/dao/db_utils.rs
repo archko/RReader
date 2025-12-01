@@ -61,7 +61,7 @@ pub async fn create_tables() -> Result<(), DbErr> {
         .collect();
 
     if result.is_empty() {
-        debug!("ensure_database_ready.表不存在，创建之:{:?}", db_path);
+        debug!("ensure_database_ready.表不存在，创建之");
         // 表不存在，创建之
         db.execute_unprepared(r#"
             CREATE TABLE recents (
