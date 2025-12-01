@@ -1,4 +1,4 @@
-use log::debug;
+use log::{debug, info};
 
 use super::Page;
 use crate::cache::PageCache;
@@ -102,7 +102,7 @@ impl PageViewState {
     }
 
     pub fn reset(&mut self) {
-        debug!("[PageViewState] reset");
+        info!("[PageViewState] reset");
         self.pages.clear();
         self.total_width = 0.0;
         self.total_height = 0.0;
@@ -118,7 +118,7 @@ impl PageViewState {
         let zoom_changed = (self.zoom - zoom).abs() > 0.001;
 
         if !size_changed && !zoom_changed && !force {
-            debug!(
+            info!(
                 "[PageViewState] don't update_view_size. w-h:{:?}-{:?}, zoom:{:?}",
                 width, height, zoom
             );
@@ -127,7 +127,7 @@ impl PageViewState {
 
         self.view_size = (width, height);
         self.zoom = zoom;
-        debug!(
+        info!(
             "[PageViewState] update_view_size. w-h:{:?}-{:?}, zoom:{:?}, view:{:?}-{:?}",
             width, height, zoom, self.view_size.0, self.view_size.1
         );
@@ -176,10 +176,6 @@ impl PageViewState {
             page.info.scale = scale;
 
             current_y += scaled_height;
-            /*debug!(
-                "[PageViewState] layout_vertical pages_len:{} view_size:{:?}, offset:{:?}, w-h:{:?}-{:?}",
-                page.info.index, self.view_size, self.view_offset, scaled_width, scaled_height
-            );*/
         }
 
         debug!(
@@ -387,7 +383,7 @@ impl PageViewState {
                     let scaled_right = link.bounds.right * scale;
                     let scaled_top = link.bounds.top * scale;
                     let scaled_bottom = link.bounds.bottom * scale;
-                    debug!("[PageViewState] link check: click_x={}, click_y={}, link=({}, {}, {}, {}) scaled to ({}, {}, {}, {})",
+                    info!("[PageViewState] link check: click_x={}, click_y={}, link=({}, {}, {}, {}) scaled to ({}, {}, {}, {})",
                                    doc_x, doc_y, link.bounds.left, link.bounds.top, link.bounds.right, link.bounds.bottom,
                                    scaled_left, scaled_top, scaled_right, scaled_bottom);
                     if doc_x >= scaled_left
@@ -400,7 +396,7 @@ impl PageViewState {
                 }
             }
         } else {
-            debug!(
+            info!(
                 "[PageViewState] handle_click no links cached for page_index:{}",
                 index
             );
@@ -427,7 +423,7 @@ impl PageViewState {
 
     /// 回收资源
     pub fn shutdown(&mut self) {
-        debug!("[PageViewState] shutdown");
+        info!("[PageViewState] shutdown");
 
         for page in &mut self.pages {
             page.recycle();

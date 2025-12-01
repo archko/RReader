@@ -63,7 +63,7 @@ impl DecodeService {
             let decoder = match self.decoder.as_ref() {
                 Some(decoder) => decoder,
                 None => {
-                    debug!(
+                    info!(
                         "[DecodeService] 页面 {} 渲染失败: No decoder available",
                         request.page_info.index
                     );
@@ -94,7 +94,7 @@ impl DecodeService {
 
                 (request.callback)(Ok(decode_result));
             } else if let Err(e) = result {
-                debug!(
+                info!(
                     "[DecodeService] 页面 {} 渲染失败: {}",
                     request.page_info.index, e
                 );
@@ -120,7 +120,7 @@ impl DecodeService {
     }
 
     pub fn destroy(&mut self) {
-        debug!("[DecodeService] Destroying decoder service and clearing queue");
+        info!("[DecodeService] Destroying decoder service and clearing queue");
 
         self.request_queue.borrow_mut().clear();
         self.decoder = None;
