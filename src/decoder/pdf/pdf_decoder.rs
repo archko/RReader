@@ -22,7 +22,7 @@ impl PdfDecoder {
             document.layout(1024.0, 1280.0, 25.0)?;
         }
         let page_count = document.page_count()? as usize;
-        debug!("[PDF] Document opened with {} pages", page_count);
+        info!("[PDF] Document opened with {} pages", page_count);
 
         // 预加载所有页面尺寸
         let mut pages_info = Vec::with_capacity(page_count);

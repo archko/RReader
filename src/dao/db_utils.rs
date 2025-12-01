@@ -3,7 +3,7 @@ use lazy_static::lazy_static;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::path::Path;
-use log::{debug};
+use log::{debug, info};
 
 lazy_static! {
     static ref DATABASE: Mutex<Option<Arc<DatabaseConnection>>> = Mutex::new(None);
@@ -11,7 +11,7 @@ lazy_static! {
 
 /// 确保数据库文件和表存在，如果不存在则创建
 pub async fn ensure_database_ready(db_path: &Path) -> Result<(), DbErr> {
-    debug!("ensure_database_ready:{:?}", db_path);
+    info!("ensure_database_ready:{:?}", db_path);
     if !db_path.exists() {
         // 数据库文件不存在，先创建空文件
         if let Err(e) = std::fs::File::create(db_path) {
@@ -61,6 +61,7 @@ pub async fn create_tables() -> Result<(), DbErr> {
         .collect();
 
     if result.is_empty() {
+        debug!("ensure_database_ready.表不存在，创建之:{:?}", db_path);
         // 表不存在，创建之
         db.execute_unprepared(r#"
             CREATE TABLE recents (
