@@ -28,6 +28,17 @@ use crate::entity::{Recent};
 
 slint::include_modules!();
 
+fn set_history_to_ui(app: &MainWindow, ui_history_items: Vec<UIRecent>) {
+    let history_model = Rc::new(VecModel::from(ui_history_items.clone()));
+    app.set_history_items(ModelRc::from(history_model));
+
+    let columns = (1024 / 188).max(1);
+    let grouped: Vec<Vec<UIRecent>> = ui_history_items.chunks(columns).map(|c| c.to_vec()).collect();
+    let rows: Vec<HistoryRow> = grouped.into_iter().map(|vec| HistoryRow { items: ModelRc::from(Rc::new(VecModel::from(vec))) }).collect();
+    let history_rows_model = Rc::new(VecModel::from(rows));
+    app.set_history_rows(ModelRc::from(history_rows_model));
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::Builder::from_env(
@@ -78,8 +89,7 @@ async fn main() -> Result<()> {
             })
             .collect();
 
-        let history_model = Rc::new(VecModel::from(ui_history_items));
-        app.set_history_items(ModelRc::from(history_model));
+        set_history_to_ui(&app, ui_history_items);
     }
 
     setup_open_handler(&app, page_view_state.clone(), viewmodel.clone());
@@ -369,8 +379,7 @@ fn setup_back_to_history_handler(app: &MainWindow, page_view_state: Rc<RefCell<P
                         page: record.page
                     })
                     .collect();
-                let history_model = Rc::new(VecModel::from(ui_history_items));
-                app.set_history_items(ModelRc::from(history_model));
+                set_history_to_ui(&app, ui_history_items);
             }
 
             // 清空文件路径

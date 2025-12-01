@@ -16,6 +16,10 @@ export struct UIRecent {
     page: int,
 }
 
+struct HistoryRow {
+    items: [UIRecent],
+}
+
 export struct UIOutlineItem {
     title: string,
     page: int,
@@ -206,8 +210,8 @@ component HistoryItem inherits Rectangle {
 
 export component MainWindow inherits Window {
     title: "PDF Reader";
-    width: 1024px;
-    height: 768px;
+    preferred-width: 1024px;
+    preferred-height: 768px;
 
     in property <int> page-count: 0;
     in-out property <int> current-page: 0;
@@ -220,7 +224,9 @@ export component MainWindow inherits Window {
     in-out property <bool> scroll-events-enabled: true;
     in property <string> file-path: "/book/sample.pdf";
     in property <bool> document-opened: false;
+
     in property <[UIRecent]> history-items: [];
+    in property <[HistoryRow]> history-rows: [];
     in-out property <length> viewport-height: 0px;
     in-out property <bool> outline-visible: false;
     in property <[UIOutlineItem]> outline-items: [];
@@ -266,11 +272,11 @@ export component MainWindow inherits Window {
             
             VerticalBox {
                 spacing: 8px;
-                HorizontalBox {
+                for row in root.history-rows : HorizontalBox {
                     spacing: 8px;
-                    for item in root.history-items: HistoryItem {
-                        width: 160px;
-                        height: 200px;
+                    for item in row.items : HistoryItem {
+                        width: 180px;
+                        height: 240px;
                         title: item.title;
                         path: item.path;
                         thumbnail: item.thumbnail;
