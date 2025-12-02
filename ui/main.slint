@@ -170,7 +170,7 @@ component HistoryItem inherits Rectangle {
         
         Rectangle {
             background: #f5f5f5;
-            height: 120px;
+            height: 160px;
             
             Image {
                 source: @image-url("../assets/slint-logo-full-light.svg");
@@ -208,6 +208,53 @@ component HistoryItem inherits Rectangle {
     }
 }
 
+
+component HistoryView inherits Rectangle {
+    in property <[HistoryRow]> history-rows;
+
+    callback viewport-changed(length, length);
+    callback item-clicked(UIRecent);
+
+    property <length> last-visible-width: 0px;
+    property <length> last-visible-height: 0px;
+
+    history_scroller := ScrollView {
+        width: root.width;
+        height: root.height;
+
+        VerticalBox {
+            spacing: 8px;
+            for row in history-rows : HorizontalBox {
+                spacing: 8px;
+                for item in row.items : HistoryItem {
+                    width: 180px;
+                    height: 240px;
+                    title: item.title;
+                    path: item.path;
+                    thumbnail: item.thumbnail;
+
+                    item-clicked => {
+                        root.item-clicked(item);
+                    }
+                }
+            }
+        }
+    }
+
+    history_viewport_timer := Timer {
+        interval: 200ms;
+        running: true;
+        triggered => {
+            if (root.last-visible-width != history_scroller.visible-width || root.last-visible-height != history_scroller.visible-height) {
+                root.last-visible-width = history_scroller.visible-width;
+                root.last-visible-height = history_scroller.visible-height;
+                root.viewport-changed(history_scroller.visible-width, history_scroller.visible-height);
+            }
+            history_viewport_timer.restart();
+        }
+    }
+}
+
 export component MainWindow inherits Window {
     title: "PDF Reader";
     preferred-width: 1024px;
@@ -241,6 +288,7 @@ export component MainWindow inherits Window {
     callback page-up();
     callback page-clicked(float, float, int);
     callback history-item-clicked(UIRecent);
+    callback history-viewport-changed(length, length);
 
     Rectangle {
 
@@ -269,23 +317,11 @@ export component MainWindow inherits Window {
                     }
                 }
             }
-            
-            VerticalBox {
-                spacing: 8px;
-                for row in root.history-rows : HorizontalBox {
-                    spacing: 8px;
-                    for item in row.items : HistoryItem {
-                        width: 180px;
-                        height: 240px;
-                        title: item.title;
-                        path: item.path;
-                        thumbnail: item.thumbnail;
 
-                        item-clicked => {
-                            root.history-item-clicked(item);
-                        }
-                    }
-                }
+            history_view := HistoryView {
+                history-rows: root.history-rows;
+                viewport-changed(width, height) => { root.history-viewport-changed(width, height); }
+                item-clicked(item) => { root.history-item-clicked(item); }
             }
         }
         

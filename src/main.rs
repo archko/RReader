@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{LazyLock, RwLock};
 
 use anyhow::Result;
 use env_logger::Env;
@@ -28,11 +29,14 @@ use crate::entity::{Recent};
 
 slint::include_modules!();
 
+static HISTORY_VIEWPORT_WIDTH: LazyLock<RwLock<f32>> = LazyLock::new(|| RwLock::new(1024.0));
+
 fn set_history_to_ui(app: &MainWindow, ui_history_items: Vec<UIRecent>) {
     let history_model = Rc::new(VecModel::from(ui_history_items.clone()));
     app.set_history_items(ModelRc::from(history_model));
 
-    let columns = (1024 / 188).max(1);
+    let width = *HISTORY_VIEWPORT_WIDTH.read().unwrap();
+    let columns = (width / 188.0).floor().max(1.0) as usize;
     let grouped: Vec<Vec<UIRecent>> = ui_history_items.chunks(columns).map(|c| c.to_vec()).collect();
     let rows: Vec<HistoryRow> = grouped.into_iter().map(|vec| HistoryRow { items: ModelRc::from(Rc::new(VecModel::from(vec))) }).collect();
     let history_rows_model = Rc::new(VecModel::from(rows));
@@ -94,6 +98,7 @@ async fn main() -> Result<()> {
 
     setup_open_handler(&app, page_view_state.clone(), viewmodel.clone());
     setup_viewport_handler(&app, page_view_state.clone());
+    setup_history_viewport_handler(&app, page_view_state.clone());
     setup_scroll_handler(&app, page_view_state.clone());
     setup_page_handler(&app, page_view_state.clone());
     setup_zoom_handler(&app, page_view_state.clone());
@@ -232,6 +237,13 @@ fn setup_viewport_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageView
         if let Some(app) = weak_app.upgrade() {
             refresh_view(&app, &page_view_state.borrow());
         }
+    });
+}
+
+fn setup_history_viewport_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
+    app.on_history_viewport_changed(move |width, height| {
+        debug!("[Main] on_history_viewport_changed.width: {:?}, height: {:?}", width, height);
+        *HISTORY_VIEWPORT_WIDTH.write().unwrap() = width;
     });
 }
 
