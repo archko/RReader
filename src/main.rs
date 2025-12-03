@@ -11,6 +11,7 @@ use anyhow::Result;
 use env_logger::Env;
 use log::{debug, error, info};
 use floem::prelude::*;
+use floem::style::TextOverflow;
 use floem::event::EventPropagation;
 use dirs;
 
@@ -27,6 +28,8 @@ use crate::decoder::pdf::utils::generate_thumbnail_key;
 use crate::ui::MainViewmodel;
 use crate::dao::RecentDao;
 use crate::entity::{Recent};
+
+use std::env::set_var;
 
 static HISTORY_VIEWPORT_WIDTH: LazyLock<RwLock<f32>> = LazyLock::new(|| RwLock::new(1024.0));
 
@@ -61,7 +64,7 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
         if document_opened.get() {
             // 文档打开时的工具栏
             let open_button = button("Open")
-                .style(|s| s.padding(8.0).min_width(80.0))
+                .style(|s| s.padding(8.0).min_width(70.0))
                 .on_click({
 
                     let state = state.clone();
@@ -103,9 +106,18 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
                     }
                 });
 
+            let back_button = button("Back")
+                .style(|s| s.padding(8.0).min_width(70.0))
+                .on_click({
+                    let document_opened = document_opened_inner.clone();
+                    move |_| {
+                        document_opened.set(false);
+                        EventPropagation::Continue
+                    }
+                });
 
             let prev_button = button("Previous")
-                .style(|s| s.padding(8.0).min_width(80.0))
+                .style(|s| s.padding(8.0).min_width(70.0))
                 .on_click({
                     let state = state.clone();
                     let current_page = current_page_inner.clone();
@@ -120,7 +132,7 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
                 });
 
             let next_button = button("Next")
-                .style(|s| s.padding(8.0).min_width(80.0))
+                .style(|s| s.padding(8.0).min_width(70.0))
                 .on_click({
                     let state = state.clone();
                     let current_page = current_page_inner.clone();
@@ -137,7 +149,7 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
                 });
 
             let zoom_in_button = button("Zoom +")
-                .style(|s| s.padding(8.0).min_width(80.0))
+                .style(|s| s.padding(8.0).min_width(70.0))
                 .on_click({
                     let zoom_level = zoom_level_inner.clone();
                     let state = state.clone();
@@ -150,7 +162,7 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
                 });
 
             let zoom_out_button = button("Zoom -")
-                .style(|s| s.padding(8.0).min_width(80.0))
+                .style(|s| s.padding(8.0).min_width(70.0))
                 .on_click({
                     let zoom_level = zoom_level_inner.clone();
                     let state = state.clone();
@@ -164,25 +176,31 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
 
             h_stack((
                 open_button,
-                // 添加分隔符
-                container(empty()).style(|s| s.flex_grow(1.0)),
+                back_button,
+                // 页面和缩放信息
+                label(move || format!("Page {} / {} | Zoom: {:.1}%",
+                                      current_page.get(),
+                                      page_count.get(),
+                                      zoom_level.get() * 100.0))
+                    .style(|s| s.padding_right(8.0)),
+                // 文件路径，伸缩显示
+                container(label(move || file_path.get()))
+                    .style(|s| s.flex_grow(1.0).text_overflow(TextOverflow::Ellipsis)),
+                // 导航按钮
                 prev_button,
                 next_button,
                 zoom_out_button,
                 zoom_in_button,
-                // 状态文本
-                label(status_text).style(|s| s.padding(8.0)),
             ))
             .style(|s| {
                 s.padding(10.0)
-                    .background(Color::rgb(0.16, 0.16, 0.16))
-                    .color(Color::rgb(1.0, 1.0, 1.0))
-                    .gap(8.0)
+                    .background(Color::rgb(0.95, 0.95, 0.95))
+                    .gap(10.0)
             })
         } else {
             // 未打开文档时的工具栏
             let open_button = button("Open")
-                .style(|s| s.padding(8.0).min_width(80.0))
+                .style(|s| s.padding(8.0).min_width(70.0))
                 .on_click({
 
                     let state = state.clone();
@@ -225,7 +243,7 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
                 });
 
             let clear_button = button("Clear")
-                .style(|s| s.padding(8.0).min_width(80.0))
+                .style(|s| s.padding(8.0).min_width(70.0))
                 .on_click({
                     let history_items = history_items_inner.clone();
                     move |_| {
@@ -285,8 +303,6 @@ async fn setup_database() -> Result<()> {
     RecentDao::init_sync().unwrap();
     Ok(())
 }
-
-use std::env::set_var;
 
 fn main() {
     env_logger::Builder::from_env(
