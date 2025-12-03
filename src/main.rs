@@ -22,7 +22,7 @@ mod dao;
 mod entity;
 
 use page::{PageViewState, Orientation};
-use crate::decoder::pdf::utils::{generate_thumbnail_key};
+use crate::decoder::pdf::utils::generate_thumbnail_key;
 
 use crate::ui::MainViewmodel;
 use crate::dao::RecentDao;
@@ -41,110 +41,237 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
     // History items from database
     let history_items = RwSignal::new(initial_history);
 
-    let open_button = button("Open").on_click({
-        let state = page_view_state.clone();
-        let document_opened = document_opened.clone();
-        let current_page = current_page.clone();
-        let zoom_level = zoom_level.clone();
-        let file_path = file_path.clone();
-        move |_| {
-            let file_path_selected = rfd::FileDialog::new()
-                .add_filter("PDF Files", &["pdf"])
-                .add_filter("ePub Files", &["epub"])
-                .add_filter("MOBI Files", &["mobi"])
-                .add_filter("All Files", &["*"])
-                .set_title("Select File")
-                .pick_file();
-
-            if let Some(path) = file_path_selected.clone() {
-                let result = state.borrow_mut().open_document(&path);
-                if result.is_ok() {
-                    document_opened.set(true);
-                    file_path.set(path.to_string_lossy().to_string());
-                    current_page.set(1);
-                    zoom_level.set(1.0);
-                    if let Some(items) = path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string()) {
-                        // Update viewmodel etc.
-                    }
-                }
-            }
-            EventPropagation::Continue
-        }
-    });
-
-    let prev_button = button("Previous").on_click({
-        let state = page_view_state.clone();
-        let current_page = current_page.clone();
-        move |_| {
-            let new_page = (current_page.get() as usize).saturating_sub(1);
-            if new_page > 0 {
-                current_page.set(new_page as i32);
-                let _ = state.borrow_mut().jump_to_page(new_page.saturating_sub(1));
-            }
-            EventPropagation::Continue
-        }
-    });
-
-    let next_button = button("Next").on_click({
-        let state = page_view_state.clone();
-        let current_page = current_page.clone();
-        let page_count = page_count.clone();
-        move |_| {
-            let new_page = current_page.get() as usize + 1;
-            let max_pages = page_count.get() as usize;
-            if new_page <= max_pages {
-                current_page.set(new_page as i32);
-                let _ = state.borrow_mut().jump_to_page(new_page.saturating_sub(1));
-            }
-            EventPropagation::Continue
-        }
-    });
-
-    let zoom_in_button = button("Zoom +").on_click({
-        let zoom_level = zoom_level.clone();
-        let state = page_view_state.clone();
-        move |_| {
-            let new_zoom = (zoom_level.get() + 0.1).min(4.0);
-            zoom_level.set(new_zoom);
-            state.borrow_mut().update_zoom(new_zoom);
-            EventPropagation::Continue
-        }
-    });
-
-    let zoom_out_button = button("Zoom -").on_click({
-        let zoom_level = zoom_level.clone();
-        let state = page_view_state.clone();
-        move |_| {
-            let new_zoom = (zoom_level.get() - 0.1).max(0.5);
-            zoom_level.set(new_zoom);
-            state.borrow_mut().update_zoom(new_zoom);
-            EventPropagation::Continue
-        }
-    });
-
     let status_text = move || format!("Page {} / {} | Zoom: {:.1}% | File: {}",
                                       current_page.get(),
                                       page_count.get(),
                                       zoom_level.get() * 100.0,
                                       file_path.get());
 
-    let history_list = scroll(container(history_grid(history_items)).style(|s| s.width(100.pct()))).style(|s| s.size(100.pct(), 100.pct()));
+    // 工具栏布局 - 响应式
+    let toolbar = dyn_view(move || {
+        let state = page_view_state.clone();
+        let document_opened_inner = document_opened.clone();
+        let current_page_inner = current_page.clone();
+        let zoom_level_inner = zoom_level.clone();
+        let file_path_inner = file_path.clone();
+        let history_items_inner = history_items.clone();
+        let page_count_inner = page_count.clone();
 
-    let clear_button = button("Clear").on_click({
-        let history_items = history_items.clone();
-        move |_| {
-            history_items.set(vec![]);
-            EventPropagation::Continue
+        if document_opened.get() {
+            // 文档打开时的工具栏
+            let open_button = button("Open")
+                .style(|s| s.padding(8.0).min_width(80.0))
+                .on_click({
+
+                    let state = state.clone();
+                    let document_opened = document_opened_inner.clone();
+                    let current_page = current_page_inner.clone();
+                    let zoom_level = zoom_level_inner.clone();
+                    let file_path = file_path_inner.clone();
+                    let history_items = history_items_inner.clone();
+                    move |_| {
+                        let file_path_selected = rfd::FileDialog::new()
+                            .add_filter("PDF Files", &["pdf"])
+                            .add_filter("ePub Files", &["epub"])
+                            .add_filter("MOBI Files", &["mobi"])
+                            .add_filter("All Files", &["*"])
+                            .set_title("Select File")
+                            .pick_file();
+
+                        if let Some(path) = file_path_selected.clone() {
+                            let result = state.borrow_mut().open_document(&path);
+                            if result.is_ok() {
+                                document_opened.set(true);
+                                file_path.set(path.to_string_lossy().to_string());
+                                current_page.set(1);
+                                zoom_level.set(1.0);
+                                // Add to history
+                                if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                                    let new_item = HistoryItem {
+                                        title: file_name.to_string(),
+                                        path: path.to_string_lossy().to_string(),
+                                        page: 1,
+                                    };
+                                    let mut items = history_items.get();
+                                    items.insert(0, new_item);
+                                    history_items.set(items);
+                                }
+                            }
+                        }
+                        EventPropagation::Continue
+                    }
+                });
+
+            let clear_button = button("Clear")
+                .style(|s| s.padding(8.0).min_width(80.0))
+                .on_click({
+                    let history_items = history_items_inner.clone();
+                    move |_| {
+                        history_items.set(vec![]);
+                        EventPropagation::Continue
+                    }
+                });
+
+            let prev_button = button("Previous")
+                .style(|s| s.padding(8.0).min_width(80.0))
+                .on_click({
+                    let state = state.clone();
+                    let current_page = current_page_inner.clone();
+                    move |_| {
+                        let new_page = (current_page.get() as usize).saturating_sub(1);
+                        if new_page > 0 {
+                            current_page.set(new_page as i32);
+                            let _ = state.borrow_mut().jump_to_page(new_page.saturating_sub(1));
+                        }
+                        EventPropagation::Continue
+                    }
+                });
+
+            let next_button = button("Next")
+                .style(|s| s.padding(8.0).min_width(80.0))
+                .on_click({
+                    let state = state.clone();
+                    let current_page = current_page_inner.clone();
+                    let page_count = page_count_inner.clone();
+                    move |_| {
+                        let new_page = current_page.get() as usize + 1;
+                        let max_pages = page_count.get() as usize;
+                        if new_page <= max_pages {
+                            current_page.set(new_page as i32);
+                            let _ = state.borrow_mut().jump_to_page(new_page.saturating_sub(1));
+                        }
+                        EventPropagation::Continue
+                    }
+                });
+
+            let zoom_in_button = button("Zoom +")
+                .style(|s| s.padding(8.0).min_width(80.0))
+                .on_click({
+                    let zoom_level = zoom_level_inner.clone();
+                    let state = state.clone();
+                    move |_| {
+                        let new_zoom = (zoom_level.get() + 0.1).min(4.0);
+                        zoom_level.set(new_zoom);
+                        state.borrow_mut().update_zoom(new_zoom);
+                        EventPropagation::Continue
+                    }
+                });
+
+            let zoom_out_button = button("Zoom -")
+                .style(|s| s.padding(8.0).min_width(80.0))
+                .on_click({
+                    let zoom_level = zoom_level_inner.clone();
+                    let state = state.clone();
+                    move |_| {
+                        let new_zoom = (zoom_level.get() - 0.1).max(0.5);
+                        zoom_level.set(new_zoom);
+                        state.borrow_mut().update_zoom(new_zoom);
+                        EventPropagation::Continue
+                    }
+                });
+
+            h_stack((
+                open_button,
+                clear_button,
+                // 添加分隔符
+                container(empty()).style(|s| s.flex_grow(1.0)),
+                prev_button,
+                next_button,
+                zoom_out_button,
+                zoom_in_button,
+                // 状态文本
+                label(status_text).style(|s| s.padding(8.0)),
+            ))
+            .style(|s| {
+                s.padding(10.0)
+                    .background(Color::rgb(0.16, 0.16, 0.16))
+                    .color(Color::rgb(1.0, 1.0, 1.0))
+                    .gap(8.0)
+            })
+        } else {
+            // 未打开文档时的工具栏
+            let open_button = button("Open")
+                .style(|s| s.padding(8.0).min_width(80.0))
+                .on_click({
+
+                    let state = state.clone();
+                    let document_opened = document_opened_inner.clone();
+                    let current_page = current_page_inner.clone();
+                    let zoom_level = zoom_level_inner.clone();
+                    let file_path = file_path_inner.clone();
+                    let history_items = history_items_inner.clone();
+                    move |_| {
+                        let file_path_selected = rfd::FileDialog::new()
+                            .add_filter("PDF Files", &["pdf"])
+                            .add_filter("ePub Files", &["epub"])
+                            .add_filter("MOBI Files", &["mobi"])
+                            .add_filter("All Files", &["*"])
+                            .set_title("Select File")
+                            .pick_file();
+
+                        if let Some(path) = file_path_selected.clone() {
+                            let result = state.borrow_mut().open_document(&path);
+                            if result.is_ok() {
+                                document_opened.set(true);
+                                file_path.set(path.to_string_lossy().to_string());
+                                current_page.set(1);
+                                zoom_level.set(1.0);
+                                // Add to history
+                                if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                                    let new_item = HistoryItem {
+                                        title: file_name.to_string(),
+                                        path: path.to_string_lossy().to_string(),
+                                        page: 1,
+                                    };
+                                    let mut items = history_items.get();
+                                    items.insert(0, new_item);
+                                    history_items.set(items);
+                                }
+                            }
+                        }
+                        EventPropagation::Continue
+                    }
+                });
+
+            let clear_button = button("Clear")
+                .style(|s| s.padding(8.0).min_width(80.0))
+                .on_click({
+                    let history_items = history_items_inner.clone();
+                    move |_| {
+                        history_items.set(vec![]);
+                        EventPropagation::Continue
+                    }
+                });
+
+            h_stack((
+                open_button,
+                clear_button,
+            ))
+            .style(|s| {
+                s.padding(10.0)
+                    .background(Color::rgb(0.95, 0.95, 0.95))  // 浅色背景
+                    .gap(10.0)
+            })
         }
     });
 
-    // Always show toolbar + history grid
-    container(stack((
-        h_stack((
-            open_button,
-            clear_button,
-        )).style(|s| s.justify_end().gap(8.0).padding(10.0)),
-        scroll(history_list),
+    // 主内容区域 - 响应式
+    let content = dyn_view(move || {
+        if document_opened.get() {
+            // 文档查看区域 (这里需要实现文档显示)
+            container(label(|| "Document View"))
+                .style(|s| s.padding(10.0).size(100.pct(), 100.pct()))
+        } else {
+            // 历史记录
+            container(history_grid(history_items))
+                .style(|s| s.padding(10.0).size(100.pct(), 100.pct()))
+        }
+    });
+
+    // 整体布局：垂直堆叠工具栏和内容
+    container(v_stack((
+        toolbar,
+        scroll(content).style(|s| s.size(100.pct(), 100.pct())),
     )))
     .keyboard_navigable()
     .style(|s| s.size(100.pct(), 100.pct()))
@@ -217,48 +344,172 @@ struct HistoryItem {
 }
 
 fn history_grid(history_items: RwSignal<Vec<HistoryItem>>) -> impl IntoView {
-    // Return single column for now due to Floem constraints
-    // Each row is a horizontal stack of 4 cards
-    dyn_stack(
+    // 使用响应式网格布局
+    let grid = dyn_stack(
         move || {
             let items = history_items.get();
-            items.chunks(4).map(|chunk| {
-                let row_data: Vec<HistoryItem> = chunk.to_vec();
-                row_data
-            }).collect::<Vec<_>>()
+            // 计算行数（每行4个）
+            let rows = (items.len() + 3) / 4;
+            (0..rows).map(|row_idx| row_idx).collect::<Vec<_>>()
         },
-        move |row_data| row_data.clone(),
-        move |row_data| {
-            // Create h_stack for each row
-            match row_data.len() {
-                4 => h_stack((history_card(row_data[0].clone()), history_card(row_data[1].clone()), history_card(row_data[2].clone()), history_card(row_data[3].clone()))).style(|s| s.gap(8.0)),
-                3 => h_stack((history_card(row_data[0].clone()), history_card(row_data[1].clone()), history_card(row_data[2].clone()), empty().style(|s| s.size(180.0, 240.0)))).style(|s| s.gap(8.0)),
-                2 => h_stack((history_card(row_data[0].clone()), history_card(row_data[1].clone()), empty().style(|s| s.size(180.0, 240.0)), empty().style(|s| s.size(180.0, 240.0)))).style(|s| s.gap(8.0)),
-                1 => h_stack((history_card(row_data[0].clone()), empty().style(|s| s.size(180.0, 240.0)), empty().style(|s| s.size(180.0, 240.0)), empty().style(|s| s.size(180.0, 240.0)))).style(|s| s.gap(8.0)),
-                _ => h_stack((empty().style(|s| s.size(180.0, 240.0)), empty().style(|s| s.size(180.0, 240.0)), empty().style(|s| s.size(180.0, 240.0)), empty().style(|s| s.size(180.0, 240.0)))).style(|s| s.gap(8.0)),
-            }
+        |row_idx| *row_idx,
+        move |row_idx| {
+            let items = history_items.get();
+            let start_idx = row_idx * 4;
+
+            // 创建当前行的卡片，总是4个，使用empty填充
+            let card0 = create_card(items.get(start_idx).cloned());
+            let card1 = create_card(items.get(start_idx + 1).cloned());
+            let card2 = create_card(items.get(start_idx + 2).cloned());
+            let card3 = create_card(items.get(start_idx + 3).cloned());
+
+            h_stack((card0, card1, card2, card3)).style(|s| s.gap(10.0).margin_bottom(10.0))
         }
-    ).style(|s| s.gap(8.0))
+    );
+    
+    grid.style(|s| s.padding(10.0))
 }
 
-fn history_card(item: HistoryItem) -> impl IntoView {
-    // Extract filename from path
-    let filename = std::path::Path::new(&item.path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_string();
+fn create_card(item: Option<HistoryItem>) -> impl IntoView {
+    if let Some(item) = item {
+        // history_card logic
+        // Extract filename from path
+        let filename = std::path::Path::new(&item.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        
+        // 组合标题和路径
+        let full_text = format!("{}", item.title);
+        let path_text = filename;
+        
+        container(v_stack((
+            // 缩略图容器
+            container(
+                // 这里可以替换为实际的缩略图渲染
+                label(|| "📄")
+                    .style(|s| s.font_size(48.0))
+            )
+            .style(|s| {
+                s.size(160.0, 160.0)
+                    .background(Color::rgb(0.94, 0.94, 0.94))
+                    .border_radius(4.0)
+                    //.justify_content(JustifyContent::Center)
+            }),
+            
+            // 标题（最多两行）
+            container(
+                label(move || truncate_text(&full_text, 2, 20))
+                    .style(|s| {
+                        s.font_size(14.0)
+                            //.font_weight(FontWeight::Bold)
+                            .color(Color::rgb(0.2, 0.2, 0.2))
+                            //.text_overflow(TextOverflow::Ellipsis)
+                    })
+            )
+            .style(|s| {
+                s.size(160.0, 32.0)
+                    .margin_top(8.0)
+            }),
+            
+            // 文件路径
+            container(
+                label(move || truncate_text(&path_text, 1, 25))
+                    .style(|s| {
+                        s.font_size(12.0)
+                            .color(Color::rgb(0.4, 0.4, 0.4))
+                            //.text_overflow(TextOverflow::Ellipsis)
+                    })
+            )
+            .style(|s| {
+                s.size(160.0, 16.0)
+            }),
+        )))
+        .style(|s| {
+            s.size(180.0, 240.0)
+                .padding(10.0)
+                .background(Color::rgb(1.0, 1.0, 1.0))
+                .border_radius(6.0)
+        })
+        .on_click(move |_| {
+            // 卡片点击事件 - 打开选中的文件
+            let path = PathBuf::from(&item.path);
+            if path.exists() {
+                // 这里添加打开文件的逻辑
+                info!("Opening file: {}", item.path);
+            }
+            EventPropagation::Continue
+        })
+    } else {
+        // empty_card logic
+        container(v_stack((
+            // 缩略图容器
+            container(
+                label(|| "")
+            )
+            .style(|s| {
+                s.size(160.0, 160.0)
+                    .background(Color::rgb(0.94, 0.94, 0.94))
+                    .border_radius(4.0)
+            }),
+            
+            // 标题
+            container(
+                label(|| "")
+            )
+            .style(|s| {
+                s.size(160.0, 32.0)
+                    .margin_top(8.0)
+            }),
+            
+            // 文件路径
+            container(
+                label(|| "")
+            )
+            .style(|s| {
+                s.size(160.0, 16.0)
+            }),
+        )))
+        .style(|s| {
+            s.size(180.0, 240.0)
+                .padding(10.0)
+                .background(Color::rgb(1.0, 1.0, 1.0))
+                .border_radius(6.0)
+        })
+    }
+}
 
-    // Create a card similar to Slint's design (180px width, 240px height)
-    // Card: 180x240, thumbnail: 160x160, bottom content: 20x80 with some padding
-    container(v_stack((
-        // Thumbnail placeholder (originally slint-logo-full-light.svg)
-        container(label(|| ""))
-            .style(|s| s.size(160.0, 160.0)),
-        // Title and path
-        label(move || format!("{}\n{}", item.title.clone(), filename))
-            .style(|s| s.font_size(14.0)),
-    )))
-    .style(|s| s.size(180.0, 240.0))
-    .style(|s| s.padding(10.0))
+fn truncate_text(text: &str, max_lines: usize, max_chars_per_line: usize) -> String {
+    let mut lines = Vec::new();
+    let mut current_line = String::new();
+    let mut current_chars = 0;
+    
+    for c in text.chars() {
+        current_line.push(c);
+        current_chars += 1;
+        
+        if current_chars >= max_chars_per_line || c == '\n' {
+            lines.push(current_line);
+            current_line = String::new();
+            current_chars = 0;
+            
+            if lines.len() >= max_lines {
+                break;
+            }
+        }
+    }
+    
+    if !current_line.is_empty() && lines.len() < max_lines {
+        lines.push(current_line);
+    }
+    
+    if lines.len() >= max_lines {
+        let last_line = lines.last_mut().unwrap();
+        if last_line.len() > 3 {
+            *last_line = format!("{}...", last_line[0..last_line.len()-3].to_string());
+        }
+    }
+    
+    lines.join("\n")
 }
