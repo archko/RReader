@@ -3,7 +3,7 @@ use log::{debug, info};
 use super::Page;
 use crate::cache::PageCache;
 use crate::decoder::decode_service::DecodeTask;
-use crate::decoder::pdf::utils::{convert_to_slint_image, generate_thumbnail_key};
+use crate::decoder::pdf::utils::generate_thumbnail_key;
 use crate::decoder::{DecodeService, Link, Priority, Rect};
 use crate::entity::OutlineItem;
 use std::cell::RefCell;
@@ -275,7 +275,7 @@ impl PageViewState {
                             callback: Box::new(move |result| {
                                 // 解码完成后的回调处理
                                 if let Ok(result) = result {
-                                    cache.put_thumbnail(key, convert_to_slint_image(&result.image));
+                                    cache.put_thumbnail(key, result.image.clone());
                                     links
                                         .borrow_mut()
                                         .insert(result.page_info.index, result.links);

@@ -10,7 +10,8 @@ use std::sync::{LazyLock, RwLock};
 use anyhow::Result;
 use env_logger::Env;
 use log::{debug, error, info};
-use slint::{ComponentHandle, ModelRc, VecModel};
+use floem::prelude::*;
+use floem::event::EventPropagation;
 use dirs;
 
 mod cache;
@@ -27,569 +28,237 @@ use crate::ui::MainViewmodel;
 use crate::dao::RecentDao;
 use crate::entity::{Recent};
 
-slint::include_modules!();
-
 static HISTORY_VIEWPORT_WIDTH: LazyLock<RwLock<f32>> = LazyLock::new(|| RwLock::new(1024.0));
 
-fn set_history_to_ui(app: &MainWindow, ui_history_items: Vec<UIRecent>) {
-    let history_model = Rc::new(VecModel::from(ui_history_items.clone()));
-    app.set_history_items(ModelRc::from(history_model));
+fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
+    let page_view_state = Rc::new(RefCell::new(PageViewState::new(Orientation::Vertical, 0)));
+    let document_opened = RwSignal::new(false);
+    let current_page = RwSignal::new(1);
+    let zoom_level = RwSignal::new(1.0f32);
+    let file_path = RwSignal::new(String::new());
+    let page_count = RwSignal::new(0);
 
-    let width = *HISTORY_VIEWPORT_WIDTH.read().unwrap();
-    let columns = (width / 188.0).floor().max(1.0) as usize;
-    let grouped: Vec<Vec<UIRecent>> = ui_history_items.chunks(columns).map(|c| c.to_vec()).collect();
-    let rows: Vec<HistoryRow> = grouped.into_iter().map(|vec| HistoryRow { items: ModelRc::from(Rc::new(VecModel::from(vec))) }).collect();
-    let history_rows_model = Rc::new(VecModel::from(rows));
-    app.set_history_rows(ModelRc::from(history_rows_model));
-}
+    // History items from database
+    let history_items = RwSignal::new(initial_history);
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    env_logger::Builder::from_env(
-        Env::default().default_filter_or("info")  // 默认日志级别：info
-    ).init();
-    let app = MainWindow::new()?;
-    let page_view_state: Rc<RefCell<PageViewState>> = Rc::new(RefCell::new(PageViewState::new(Orientation::Vertical, 0)));
+    let open_button = button("Open").on_click({
+        let state = page_view_state.clone();
+        let document_opened = document_opened.clone();
+        let current_page = current_page.clone();
+        let zoom_level = zoom_level.clone();
+        let file_path = file_path.clone();
+        move |_| {
+            let file_path_selected = rfd::FileDialog::new()
+                .add_filter("PDF Files", &["pdf"])
+                .add_filter("ePub Files", &["epub"])
+                .add_filter("MOBI Files", &["mobi"])
+                .add_filter("All Files", &["*"])
+                .set_title("Select File")
+                .pick_file();
 
-    // 初始化数据库
-    // 获取用户数据目录，创建缓存目录
-    let data_dir = dirs::data_dir().expect("Unable to get data directory");
-    let app_data_dir = data_dir.join("RReader");
-    fs::create_dir_all(&app_data_dir).expect("Unable to create app data directory");
-
-    // 构建数据库路径
-    let db_path = app_data_dir.join("book.db");
-    let database_url = format!("sqlite:///{}", db_path.display());
-    println!("Database path: {:?}", db_path);
-    println!("Database URL: {}", database_url);
-    std::env::set_var("DATABASE_URL", &database_url);
-
-    // 确保数据库文件和表存在（第一次运行时会创建）
-    tokio::task::block_in_place(|| {
-        futures::executor::block_on(async {
-            crate::dao::ensure_database_ready(&db_path).await.expect("Failed to initialize database");
-        });
+            if let Some(path) = file_path_selected.clone() {
+                let result = state.borrow_mut().open_document(&path);
+                if result.is_ok() {
+                    document_opened.set(true);
+                    file_path.set(path.to_string_lossy().to_string());
+                    current_page.set(1);
+                    zoom_level.set(1.0);
+                    if let Some(items) = path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string()) {
+                        // Update viewmodel etc.
+                    }
+                }
+            }
+            EventPropagation::Continue
+        }
     });
 
-    // 检查数据库版本或初始化
-    // Sea-ORM 不自动升级版本，使用固定的模式
-    RecentDao::init_sync().unwrap();
+    let prev_button = button("Previous").on_click({
+        let state = page_view_state.clone();
+        let current_page = current_page.clone();
+        move |_| {
+            let new_page = (current_page.get() as usize).saturating_sub(1);
+            if new_page > 0 {
+                current_page.set(new_page as i32);
+                let _ = state.borrow_mut().jump_to_page(new_page.saturating_sub(1));
+            }
+            EventPropagation::Continue
+        }
+    });
 
-    // 创建主视图模型
-    let viewmodel: Rc<RefCell<MainViewmodel>> = Rc::new(RefCell::new(MainViewmodel::new()));
-    let _ = viewmodel.borrow_mut().load_history(0); // 加载第一页历史记录
+    let next_button = button("Next").on_click({
+        let state = page_view_state.clone();
+        let current_page = current_page.clone();
+        let page_count = page_count.clone();
+        move |_| {
+            let new_page = current_page.get() as usize + 1;
+            let max_pages = page_count.get() as usize;
+            if new_page <= max_pages {
+                current_page.set(new_page as i32);
+                let _ = state.borrow_mut().jump_to_page(new_page.saturating_sub(1));
+            }
+            EventPropagation::Continue
+        }
+    });
 
-    // 设置历史记录到UI
-    {
-        let viewmodel_binding = viewmodel.borrow();
-        let history_records = viewmodel_binding.get_current_records();
-        let ui_history_items: Vec<UIRecent> = history_records
-            .iter()
-            .map(|record| UIRecent {
-                title: record.name.clone().into(),
-                path: record.book_path.clone().into(),
-                thumbnail: "".into(), // TODO: 可以在这里添加缩略图路径
-                page: record.page,
-            })
-            .collect();
+    let zoom_in_button = button("Zoom +").on_click({
+        let zoom_level = zoom_level.clone();
+        let state = page_view_state.clone();
+        move |_| {
+            let new_zoom = (zoom_level.get() + 0.1).min(4.0);
+            zoom_level.set(new_zoom);
+            state.borrow_mut().update_zoom(new_zoom);
+            EventPropagation::Continue
+        }
+    });
 
-        set_history_to_ui(&app, ui_history_items);
+    let zoom_out_button = button("Zoom -").on_click({
+        let zoom_level = zoom_level.clone();
+        let state = page_view_state.clone();
+        move |_| {
+            let new_zoom = (zoom_level.get() - 0.1).max(0.5);
+            zoom_level.set(new_zoom);
+            state.borrow_mut().update_zoom(new_zoom);
+            EventPropagation::Continue
+        }
+    });
+
+    let status_text = move || format!("Page {} / {} | Zoom: {:.1}% | File: {}",
+                                      current_page.get(),
+                                      page_count.get(),
+                                      zoom_level.get() * 100.0,
+                                      file_path.get());
+
+    let history_list = scroll(container(history_grid(history_items)).style(|s| s.width(100.pct()))).style(|s| s.size(100.pct(), 100.pct()));
+
+    let clear_button = button("Clear").on_click({
+        let history_items = history_items.clone();
+        move |_| {
+            history_items.set(vec![]);
+            EventPropagation::Continue
+        }
+    });
+
+    // Always show toolbar + history grid
+    container(stack((
+        h_stack((
+            open_button,
+            clear_button,
+        )).style(|s| s.justify_end().gap(8.0).padding(10.0)),
+        scroll(history_list),
+    )))
+    .keyboard_navigable()
+    .style(|s| s.size(100.pct(), 100.pct()))
+}
+
+async fn setup_database() -> Result<()> {
+    let data_dir = dirs::data_dir().unwrap();
+    let app_data_dir = data_dir.join("RReader");
+    fs::create_dir_all(&app_data_dir)?;
+    let db_path = app_data_dir.join("book.db");
+    let database_url = format!("sqlite:///{}", db_path.display());
+    set_var("DATABASE_URL", &database_url);
+
+    if !db_path.exists() {
+        crate::dao::ensure_database_ready(&db_path).await?;
     }
-
-    setup_open_handler(&app, page_view_state.clone(), viewmodel.clone());
-    setup_viewport_handler(&app, page_view_state.clone());
-    setup_history_viewport_handler(&app, page_view_state.clone());
-    setup_scroll_handler(&app, page_view_state.clone());
-    setup_page_handler(&app, page_view_state.clone());
-    setup_zoom_handler(&app, page_view_state.clone());
-    setup_page_click_handler(&app, page_view_state.clone());
-    setup_back_to_history_handler(&app, page_view_state.clone(), viewmodel.clone());
-    setup_page_down_handler(&app, page_view_state.clone());
-    setup_page_up_handler(&app, page_view_state.clone());
-    setup_history_item_click_handler(&app, page_view_state.clone(), viewmodel.clone());
-
-    app.run()?;
+    RecentDao::init_sync().unwrap();
     Ok(())
 }
 
-/// 打开文档事件
-fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>, viewmodel: Rc<RefCell<MainViewmodel>>) {
-    let weak_app = app.as_weak();
+use std::env::set_var;
 
-    app.on_open_file(move || {
-        let file_path = rfd::FileDialog::new()
-            .add_filter("PDF Files", &["pdf"])
-            .add_filter("PDF Files", &["epub"])
-            .add_filter("PDF Files", &["mobi"])
-            .add_filter("All Files", &["*"])
-            .set_title("Select PDF File")
-            .pick_file();
+fn main() {
+    env_logger::Builder::from_env(
+        Env::default().default_filter_or("info")
+    ).init();
 
-        if let Some(path) = file_path {
-            let path_str = path.to_string_lossy().to_string();
-            if let Some(app) = weak_app.upgrade() {
-                app.set_file_path(path_str.clone().into());
-            }
+    // Synchronously initialize database and load initial data
+    let runtime = tokio::runtime::Runtime::new()
+        .expect("Failed to create Tokio runtime");
 
-            let open_result = page_view_state.borrow_mut().open_document(&path);
-            match open_result {
-                Ok(_) => {
-                    // 先查询数据库是否存在记录
-                    let existing_recent = viewmodel.borrow().get_recent_by_path(&path_str).unwrap_or(None);
-
-                    let (zoom, page, scroll_x, scroll_y) = if let Some(ref rec) = existing_recent {
-                        (rec.zoom, rec.page, rec.scroll_x, rec.scroll_y)
-                    } else {
-                        (1.0, 1, 0, 0) // 默认值
-                    };
-
-                    if let Some(app) = weak_app.upgrade() {
-                        app.set_zoom(zoom);
-                        app.set_current_page(page);
-                        app.set_document_opened(true);
-
-                        let zoom = zoom;
-                        let mut borrowed_state = page_view_state.borrow_mut();
-                        let width = borrowed_state.view_size.0;
-                        let height = borrowed_state.view_size.1;
-                        
-                        borrowed_state.update_view_size(
-                            width,
-                            height,
-                            zoom,
-                            true
-                        );
-
-                        // 设置保存的位置
-                        if let Some(_) = borrowed_state.jump_to_page((page - 1) as usize) {
-                            // 可以在这里做一些处理
-                        }
-                        //borrowed_state.update_offset(scroll_x as f32, scroll_y as f32);
-
-                        // 设置大纲项到UI
-                        set_outline_to_ui(&app, &borrowed_state);
-                    }
-
-                    // 如果没有记录，插入新记录
-                    if existing_recent.is_none() {
-                        let recent = Recent::encode(
-                            path_str.clone(),
-                            0, // 默认页
-                            0, // 默认页数，会被更新
-                            1, // crop
-                            1, // scroll_ori (vertical)
-                            0, // reflow
-                            1.0, // zoom
-                            0, // scroll_x
-                            0, // scroll_y
-                            path_str.split('/').last().unwrap_or("").to_string(), // name
-                            path_str.split('.').last().unwrap_or("").to_string(), // ext
-                            0, // size
-                            0, // read_times
-                            1, // progress
-                            0, // favorited
-                            0, // in_recent
-                        );
-                        if let Err(e) = viewmodel.borrow().add_recent(recent) {
-                            error!("Failed to add recent: {e}");
-                        }
-                    }
-
-                    // 文档打开后立即刷新视图
-                    if let Some(app) = weak_app.upgrade() {
-                        page_view_state.borrow_mut().update_visible_pages();
-                        refresh_view(&app, &page_view_state.borrow());
-                    }
-                }
-                Err(err) => {
-                    error!("Failed to open PDF: {err}");
-                }
-            }
+    runtime.block_on(async {
+        if let Err(e) = setup_database().await {
+            eprintln!("Failed to setup database: {e}");
         }
+        RecentDao::init_sync().expect("Failed to init DAO");
     });
+
+    let initial_history = runtime.block_on(load_initial_history())
+        .unwrap_or_else(|_| vec![]);
+
+    // Launch the floem window with initial data
+    floem::launch(move || app_view(initial_history));
 }
 
-/// 视图创建事件
-fn setup_viewport_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
-    let weak_app = app.as_weak();
-    app.on_viewport_changed(move |width, height| {
-        debug!("[Main] setup_viewport_handler.width: {:?}, height: {:?}", width, height);
-        let mut current_page = None;
-        {
-            let borrowed_state = page_view_state.borrow();
-            if !borrowed_state.pages.is_empty() {
-                current_page = borrowed_state.get_first_visible_page();
-            }
-        }
-        {
-            let mut borrowed_state = page_view_state.borrow_mut();
-            let zoom = borrowed_state.zoom;
-            borrowed_state.update_view_size(width, height, zoom, false);
-            borrowed_state.update_visible_pages();
-
-            // 如果当前页面不再可见，则跳转到该页面,大纲显示与隐藏会触发布局变化
-            if let Some(page) = current_page {
-                borrowed_state.jump_to_page(page);
-                borrowed_state.update_visible_pages();
-            }
-        }
-        debug!("[Main] setup_viewport_handler");
-        if let Some(app) = weak_app.upgrade() {
-            refresh_view(&app, &page_view_state.borrow());
-        }
-    });
-}
-
-fn setup_history_viewport_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
-    app.on_history_viewport_changed(move |width, height| {
-        debug!("[Main] on_history_viewport_changed.width: {:?}, height: {:?}", width, height);
-        *HISTORY_VIEWPORT_WIDTH.write().unwrap() = width;
-    });
-}
-
-/// 滚动处理
-fn setup_scroll_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
-    let weak_app = app.as_weak();
-    app.on_scroll_changed(move |offset_x, offset_y| {
-        if let Some(app) = weak_app.upgrade() {
-            debug!("[Main] setup_scroll_handler, {offset_x}, {offset_y}");
-            update_view_offset(&app, &mut page_view_state.borrow_mut(), offset_x, offset_y);
-        }
-    });
-}
-
-/// 页面跳转处理
-fn setup_page_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
-    let weak_app = app.as_weak();
-    app.on_page_changed(move |page_index| {  // page_index is 1-based from UI
-        {
-            let mut borrowed_state = page_view_state.borrow_mut();
-            if borrowed_state.jump_to_page((page_index - 1) as usize).is_some() {
-                borrowed_state.update_visible_pages();
-
-                if let Some(app) = weak_app.upgrade() {
-                    refresh_view(&app, &*borrowed_state);
-                }
-            }
-        }
-    });
-}
-
-/// 缩放处理
-fn setup_zoom_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
-    let weak_app = app.as_weak();
-    app.on_zoom_changed(move |zoom| {
-        {
-            let mut borrowed_state = page_view_state.borrow_mut();
-            let (view_width, view_height) = borrowed_state.view_size;
-            borrowed_state.update_view_size(view_width, view_height, zoom, true);
-            borrowed_state.update_visible_pages();
-        }
-        
-        if let Some(app) = weak_app.upgrade() {
-            refresh_view(&app, &page_view_state.borrow());
-        }
-    });
-}
-
-/// 刷新视图显示
-fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
-    let state = page_view_state;
-    if state.pages.is_empty() {
-        debug!("[Main] No pages to refresh");
-        return;
+async fn load_initial_history() -> Result<Vec<HistoryItem>> {
+    let mut viewmodel = MainViewmodel::new();
+    if let Err(_e) = viewmodel.load_history(0) {
+        // Ignore error for now, return empty
+        return Ok(vec![]);
     }
+    let records = viewmodel.get_current_records();
 
-    let rendered_pages = page_view_state.visible_pages
-        .iter()
-        .filter_map(|&idx| page_view_state.pages.get(idx))
-        .map(|page| {
-            // 尝试从缓存获取图像，如果不存在则使用默认图像
-            let key = generate_thumbnail_key(page);
-            let image = {
-                if let Some(cached_image) = page_view_state.cache.get_thumbnail(&key) {
-                    cached_image.as_ref().clone()
-                } else {
-                    slint::Image::default()
-                }
-            };
-            
-            PageData {
-                x: page.bounds.left,
-                y: page.bounds.top,
-                width: page.width,
-                height: page.height,
-                image,
-                page_index: page.info.index as i32,
-            }
+    let history_items = records.into_iter()
+        .map(|record| HistoryItem {
+            title: record.name.clone(),
+            path: record.book_path.clone(),
+            page: record.page,
         })
-        .collect::<Vec<_>>();
+        .collect();
 
-    /*debug!(
-        "[Main] refresh_view {} page_models",
-        rendered_pages.len()
-    );*/
-    let model = Rc::new(VecModel::from(rendered_pages));
-    app.set_document_pages(ModelRc::from(model));
-    app.set_page_count(page_view_state.pages.len() as i32);
-    app.set_zoom(page_view_state.zoom);
-
-    if let Some(first_visible) = page_view_state.get_first_visible_page() {
-        app.set_current_page((first_visible + 1) as i32);  // UI expects 1-based page numbers
-        //debug!("[Main] refresh_view set_current_page: {}", first_visible)
-    }
-
-    let (total_width, total_height) = (page_view_state.total_width, page_view_state.total_height);
-    app.set_total_width(total_width);
-    app.set_total_height(total_height);
-
-    let (offset_x, offset_y) = (page_view_state.view_offset.0, page_view_state.view_offset.1);
-    app.set_scroll_events_enabled(false);
-    app.set_offset_x(offset_x);
-    app.set_offset_y(offset_y);
-    app.set_scroll_events_enabled(true);
-    /*debug!(
-        "[Main] refresh_view.offset: ({}, {}), total.w-h: ({}, {})",
-        offset_x, offset_y, total_width, total_height
-    );*/
+    Ok(history_items)
 }
 
-fn setup_back_to_history_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>, viewmodel: Rc<RefCell<MainViewmodel>>) {
-    let weak_app = app.as_weak();
-    let weak_viewmodel = Rc::downgrade(&viewmodel);
-    app.on_back_to_history(move || {
-        if let Some(app) = weak_app.upgrade() {
-            let current_path = app.get_file_path().to_string();
-
-            if !current_path.is_empty() {
-                // 获取当前可见页的第一页
-                let page = page_view_state.borrow().get_first_visible_page();
-                let zoom = page_view_state.borrow().zoom;
-                let (offset_x, offset_y) = page_view_state.borrow().view_offset;
-
-                info!("back to history: page:{:?}, zoom:{:?}, offset_x:{:?}, offset_y:{:?}, path:{:?}", page, zoom, offset_x, offset_y, current_path);
-                // 更新记录的状态
-                if let Some(vm) = weak_viewmodel.upgrade() {
-                    let update_result = vm.borrow().update_recent_with_state(&current_path, page, zoom, offset_x, offset_y);
-                    if let Err(e) = update_result {
-                        error!("Failed to update recent state: {e}");
-                    }
-                }
-            }
-
-            // 再刷新当前历史记录
-            if let Some(vm) = weak_viewmodel.upgrade() {
-                let _ = vm.borrow_mut().load_history(0);
-                let vm_binding = vm.borrow();
-                let history_records = vm_binding.get_current_records();
-                let ui_history_items: Vec<UIRecent> = history_records
-                    .iter()
-                    .map(|record| UIRecent {
-                        title: record.name.clone().into(),
-                        path: record.book_path.clone().into(),
-                        thumbnail: "".into(),
-                        page: record.page
-                    })
-                    .collect();
-                set_history_to_ui(&app, ui_history_items);
-            }
-
-            // 清空文件路径
-            app.set_file_path("".into());
-            app.set_document_opened(false);
-        }
-
-        // 重置页面状态
-        let mut borrowed_state = page_view_state.borrow_mut();
-        borrowed_state.shutdown();
-    });
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
+struct HistoryItem {
+    title: String,
+    path: String,
+    page: i32,
 }
 
-/// 向下翻页（减少Y轴偏移量）,开始偏移量是0,
-fn setup_page_down_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
-    let weak_app = app.as_weak();
-    app.on_page_down(move || {
-        if let Some(app) = weak_app.upgrade() {
-            let viewport_height = app.get_viewport_height();
-            let current_offset_y = app.get_offset_y();
-            
-            let offset_y = current_offset_y - viewport_height + 16.0;
-            let offset_x = app.get_offset_x();
-
-            debug!("[Main] on_page_down, {offset_x}, {current_offset_y}, {offset_y}, height:{viewport_height}");
-
-            update_view_offset(&app, &mut page_view_state.borrow_mut(), offset_x, offset_y);
-        }
-    });
-}
-
-/// 向上翻页（增加Y轴偏移量）
-fn setup_page_up_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
-    let weak_app = app.as_weak();
-    app.on_page_up(move || {
-        if let Some(app) = weak_app.upgrade() {
-            let viewport_height = app.get_viewport_height();
-            let current_offset_y = app.get_offset_y();
-            
-            let offset_y = current_offset_y + viewport_height - 16.0;
-            let offset_x = app.get_offset_x();
-
-            debug!("[Main] on_page_up, {offset_x}, {current_offset_y}, {offset_y}, height:{viewport_height}");
-
-            update_view_offset(&app, &mut page_view_state.borrow_mut(), offset_x, offset_y);
-        }
-    });
-}
-
-/// 页面点击处理
-fn setup_page_click_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
-    let weak_app = app.as_weak();
-    app.on_page_clicked(move |x, y, page_index| {
-        debug!("[Main] setup_page_click_handler: x={x}, y={y}, page_index={page_index}");
-
-        // The coordinates are already in document space (after adding page.x, page.y)
-        let jump_to_page = if let Some(link) = page_view_state.borrow().handle_click(page_index as usize, x, y) {
-            debug!("[Main] Clicked link: uri={:?}, page={:?}", link.uri, link.page);
-            // TODO: Handle link types
-            if let Some(uri) = &link.uri {
-                debug!("[Main] URI link clicked: {}", uri);
-                None
-            } else if let Some(page) = link.page {
-                debug!("[Main] Page link clicked: {}", page);
-                parse_page_from_param(&page)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        if let Some(page_num) = jump_to_page {
-            if let Some(app) = weak_app.upgrade() {
-                let mut borrowed_state = page_view_state.borrow_mut();
-                if borrowed_state.jump_to_page(page_num).is_some() {
-                    borrowed_state.update_visible_pages();
-                    refresh_view(&app, &*borrowed_state);
-                }
+fn history_grid(history_items: RwSignal<Vec<HistoryItem>>) -> impl IntoView {
+    // Return single column for now due to Floem constraints
+    // Each row is a horizontal stack of 4 cards
+    dyn_stack(
+        move || {
+            let items = history_items.get();
+            items.chunks(4).map(|chunk| {
+                let row_data: Vec<HistoryItem> = chunk.to_vec();
+                row_data
+            }).collect::<Vec<_>>()
+        },
+        move |row_data| row_data.clone(),
+        move |row_data| {
+            // Create h_stack for each row
+            match row_data.len() {
+                4 => h_stack((history_card(row_data[0].clone()), history_card(row_data[1].clone()), history_card(row_data[2].clone()), history_card(row_data[3].clone()))).style(|s| s.gap(8.0)),
+                3 => h_stack((history_card(row_data[0].clone()), history_card(row_data[1].clone()), history_card(row_data[2].clone()), empty().style(|s| s.size(180.0, 240.0)))).style(|s| s.gap(8.0)),
+                2 => h_stack((history_card(row_data[0].clone()), history_card(row_data[1].clone()), empty().style(|s| s.size(180.0, 240.0)), empty().style(|s| s.size(180.0, 240.0)))).style(|s| s.gap(8.0)),
+                1 => h_stack((history_card(row_data[0].clone()), empty().style(|s| s.size(180.0, 240.0)), empty().style(|s| s.size(180.0, 240.0)), empty().style(|s| s.size(180.0, 240.0)))).style(|s| s.gap(8.0)),
+                _ => h_stack((empty().style(|s| s.size(180.0, 240.0)), empty().style(|s| s.size(180.0, 240.0)), empty().style(|s| s.size(180.0, 240.0)), empty().style(|s| s.size(180.0, 240.0)))).style(|s| s.gap(8.0)),
             }
         }
-    });
+    ).style(|s| s.gap(8.0))
 }
 
-fn parse_page_from_param(page_param: &str) -> Option<usize> {
-    if page_param.starts_with("#page=") {
-        let start = "#page=".len();
-        let end = page_param[start..].find('&').map(|pos| pos + start).unwrap_or(page_param.len());
-        let num_str = &page_param[start..end];
-        num_str.parse::<usize>().ok()
-    } else {
-        None
-    }
-}
+fn history_card(item: HistoryItem) -> impl IntoView {
+    // Extract filename from path
+    let filename = std::path::Path::new(&item.path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
 
-/// 历史记录项点击处理
-fn setup_history_item_click_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>, viewmodel: Rc<RefCell<MainViewmodel>>) {
-    let weak_app = app.as_weak();
-
-    app.on_history_item_clicked(move |ui_recent| {
-        let path_str = ui_recent.path.to_string();
-        let path_obj = std::path::Path::new(&path_str);
-
-        if path_obj.exists() {
-            if let Some(app) = weak_app.upgrade() {
-                app.set_file_path(path_str.clone().into());
-            }
-
-            // 从MainViewmodel的current_page_records查询与ui_recent路径相同的记录
-            let recent_record = viewmodel.borrow().get_current_records()
-                .iter()
-                .find(|rec| rec.book_path == path_str)
-                .cloned();
-
-            let open_result = page_view_state.borrow_mut().open_document(&path_obj);
-            match open_result {
-                Ok(_) => {
-                    if let Some(app) = weak_app.upgrade() {
-                        // 使用从viewmodel查询到的recent对象替换ui_recent
-                        if let Some(ref rec) = recent_record {
-                            app.set_zoom(rec.zoom);
-                            app.set_current_page(rec.page);
-                            app.set_document_opened(true);
-                            info!("history_item.page:{:?}, zoom:{:?}, path:{:?}", rec.page, rec.zoom, rec.book_path);
-
-                            let zoom = rec.zoom;
-                            let mut borrowed_state = page_view_state.borrow_mut();
-                            let width = borrowed_state.view_size.0;
-                            let height = borrowed_state.view_size.1;
-
-                            // 设置大纲项到UI
-                            set_outline_to_ui(&app, &borrowed_state);
-
-                            borrowed_state.update_view_size(
-                                width,
-                                height,
-                                zoom,
-                                true
-                            );
-                            // 设置保存的位置
-                            //borrowed_state.update_offset(rec.scroll_x as f32, rec.scroll_y as f32);
-                            if let Some(_) = borrowed_state.jump_to_page((rec.page - 1) as usize) {
-                                // 可以在这里做一些处理
-                            }
-                        } else {
-                            // 如果没有找到记录，使用默认值
-                            app.set_zoom(1.0);
-                            app.set_current_page(1);
-                            app.set_document_opened(true);
-
-                            let zoom = 1.0;
-                            let mut borrowed_state = page_view_state.borrow_mut();
-                            let width = borrowed_state.view_size.0;
-                            let height = borrowed_state.view_size.1;
-
-                            // 设置大纲项到UI
-                            set_outline_to_ui(&app, &borrowed_state);
-
-                            borrowed_state.update_offset(0.0, 0.0);
-                            borrowed_state.update_view_size(
-                                width,
-                                height,
-                                zoom,
-                                true
-                            );
-                        }
-                    }
-
-                    // 文档打开后立即刷新视图
-                    if let Some(app) = weak_app.upgrade() {
-                        page_view_state.borrow_mut().update_visible_pages();
-                        refresh_view(&app, &page_view_state.borrow());
-                    }
-                }
-                Err(err) => {
-                    error!("Failed to open PDF from history: {err}");
-                }
-            }
-        } else {
-            error!("File does not exist: {path_str}");
-        }
-    });
-}
-
-/// 设置大纲项到UI
-fn set_outline_to_ui(app: &MainWindow, page_view_state: &PageViewState) {
-    let ui_outline_items: Vec<UIOutlineItem> = page_view_state.outline_items.iter().map(|oi| UIOutlineItem {
-        title: oi.title.clone().into(),
-        page: oi.page,
-        level: oi.level,
-    }).collect();
-    app.set_outline_items(ModelRc::from(Rc::new(VecModel::from(ui_outline_items)) as Rc<dyn slint::Model<Data = UIOutlineItem>>));
-}
-
-fn update_view_offset(app: &MainWindow, page_view_state: &mut PageViewState, offset_x:f32, offset_y:f32) {
-    //debug!("[Main] update_view_offset, {offset_x}, {offset_y}");
-    page_view_state.update_offset(offset_x, offset_y);
-    page_view_state.update_visible_pages();
-
-    refresh_view(&app, page_view_state);
+    // Create a card similar to Slint's design (180px width, 240px height)
+    // Card: 180x240, thumbnail: 160x160, bottom content: 20x80 with some padding
+    container(v_stack((
+        // Thumbnail placeholder (originally slint-logo-full-light.svg)
+        container(label(|| ""))
+            .style(|s| s.size(160.0, 160.0)),
+        // Title and path
+        label(move || format!("{}\n{}", item.title.clone(), filename))
+            .style(|s| s.font_size(14.0)),
+    )))
+    .style(|s| s.size(180.0, 240.0))
+    .style(|s| s.padding(10.0))
 }

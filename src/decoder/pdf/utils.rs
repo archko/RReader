@@ -2,7 +2,6 @@ use image::{DynamicImage, ImageBuffer, Rgba};
 use log::debug;
 use mupdf::{Document, Matrix, Outline, Pixmap};
 use regex::Regex;
-use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
 use crate::{entity::OutlineItem, page::Page};
 
@@ -50,15 +49,7 @@ pub fn mupdf_to_image(pixmap: &Pixmap) -> DynamicImage {
     DynamicImage::ImageRgba8(img_buffer)
 }
 
-pub fn convert_to_slint_image(image: &image::DynamicImage) -> Image {
-    let rgba_image = image.to_rgba8();
-    let (width, height) = rgba_image.dimensions();
 
-    let slint_image = Image::from_rgba8_premultiplied(
-        SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&rgba_image, width, height),
-    );
-    slint_image
-}
 
 pub fn generate_thumbnail_key(page: &Page) -> String {
     format!(
