@@ -37,6 +37,7 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
     let zoom_level = RwSignal::new(1.0f32);
     let file_path = RwSignal::new(String::new());
     let page_count = RwSignal::new(0);
+    let viewport_size = RwSignal::new((800.0, 600.0)); // Default viewport size
 
     // History items from database
     let history_items = RwSignal::new(initial_history);
@@ -102,15 +103,6 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
                     }
                 });
 
-            let clear_button = button("Clear")
-                .style(|s| s.padding(8.0).min_width(80.0))
-                .on_click({
-                    let history_items = history_items_inner.clone();
-                    move |_| {
-                        history_items.set(vec![]);
-                        EventPropagation::Continue
-                    }
-                });
 
             let prev_button = button("Previous")
                 .style(|s| s.padding(8.0).min_width(80.0))
@@ -172,7 +164,6 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
 
             h_stack((
                 open_button,
-                clear_button,
                 // 添加分隔符
                 container(empty()).style(|s| s.flex_grow(1.0)),
                 prev_button,
@@ -274,6 +265,9 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
         scroll(content).style(|s| s.size(100.pct(), 100.pct())),
     )))
     .keyboard_navigable()
+    .on_resize(move |rect| {
+        viewport_size.set((rect.width(), rect.height()));
+    })
     .style(|s| s.size(100.pct(), 100.pct()))
 }
 
