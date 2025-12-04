@@ -381,62 +381,30 @@ fn history_grid(
     zoom_level: RwSignal<f32>,
     page_count: RwSignal<i32>,
 ) -> impl IntoView {
-    // 使用响应式网格布局
+    // 使用 Flexbox 自动换行的网格布局
     let grid = dyn_stack(
-        move || {
-            let items = history_items.get();
-            // 计算行数（每行4个）
-            let rows = (items.len() + 3) / 4;
-            (0..rows).map(|row_idx| row_idx).collect::<Vec<_>>()
-        },
-        |row_idx| *row_idx,
-        move |row_idx| {
-            let items = history_items.get();
-            let start_idx = row_idx * 4;
-
-            // 创建当前行的卡片，总是4个，使用empty填充
-            let card0 = create_card(
-                items.get(start_idx).cloned(),
+        move || history_items.get(),
+        |item| item.path.clone(),
+        move |item| {
+            create_card(
+                Some(item),
                 page_view_state.clone(),
                 document_opened,
                 file_path,
                 current_page,
                 zoom_level,
                 page_count,
-            );
-            let card1 = create_card(
-                items.get(start_idx + 1).cloned(),
-                page_view_state.clone(),
-                document_opened,
-                file_path,
-                current_page,
-                zoom_level,
-                page_count,
-            );
-            let card2 = create_card(
-                items.get(start_idx + 2).cloned(),
-                page_view_state.clone(),
-                document_opened,
-                file_path,
-                current_page,
-                zoom_level,
-                page_count,
-            );
-            let card3 = create_card(
-                items.get(start_idx + 3).cloned(),
-                page_view_state.clone(),
-                document_opened,
-                file_path,
-                current_page,
-                zoom_level,
-                page_count,
-            );
-
-            h_stack((card0, card1, card2, card3)).style(|s| s.gap(10.0).margin_bottom(10.0))
+            )
         }
-    );
+    )
+    .style(|s| {
+        s.flex_direction(floem::taffy::FlexDirection::Row)
+            .flex_wrap(floem::taffy::FlexWrap::Wrap)
+            .gap(10.0)
+            .padding(10.0)
+    });
     
-    grid.style(|s| s.padding(10.0))
+    grid
 }
 
 fn create_card(
@@ -605,7 +573,7 @@ fn document_view(
         update_rendered_pages(&state, &rendered_pages);
     });
     
-    // 创建文档容器 - 使用 dyn_stack 显示实际页面
+    // 创建文档容器 - 使用 dyn_stack 垂直显示页面
     let doc_container = dyn_stack(
         move || rendered_pages.get(),
         |page| page.page_index,
@@ -619,7 +587,6 @@ fn document_view(
                 let img_width = rgba.width();
                 let img_height = rgba.height();
                 let bytes = rgba.into_raw();
-                let bytes_len = bytes.len();
                 
                 // 创建图像视图
                 create_image_view(bytes, img_width, img_height, page.width, page.height).into_any()
@@ -641,7 +608,8 @@ fn document_view(
                 .into_any()
             }
         }
-    );
+    )
+    .style(|s| s.flex_direction(floem::taffy::FlexDirection::Column));
     
     // 创建可滚动容器
     scroll(
