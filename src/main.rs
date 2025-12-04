@@ -669,10 +669,8 @@ fn document_view(
             current_page.set((first_visible + 1) as i32);
             info!("[Scroll Event] First visible page: {}", first_visible + 1);
         }
-        drop(state);
-        
+
         // 更新渲染页面
-        let state = state_for_scroll.borrow();
         update_rendered_pages(&state, &rendered_pages);
     })
     .style(|s| s.size(100.pct(), 100.pct()).background(Color::rgb(0.9, 0.9, 0.9)));
