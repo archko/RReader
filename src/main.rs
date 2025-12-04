@@ -1,7 +1,7 @@
 #![allow(unused)]
 #![allow(dead_code)]
 
-use std::cell::RefCell;
+use tokio;
 use std::rc::Rc;
 use std::fs;
 use std::path::PathBuf;
@@ -30,13 +30,14 @@ use crate::decoder::pdf::utils::generate_thumbnail_key;
 
 use crate::ui::MainViewmodel;
 use crate::dao::RecentDao;
-use crate::entity::{Recent};
+use crate::entity::Recent;
+use sea_orm::ActiveValue;
 
-use std::env::set_var;
+use std::cell::RefCell;
 
 static HISTORY_VIEWPORT_WIDTH: LazyLock<RwLock<f32>> = LazyLock::new(|| RwLock::new(1024.0));
 
-fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
+fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryItem>) -> impl IntoView {
     let page_view_state = Rc::new(RefCell::new(PageViewState::new(Orientation::Vertical, 0)));
     let document_opened = RwSignal::new(false);
     let current_page = RwSignal::new(1);
@@ -57,6 +58,7 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
     // 工具栏布局 - 响应式
     let state_for_toolbar = page_view_state.clone();
     let toolbar = dyn_view(move || {
+        let viewmodel = viewmodel.clone();
         let state = state_for_toolbar.clone();
         let document_opened_inner = document_opened.clone();
         let current_page_inner = current_page.clone();
@@ -91,18 +93,50 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
                             if result.is_ok() {
                                 document_opened.set(true);
                                 file_path.set(path.to_string_lossy().to_string());
-                                current_page.set(1);
+                                current_page.set(0);
                                 zoom_level.set(1.0);
-                                // Add to history
-                                if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                                    let new_item = HistoryItem {
-                                        title: file_name.to_string(),
-                                        path: path.to_string_lossy().to_string(),
-                                        page: 1,
-                                    };
-                                    let mut items = history_items.get();
-                                    items.insert(0, new_item);
-                                    history_items.set(items);
+                                // save to database
+                                let full_path = path.to_string_lossy().to_string();
+                                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_string();
+                                let size = match path.metadata() {
+                                    Ok(md) => md.len() as i64,
+                                    _ => 0,
+                                };
+                                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+                                let active_model = crate::entity::recent::ActiveModel {
+                                    id: ActiveValue::NotSet,
+                                    book_path: ActiveValue::Set(full_path),
+                                    update_at: ActiveValue::Set(now),
+                                    create_at: ActiveValue::Set(now),
+                                    page: ActiveValue::Set(1),
+                                    page_count: ActiveValue::Set(0),
+                                    crop: ActiveValue::Set(1),
+                                    reflow: ActiveValue::Set(0),
+                                    scroll_ori: ActiveValue::Set(1),
+                                    zoom: ActiveValue::Set(1.0),
+                                    scroll_x: ActiveValue::Set(0),
+                                    scroll_y: ActiveValue::Set(0),
+                                    name: ActiveValue::Set(name),
+                                    ext: ActiveValue::Set(ext),
+                                    size: ActiveValue::Set(size),
+                                    read_times: ActiveValue::Set(1),
+                                    progress: ActiveValue::Set(0),
+                                    favorited: ActiveValue::Set(0),
+                                    in_recent: ActiveValue::Set(1),
+                                };
+                                if let Err(e) = viewmodel.borrow().add_recent(active_model) {
+                                    error!("Failed to save recent: {}", e);
+                                }
+                                // update history_items
+                                let mut vm_load = MainViewmodel::new();
+                                if let Ok(_) = vm_load.load_history(0) {
+                                    let updated_items: Vec<_> = vm_load.get_current_records().iter().map(|r| HistoryItem {
+                                        title: r.name.clone(),
+                                        path: r.book_path.clone(),
+                                        page: r.page,
+                                    }).collect();
+                                    history_items.set(updated_items);
                                 }
                             }
                         }
@@ -206,7 +240,6 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
             let open_button = button("Open")
                 .style(|s| s.padding(8.0).min_width(70.0))
                 .on_click({
-
                     let state = state.clone();
                     let document_opened = document_opened_inner.clone();
                     let current_page = current_page_inner.clone();
@@ -227,18 +260,50 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
                             if result.is_ok() {
                                 document_opened.set(true);
                                 file_path.set(path.to_string_lossy().to_string());
-                                current_page.set(1);
+                                current_page.set(0);
                                 zoom_level.set(1.0);
-                                // Add to history
-                                if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                                    let new_item = HistoryItem {
-                                        title: file_name.to_string(),
-                                        path: path.to_string_lossy().to_string(),
-                                        page: 1,
-                                    };
-                                    let mut items = history_items.get();
-                                    items.insert(0, new_item);
-                                    history_items.set(items);
+                                // save to database
+                                let full_path = path.to_string_lossy().to_string();
+                                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_string();
+                                let size = match path.metadata() {
+                                    Ok(md) => md.len() as i64,
+                                    _ => 0,
+                                };
+                                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+                                let active_model = crate::entity::recent::ActiveModel {
+                                    id: ActiveValue::NotSet,
+                                    book_path: ActiveValue::Set(full_path),
+                                    update_at: ActiveValue::Set(now),
+                                    create_at: ActiveValue::Set(now),
+                                    page: ActiveValue::Set(1),
+                                    page_count: ActiveValue::Set(0),
+                                    crop: ActiveValue::Set(1),
+                                    reflow: ActiveValue::Set(0),
+                                    scroll_ori: ActiveValue::Set(1),
+                                    zoom: ActiveValue::Set(1.0),
+                                    scroll_x: ActiveValue::Set(0),
+                                    scroll_y: ActiveValue::Set(0),
+                                    name: ActiveValue::Set(name),
+                                    ext: ActiveValue::Set(ext),
+                                    size: ActiveValue::Set(size),
+                                    read_times: ActiveValue::Set(1),
+                                    progress: ActiveValue::Set(0),
+                                    favorited: ActiveValue::Set(0),
+                                    in_recent: ActiveValue::Set(1),
+                                };
+                                if let Err(e) = viewmodel.borrow().add_recent(active_model) {
+                                    error!("Failed to save recent: {}", e);
+                                }
+                                // update history_items
+                                let mut vm_load = MainViewmodel::new();
+                                if let Ok(_) = vm_load.load_history(0) {
+                                    let updated_items: Vec<_> = vm_load.get_current_records().iter().map(|r| HistoryItem {
+                                        title: r.name.clone(),
+                                        path: r.book_path.clone(),
+                                        page: r.page,
+                                    }).collect();
+                                    history_items.set(updated_items);
                                 }
                             }
                         }
@@ -273,7 +338,6 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
     let state_for_history = page_view_state.clone();
     let content = dyn_view(move || {
         if document_opened.get() {
-            // 文档查看区域
             document_view(
                 state_for_content.clone(),
                 viewport_size,
@@ -281,7 +345,6 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
                 page_count,
             ).into_any()
         } else {
-            // 历史记录
             container(history_grid(
                 history_items,
                 state_for_history.clone(),
@@ -296,7 +359,6 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
         }
     });
 
-    // 整体布局：垂直堆叠工具栏和内容
     container(v_stack((
         toolbar,
         scroll(content).style(|s| s.size(100.pct(), 100.pct())),
@@ -314,12 +376,12 @@ async fn setup_database() -> Result<()> {
     fs::create_dir_all(&app_data_dir)?;
     let db_path = app_data_dir.join("book.db");
     let database_url = format!("sqlite:///{}", db_path.display());
-    set_var("DATABASE_URL", &database_url);
+    std::env::set_var("DATABASE_URL", &database_url);
 
     if !db_path.exists() {
         crate::dao::ensure_database_ready(&db_path).await?;
     }
-    RecentDao::init_sync().unwrap();
+    RecentDao::init().await?;
     Ok(())
 }
 
@@ -328,41 +390,37 @@ fn main() {
         Env::default().default_filter_or("info")
     ).init();
 
-    // Synchronously initialize database and load initial data
+    // Create Tokio runtime and keep it alive for the entire application
     let runtime = tokio::runtime::Runtime::new()
         .expect("Failed to create Tokio runtime");
+
+    // Enter the runtime context so all subsequent operations have access to it
+    let _guard = runtime.enter();
 
     runtime.block_on(async {
         if let Err(e) = setup_database().await {
             eprintln!("Failed to setup database: {e}");
         }
-        RecentDao::init_sync().expect("Failed to init DAO");
     });
 
-    let initial_history = runtime.block_on(load_initial_history())
-        .unwrap_or_else(|_| vec![]);
+    let viewmodel = Rc::new(RefCell::new(MainViewmodel::new()));
 
-    // Launch the floem window with initial data
-    floem::launch(move || app_view(initial_history));
-}
+    {
+        let mut vm_borrow = viewmodel.borrow_mut();
+        if let Err(_e) = vm_borrow.load_history(0) {
+            // Ignore error, use empty
+        }
+        let initial_history_vec = vm_borrow.get_current_records().iter().map(|r| HistoryItem {
+            title: r.name.clone(),
+            path: r.book_path.clone(),
+            page: r.page,
+        }).collect::<Vec<_>>();
+        drop(vm_borrow);
 
-async fn load_initial_history() -> Result<Vec<HistoryItem>> {
-    let mut viewmodel = MainViewmodel::new();
-    if let Err(_e) = viewmodel.load_history(0) {
-        // Ignore error for now, return empty
-        return Ok(vec![]);
+        // Launch the floem window with initial data
+        // The runtime will be kept alive until the application exits
+        floem::launch(move || app_view(viewmodel, initial_history_vec));
     }
-    let records = viewmodel.get_current_records();
-
-    let history_items = records.into_iter()
-        .map(|record| HistoryItem {
-            title: record.name.clone(),
-            path: record.book_path.clone(),
-            page: record.page,
-        })
-        .collect();
-
-    Ok(history_items)
 }
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
@@ -430,10 +488,9 @@ fn create_card(
         let item_path = item.path.clone();
         
         container(v_stack((
-            // 缩略图容器
             container(
                 label(|| "📄")
-                    .style(|s| s.font_size(48.0))
+                    .style(|s| s.font_size(64.0))
             )
             .style(|s| {
                 s.size(160.0, 160.0)
@@ -443,7 +500,6 @@ fn create_card(
                     .align_items(Some(floem::taffy::AlignItems::Center))
             }),
             
-            // 标题（限制为两行，超出部分用省略号）
             container(
                 label(move || title_text.clone())
                     .style(|s| {
@@ -492,10 +548,9 @@ fn create_card(
                     page_count.set(state.pages.len() as i32);
                     drop(state);
                     
-                    // 设置文档已打开（这会触发 UI 切换到文档视图）
                     document_opened.set(true);
                     file_path.set(item_path.clone());
-                    current_page.set(1);
+                    current_page.set(0);
                     zoom_level.set(1.0);
                 }
             }
@@ -529,8 +584,6 @@ fn create_card(
     }
 }
 
-// 不再需要这个函数，使用 Floem 的内置文本换行
-
 fn document_view(
     page_view_state: Rc<RefCell<PageViewState>>,
     viewport_size: RwSignal<(f64, f64)>,
@@ -556,7 +609,6 @@ fn document_view(
         }
     });
     
-    // 创建文档容器 - 使用 dyn_stack 垂直显示页面
     let doc_container = dyn_stack(
         move || rendered_pages.get(),
         |page| page.page_index,
@@ -574,7 +626,6 @@ fn document_view(
                 // 创建图像视图
                 create_image_view(bytes, img_width, img_height, page.width, page.height).into_any()
             } else {
-                // 占位符
                 container(
                     label(move || format!("Loading page {}...", page_idx + 1))
                         .style(|s| s.font_size(14.0).color(Color::rgb(0.5, 0.5, 0.5)))

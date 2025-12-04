@@ -95,4 +95,4 @@ The project structure follows clean architecture principles:
 
 ## License
 
-This project is part of the KReader ecosystem and follows similar licensing terms.
+This project is part of the RReader ecosystem and follows similar licensing terms.
