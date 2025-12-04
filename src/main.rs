@@ -13,6 +13,9 @@ use log::{debug, error, info};
 use floem::prelude::*;
 use floem::style::TextOverflow;
 use floem::event::EventPropagation;
+use floem::views::Decorators;
+use floem::reactive::create_effect;
+use floem::views::empty;
 use dirs;
 
 mod cache;
@@ -52,8 +55,9 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
                                       file_path.get());
 
     // 工具栏布局 - 响应式
+    let state_for_toolbar = page_view_state.clone();
     let toolbar = dyn_view(move || {
-        let state = page_view_state.clone();
+        let state = state_for_toolbar.clone();
         let document_opened_inner = document_opened.clone();
         let current_page_inner = current_page.clone();
         let zoom_level_inner = zoom_level.clone();
@@ -265,15 +269,30 @@ fn app_view(initial_history: Vec<HistoryItem>) -> impl IntoView {
     });
 
     // 主内容区域 - 响应式
+    let state_for_content = page_view_state.clone();
+    let state_for_history = page_view_state.clone();
     let content = dyn_view(move || {
         if document_opened.get() {
-            // 文档查看区域 (这里需要实现文档显示)
-            container(label(|| "Document View"))
-                .style(|s| s.padding(10.0).size(100.pct(), 100.pct()))
+            // 文档查看区域
+            document_view(
+                state_for_content.clone(),
+                viewport_size,
+                current_page,
+                page_count,
+            ).into_any()
         } else {
             // 历史记录
-            container(history_grid(history_items))
+            container(history_grid(
+                history_items,
+                state_for_history.clone(),
+                document_opened,
+                file_path,
+                current_page,
+                zoom_level,
+                page_count,
+            ))
                 .style(|s| s.padding(10.0).size(100.pct(), 100.pct()))
+                .into_any()
         }
     });
 
@@ -353,7 +372,15 @@ struct HistoryItem {
     page: i32,
 }
 
-fn history_grid(history_items: RwSignal<Vec<HistoryItem>>) -> impl IntoView {
+fn history_grid(
+    history_items: RwSignal<Vec<HistoryItem>>,
+    page_view_state: Rc<RefCell<PageViewState>>,
+    document_opened: RwSignal<bool>,
+    file_path: RwSignal<String>,
+    current_page: RwSignal<i32>,
+    zoom_level: RwSignal<f32>,
+    page_count: RwSignal<i32>,
+) -> impl IntoView {
     // 使用响应式网格布局
     let grid = dyn_stack(
         move || {
@@ -368,10 +395,42 @@ fn history_grid(history_items: RwSignal<Vec<HistoryItem>>) -> impl IntoView {
             let start_idx = row_idx * 4;
 
             // 创建当前行的卡片，总是4个，使用empty填充
-            let card0 = create_card(items.get(start_idx).cloned());
-            let card1 = create_card(items.get(start_idx + 1).cloned());
-            let card2 = create_card(items.get(start_idx + 2).cloned());
-            let card3 = create_card(items.get(start_idx + 3).cloned());
+            let card0 = create_card(
+                items.get(start_idx).cloned(),
+                page_view_state.clone(),
+                document_opened,
+                file_path,
+                current_page,
+                zoom_level,
+                page_count,
+            );
+            let card1 = create_card(
+                items.get(start_idx + 1).cloned(),
+                page_view_state.clone(),
+                document_opened,
+                file_path,
+                current_page,
+                zoom_level,
+                page_count,
+            );
+            let card2 = create_card(
+                items.get(start_idx + 2).cloned(),
+                page_view_state.clone(),
+                document_opened,
+                file_path,
+                current_page,
+                zoom_level,
+                page_count,
+            );
+            let card3 = create_card(
+                items.get(start_idx + 3).cloned(),
+                page_view_state.clone(),
+                document_opened,
+                file_path,
+                current_page,
+                zoom_level,
+                page_count,
+            );
 
             h_stack((card0, card1, card2, card3)).style(|s| s.gap(10.0).margin_bottom(10.0))
         }
@@ -380,7 +439,15 @@ fn history_grid(history_items: RwSignal<Vec<HistoryItem>>) -> impl IntoView {
     grid.style(|s| s.padding(10.0))
 }
 
-fn create_card(item: Option<HistoryItem>) -> impl IntoView {
+fn create_card(
+    item: Option<HistoryItem>,
+    page_view_state: Rc<RefCell<PageViewState>>,
+    document_opened: RwSignal<bool>,
+    file_path: RwSignal<String>,
+    current_page: RwSignal<i32>,
+    zoom_level: RwSignal<f32>,
+    page_count: RwSignal<i32>,
+) -> impl IntoView {
     if let Some(item) = item {
         // history_card logic
         // Extract filename from path
@@ -390,14 +457,13 @@ fn create_card(item: Option<HistoryItem>) -> impl IntoView {
             .unwrap_or("")
             .to_string();
         
-        // 组合标题和路径
-        let full_text = format!("{}", item.title);
+        let title_text = item.title.clone();
         let path_text = filename;
+        let item_path = item.path.clone();
         
         container(v_stack((
             // 缩略图容器
             container(
-                // 这里可以替换为实际的缩略图渲染
                 label(|| "📄")
                     .style(|s| s.font_size(48.0))
             )
@@ -405,35 +471,38 @@ fn create_card(item: Option<HistoryItem>) -> impl IntoView {
                 s.size(160.0, 160.0)
                     .background(Color::rgb(0.94, 0.94, 0.94))
                     .border_radius(4.0)
-                    //.justify_content(JustifyContent::Center)
+                    .justify_content(Some(floem::taffy::JustifyContent::Center))
+                    .align_items(Some(floem::taffy::AlignItems::Center))
             }),
             
-            // 标题（最多两行）
+            // 标题（自动换行，最多两行）
             container(
-                label(move || truncate_text(&full_text, 2, 20))
+                label(move || title_text.clone())
                     .style(|s| {
                         s.font_size(14.0)
-                            //.font_weight(FontWeight::Bold)
                             .color(Color::rgb(0.2, 0.2, 0.2))
-                            //.text_overflow(TextOverflow::Ellipsis)
+                            .line_height(1.2)
+                            .max_width(160.0)
                     })
             )
             .style(|s| {
-                s.size(160.0, 32.0)
+                s.width(160.0)
+                    .height(32.0)
                     .margin_top(8.0)
             }),
             
             // 文件路径
             container(
-                label(move || truncate_text(&path_text, 1, 25))
+                label(move || path_text.clone())
                     .style(|s| {
                         s.font_size(12.0)
                             .color(Color::rgb(0.4, 0.4, 0.4))
-                            //.text_overflow(TextOverflow::Ellipsis)
+                            .max_width(160.0)
                     })
             )
             .style(|s| {
-                s.size(160.0, 16.0)
+                s.width(160.0)
+                    .height(16.0)
             }),
         )))
         .style(|s| {
@@ -443,43 +512,43 @@ fn create_card(item: Option<HistoryItem>) -> impl IntoView {
                 .border_radius(6.0)
         })
         .on_click(move |_| {
-            // 卡片点击事件 - 打开选中的文件
-            let path = PathBuf::from(&item.path);
+            let path = PathBuf::from(&item_path);
             if path.exists() {
-                // 这里添加打开文件的逻辑
-                info!("Opening file: {}", item.path);
+                info!("Opening file from history: {}", item_path);
+                let result = page_view_state.borrow_mut().open_document(&path);
+                if result.is_ok() {
+                    // 更新页面计数
+                    let state = page_view_state.borrow();
+                    page_count.set(state.pages.len() as i32);
+                    drop(state);
+                    
+                    // 设置文档已打开（这会触发 UI 切换到文档视图）
+                    document_opened.set(true);
+                    file_path.set(item_path.clone());
+                    current_page.set(1);
+                    zoom_level.set(1.0);
+                }
             }
             EventPropagation::Continue
         })
     } else {
         // empty_card logic
         container(v_stack((
-            // 缩略图容器
-            container(
-                label(|| "")
-            )
-            .style(|s| {
-                s.size(160.0, 160.0)
-                    .background(Color::rgb(0.94, 0.94, 0.94))
-                    .border_radius(4.0)
-            }),
-            
-            // 标题
-            container(
-                label(|| "")
-            )
-            .style(|s| {
-                s.size(160.0, 32.0)
-                    .margin_top(8.0)
-            }),
-            
-            // 文件路径
-            container(
-                label(|| "")
-            )
-            .style(|s| {
-                s.size(160.0, 16.0)
-            }),
+            container(label(|| ""))
+                .style(|s| {
+                    s.size(160.0, 160.0)
+                        .background(Color::rgb(0.94, 0.94, 0.94))
+                        .border_radius(4.0)
+                }),
+            container(label(|| ""))
+                .style(|s| {
+                    s.size(160.0, 32.0)
+                        .margin_top(8.0)
+                }),
+            container(label(|| ""))
+                .style(|s| {
+                    s.size(160.0, 16.0)
+                }),
         )))
         .style(|s| {
             s.size(180.0, 240.0)
@@ -490,36 +559,170 @@ fn create_card(item: Option<HistoryItem>) -> impl IntoView {
     }
 }
 
-fn truncate_text(text: &str, max_lines: usize, max_chars_per_line: usize) -> String {
-    let mut lines = Vec::new();
-    let mut current_line = String::new();
-    let mut current_chars = 0;
+// 不再需要这个函数，使用 Floem 的内置文本换行
+
+fn document_view(
+    page_view_state: Rc<RefCell<PageViewState>>,
+    viewport_size: RwSignal<(f64, f64)>,
+    current_page: RwSignal<i32>,
+    page_count: RwSignal<i32>,
+) -> impl IntoView {
+    let scroll_offset = RwSignal::new((0.0, 0.0));
     
-    for c in text.chars() {
-        current_line.push(c);
-        current_chars += 1;
-        
-        if current_chars >= max_chars_per_line || c == '\n' {
-            lines.push(current_line);
-            current_line = String::new();
-            current_chars = 0;
+    let rendered_pages = RwSignal::new(Vec::<RenderedPage>::new());
+    
+    // 监听视口大小变化并更新渲染页面
+    let state_for_viewport = page_view_state.clone();
+    create_effect(move |_| {
+        let (width, height) = viewport_size.get();
+        if width > 0.0 && height > 0.0 {
+            let mut state = state_for_viewport.borrow_mut();
+            let zoom = state.zoom;
+            state.update_view_size(width as f32, height as f32, zoom, false);
+            state.update_visible_pages();
+            page_count.set(state.pages.len() as i32);
+            drop(state);
             
-            if lines.len() >= max_lines {
-                break;
+            let state = state_for_viewport.borrow();
+            update_rendered_pages(&state, &rendered_pages);
+        }
+    });
+    
+    // 监听滚动变化
+    let state_for_scroll = page_view_state.clone();
+    create_effect(move |_| {
+        let (offset_x, offset_y) = scroll_offset.get();
+        let mut state = state_for_scroll.borrow_mut();
+        state.update_offset(offset_x as f32, offset_y as f32);
+        state.update_visible_pages();
+        
+        if let Some(first_visible) = state.get_first_visible_page() {
+            current_page.set((first_visible + 1) as i32);
+        }
+        drop(state);
+        
+        let state = state_for_scroll.borrow();
+        update_rendered_pages(&state, &rendered_pages);
+    });
+    
+    // 创建文档容器 - 使用 dyn_stack 显示实际页面
+    let doc_container = dyn_stack(
+        move || rendered_pages.get(),
+        |page| page.page_index,
+        move |page| {
+            let img_arc = page.image_data.clone();
+            let page_idx = page.page_index;
+            
+            if let Some(dynamic_img) = img_arc {
+                // 将 DynamicImage 转换为 RGBA8 格式
+                let rgba = dynamic_img.to_rgba8();
+                let img_width = rgba.width();
+                let img_height = rgba.height();
+                let bytes = rgba.into_raw();
+                let bytes_len = bytes.len();
+                
+                // 创建图像视图
+                create_image_view(bytes, img_width, img_height, page.width, page.height).into_any()
+            } else {
+                // 占位符
+                container(
+                    label(move || format!("Loading page {}...", page_idx + 1))
+                        .style(|s| s.font_size(14.0).color(Color::rgb(0.5, 0.5, 0.5)))
+                )
+                .style(move |s| {
+                    s.width(page.width)
+                        .height(page.height)
+                        .background(Color::rgb(0.95, 0.95, 0.95))
+                        .justify_content(Some(floem::taffy::JustifyContent::Center))
+                        .align_items(Some(floem::taffy::AlignItems::Center))
+                        .border(1.0)
+                        .border_color(Color::rgb(0.8, 0.8, 0.8))
+                })
+                .into_any()
             }
         }
-    }
+    );
     
-    if !current_line.is_empty() && lines.len() < max_lines {
-        lines.push(current_line);
-    }
+    // 创建可滚动容器
+    scroll(
+        container(doc_container)
+            .style(|s| s.background(Color::WHITE).padding(20.0))
+    )
+    .on_scroll(move |rect| {
+        scroll_offset.set((-rect.x0, -rect.y0));
+    })
+    .style(|s| s.size(100.pct(), 100.pct()).background(Color::rgb(0.9, 0.9, 0.9)))
+}
+
+#[derive(Clone, Debug)]
+struct RenderedPage {
+    page_index: usize,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    image_data: Option<std::sync::Arc<image::DynamicImage>>,
+}
+
+fn update_rendered_pages(
+    state: &PageViewState,
+    rendered_pages: &RwSignal<Vec<RenderedPage>>,
+) {
+    let mut pages = Vec::new();
     
-    if lines.len() >= max_lines {
-        let last_line = lines.last_mut().unwrap();
-        if last_line.len() > 3 {
-            *last_line = format!("{}...", last_line[0..last_line.len()-3].to_string());
+    for &idx in &state.visible_pages {
+        if let Some(page) = state.pages.get(idx) {
+            let key = generate_thumbnail_key(page);
+            let image_data = state.cache.get_thumbnail(&key);
+            
+            pages.push(RenderedPage {
+                page_index: idx,
+                x: page.bounds.left as f64,
+                y: page.bounds.top as f64,
+                width: page.width as f64,
+                height: page.height as f64,
+                image_data,
+            });
         }
     }
     
-    lines.join("\n")
+    rendered_pages.set(pages);
+}
+
+fn create_image_view(
+    bytes: Vec<u8>,
+    img_width: u32,
+    img_height: u32,
+    display_width: f64,
+    display_height: f64,
+) -> impl IntoView {
+    // 将 RGBA 数据编码为 PNG 格式
+    use image::{ImageBuffer, Rgba, codecs::png::PngEncoder, ImageEncoder};
+    
+    let img_buffer = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(img_width, img_height, bytes)
+        .expect("Failed to create image buffer");
+    
+    let mut png_bytes = Vec::new();
+    let encoder = PngEncoder::new(&mut png_bytes);
+    encoder.write_image(
+        img_buffer.as_raw(),
+        img_width,
+        img_height,
+        image::ExtendedColorType::Rgba8,
+    ).expect("Failed to encode PNG");
+    
+    // 使用 Floem 的 img 函数显示 PNG 编码的图像
+    container(
+        img(move || png_bytes.clone())
+            .style(move |s| {
+                s.width(display_width)
+                    .height(display_height)
+            })
+    )
+    .style(move |s| {
+        s.width(display_width)
+            .height(display_height)
+            .border(1.0)
+            .border_color(Color::rgb(0.8, 0.8, 0.8))
+    })
 }

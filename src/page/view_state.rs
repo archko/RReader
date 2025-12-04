@@ -248,10 +248,10 @@ impl PageViewState {
         // 使用二分查找优化
         let first = self.find_first_visible(&visible_rect);
         let last = self.find_last_visible(&visible_rect);
-        /*debug!(
+        debug!(
             "[PageViewState] update_visible_pages first:{}, last:{}, rect:{:?}",
             first, last, visible_rect
-        );*/
+        );
 
         if first <= last && first < self.pages.len() {
             for i in first..=last.min(self.pages.len() - 1) {
