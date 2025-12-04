@@ -443,7 +443,7 @@ fn create_card(
                     .align_items(Some(floem::taffy::AlignItems::Center))
             }),
             
-            // 标题（自动换行，最多两行）
+            // 标题（限制为两行，超出部分用省略号）
             container(
                 label(move || title_text.clone())
                     .style(|s| {
@@ -451,11 +451,12 @@ fn create_card(
                             .color(Color::rgb(0.2, 0.2, 0.2))
                             .line_height(1.2)
                             .max_width(160.0)
+                            .text_overflow(TextOverflow::Ellipsis)
                     })
             )
             .style(|s| {
                 s.width(160.0)
-                    .height(32.0)
+                    .max_height(34.0)  // 限制最大高度为两行 (14px * 1.2 * 2 ≈ 34px)
                     .margin_top(8.0)
             }),
             
@@ -466,6 +467,7 @@ fn create_card(
                         s.font_size(12.0)
                             .color(Color::rgb(0.4, 0.4, 0.4))
                             .max_width(160.0)
+                            .text_overflow(TextOverflow::Ellipsis)
                     })
             )
             .style(|s| {
@@ -535,8 +537,6 @@ fn document_view(
     current_page: RwSignal<i32>,
     page_count: RwSignal<i32>,
 ) -> impl IntoView {
-    let scroll_offset = RwSignal::new((0.0, 0.0));
-    
     let rendered_pages = RwSignal::new(Vec::<RenderedPage>::new());
     
     // 监听视口大小变化并更新渲染页面
@@ -554,23 +554,6 @@ fn document_view(
             let state = state_for_viewport.borrow();
             update_rendered_pages(&state, &rendered_pages);
         }
-    });
-    
-    // 监听滚动变化
-    let state_for_scroll = page_view_state.clone();
-    create_effect(move |_| {
-        let (offset_x, offset_y) = scroll_offset.get();
-        let mut state = state_for_scroll.borrow_mut();
-        state.update_offset(offset_x as f32, offset_y as f32);
-        state.update_visible_pages();
-        
-        if let Some(first_visible) = state.get_first_visible_page() {
-            current_page.set((first_visible + 1) as i32);
-        }
-        drop(state);
-        
-        let state = state_for_scroll.borrow();
-        update_rendered_pages(&state, &rendered_pages);
     });
     
     // 创建文档容器 - 使用 dyn_stack 垂直显示页面
@@ -611,15 +594,39 @@ fn document_view(
     )
     .style(|s| s.flex_direction(floem::taffy::FlexDirection::Column));
     
-    // 创建可滚动容器
-    scroll(
+    // 创建可滚动容器，并监听滚动事件
+    let state_for_scroll = page_view_state.clone();
+    let scroll_view = scroll(
         container(doc_container)
             .style(|s| s.background(Color::WHITE).padding(20.0))
     )
     .on_scroll(move |rect| {
-        scroll_offset.set((-rect.x0, -rect.y0));
+        // rect 包含滚动容器的位置信息
+        // 滚动偏移量是负值（向下滚动时 y 为负）
+        let offset_x = -rect.x0 as f32;
+        let offset_y = -rect.y0 as f32;
+        
+        info!("[Scroll Event] offset: ({}, {})", offset_x, offset_y);
+        
+        // 更新 PageViewState 的偏移量
+        let mut state = state_for_scroll.borrow_mut();
+        state.update_offset(offset_x, offset_y);
+        state.update_visible_pages();
+        
+        // 更新当前页码
+        if let Some(first_visible) = state.get_first_visible_page() {
+            current_page.set((first_visible + 1) as i32);
+            info!("[Scroll Event] First visible page: {}", first_visible + 1);
+        }
+        drop(state);
+        
+        // 更新渲染页面
+        let state = state_for_scroll.borrow();
+        update_rendered_pages(&state, &rendered_pages);
     })
-    .style(|s| s.size(100.pct(), 100.pct()).background(Color::rgb(0.9, 0.9, 0.9)))
+    .style(|s| s.size(100.pct(), 100.pct()).background(Color::rgb(0.9, 0.9, 0.9)));
+    
+    scroll_view
 }
 
 #[derive(Clone, Debug)]
@@ -638,10 +645,14 @@ fn update_rendered_pages(
 ) {
     let mut pages = Vec::new();
     
+    info!("[update_rendered_pages] visible_pages: {:?}", state.visible_pages);
+    
     for &idx in &state.visible_pages {
         if let Some(page) = state.pages.get(idx) {
             let key = generate_thumbnail_key(page);
             let image_data = state.cache.get_thumbnail(&key);
+            
+            info!("[update_rendered_pages] Page {}: has_image={}", idx, image_data.is_some());
             
             pages.push(RenderedPage {
                 page_index: idx,
@@ -654,6 +665,7 @@ fn update_rendered_pages(
         }
     }
     
+    info!("[update_rendered_pages] Total rendered pages: {}", pages.len());
     rendered_pages.set(pages);
 }
 
