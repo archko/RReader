@@ -4,7 +4,8 @@ import { UIRecent, HistoryRow } from "types.slint";
 component HistoryItem inherits Rectangle {
     in property <string> title;
     in property <string> path;
-    in property <string> thumbnail;
+    in property <image> thumbnail;
+    in property <bool> has_thumbnail;
 
     callback item-clicked();
 
@@ -28,7 +29,7 @@ component HistoryItem inherits Rectangle {
             height: 160px;
 
             Image {
-                source: @image-url("../assets/slint-logo-full-light.svg");
+                source: has_thumbnail ? thumbnail : @image-url("../assets/slint-logo-full-light.svg");
                 width: 100%;
                 height: 100%;
                 image-fit: contain;
@@ -86,6 +87,7 @@ export component HistoryView inherits Rectangle {
                     title: item.title;
                     path: item.path;
                     thumbnail: item.thumbnail;
+                    has_thumbnail: item.has_thumbnail;
 
                     item-clicked => {
                         root.item-clicked(item);

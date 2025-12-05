@@ -13,6 +13,8 @@ use log::{debug, error, info};
 use slint::{ComponentHandle, ModelRc, VecModel};
 use dirs;
 
+slint::include_modules!();
+
 mod cache;
 mod decoder;
 mod page;
@@ -26,8 +28,35 @@ use crate::decoder::pdf::utils::{generate_thumbnail_key, convert_to_slint_image}
 use crate::ui::MainViewmodel;
 use crate::dao::RecentDao;
 use crate::entity::{Recent};
+use crate::ui::utils::get_thumbnail_path;
 
-slint::include_modules!();
+fn convert_history_records_to_items(records: &[Recent]) -> Vec<UIRecent> {
+    records
+        .iter()
+        .map(|record| {
+            let path = record.book_path.clone();
+            let cache_path = get_thumbnail_path(&path);
+
+            let (thumbnail, has_thumbnail) = if !cache_path.is_empty() {
+                if let Ok(dynamic_image) = image::open(&cache_path) {
+                    (convert_to_slint_image(&dynamic_image), true)
+                } else {
+                    (slint::Image::default(), false)
+                }
+            } else {
+                (slint::Image::default(), false)
+            };
+
+            UIRecent {
+                title: record.name.clone().into(),
+                path: path.into(),
+                thumbnail,
+                has_thumbnail,
+                page: record.page,
+            }
+        })
+        .collect()
+}
 
 static HISTORY_VIEWPORT_WIDTH: LazyLock<RwLock<f32>> = LazyLock::new(|| RwLock::new(1024.0));
 
@@ -60,8 +89,8 @@ async fn main() -> Result<()> {
     // 构建数据库路径
     let db_path = app_data_dir.join("book.db");
     let database_url = format!("sqlite:///{}", db_path.display());
-    println!("Database path: {:?}", db_path);
-    println!("Database URL: {}", database_url);
+    debug!("Database path: {:?}", db_path);
+    debug!("Database URL: {}", database_url);
     std::env::set_var("DATABASE_URL", &database_url);
 
     // 确保数据库文件和表存在（第一次运行时会创建）
@@ -83,15 +112,7 @@ async fn main() -> Result<()> {
     {
         let viewmodel_binding = viewmodel.borrow();
         let history_records = viewmodel_binding.get_current_records();
-        let ui_history_items: Vec<UIRecent> = history_records
-            .iter()
-            .map(|record| UIRecent {
-                title: record.name.clone().into(),
-                path: record.book_path.clone().into(),
-                thumbnail: "".into(), // TODO: 可以在这里添加缩略图路径
-                page: record.page,
-            })
-            .collect();
+        let ui_history_items = convert_history_records_to_items(&history_records);
 
         set_history_to_ui(&app, ui_history_items);
     }
@@ -136,7 +157,7 @@ async fn main() -> Result<()> {
                         while let Some(result) = state.decode_service.try_recv_result() {
                             had_results = true;
                             result_count += 1;
-                            info!("[Main] 收到解码结果: page={}, key={}, size={}x{}", 
+                            debug!("[Main] 收到解码结果: page={}, key={}, size={}x{}", 
                                 result.page_info.index, result.key, result.image_width, result.image_height);
                             
                             // 将原始数据转换为Slint图像
@@ -165,7 +186,7 @@ async fn main() -> Result<()> {
                     }
                     
                     if had_results {
-                        info!("[Main] 处理了 {} 个解码结果，刷新视图", result_count);
+                        debug!("[Main] 处理了 {} 个解码结果，刷新视图", result_count);
                         refresh_view(&app, &state_clone.borrow());
                     }
                 }
@@ -190,7 +211,12 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
             .add_filter("PDF Files", &["pdf"])
             .add_filter("PDF Files", &["epub"])
             .add_filter("PDF Files", &["mobi"])
-            .add_filter("All Files", &["*"])
+            .add_filter("All Files", &["cbz"])
+            .add_filter("All Files", &["docx"])
+            .add_filter("All Files", &["xps"])
+            .add_filter("All Files", &["djvu"])
+            .add_filter("All Files", &["tif"])
+            .add_filter("All Files", &["tiff"])
             .set_title("Select PDF File")
             .pick_file();
 
@@ -369,7 +395,7 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
         return;
     }
 
-    info!("[Main] refresh_view: visible_pages={:?}", page_view_state.visible_pages);
+    debug!("[Main] refresh_view: visible_pages={:?}", page_view_state.visible_pages);
 
     let rendered_pages = page_view_state.visible_pages
         .iter()
@@ -409,7 +435,6 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
 
     if let Some(first_visible) = page_view_state.get_first_visible_page() {
         app.set_current_page((first_visible + 1) as i32);  // UI expects 1-based page numbers
-        //debug!("[Main] refresh_view set_current_page: {}", first_visible)
     }
 
     let (total_width, total_height) = (page_view_state.total_width, page_view_state.total_height);
@@ -421,10 +446,10 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
     app.set_offset_x(offset_x);
     app.set_offset_y(offset_y);
     app.set_scroll_events_enabled(true);
-    /*debug!(
+    debug!(
         "[Main] refresh_view.offset: ({}, {}), total.w-h: ({}, {})",
         offset_x, offset_y, total_width, total_height
-    );*/
+    );
 }
 
 fn setup_back_to_history_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>, viewmodel: Rc<RefCell<MainViewmodel>>) {
@@ -450,20 +475,11 @@ fn setup_back_to_history_handler(app: &MainWindow, page_view_state: Rc<RefCell<P
                 }
             }
 
-            // 再刷新当前历史记录
             if let Some(vm) = weak_viewmodel.upgrade() {
                 let _ = vm.borrow_mut().load_history(0);
                 let vm_binding = vm.borrow();
                 let history_records = vm_binding.get_current_records();
-                let ui_history_items: Vec<UIRecent> = history_records
-                    .iter()
-                    .map(|record| UIRecent {
-                        title: record.name.clone().into(),
-                        path: record.book_path.clone().into(),
-                        thumbnail: "".into(),
-                        page: record.page
-                    })
-                    .collect();
+                let ui_history_items = convert_history_records_to_items(&history_records);
                 set_history_to_ui(&app, ui_history_items);
             }
 

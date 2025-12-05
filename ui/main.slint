@@ -4,11 +4,11 @@ import { DocumentView } from "document_view.slint";
 import { HistoryView } from "history_components.slint";
 
 export component MainWindow inherits Window {
-    title: "PDF Reader";
+    title: "R-Reader";
     preferred-width: 1024px;
     preferred-height: 768px;
-    min-width: 640px;
-    min-height: 480px;
+    min-width: 800px;
+    min-height: 640px;
     default-font-family: "Simsun";
 
     in property <int> page-count: 0;
@@ -58,13 +58,13 @@ export component MainWindow inherits Window {
                     spacing: 8px;
                     
                     Button {
-                        text: "Clear";
-                        clicked => { }
+                        text: "Open";
+                        clicked => { open-file(); }
                     }
                     
                     Button {
-                        text: "Open";
-                        clicked => { open-file(); }
+                        text: "Clear";
+                        clicked => { }
                     }
                 }
             }
@@ -96,6 +96,7 @@ export component MainWindow inherits Window {
                             text: "Back";
                             clicked => { back-to-history(); }
                         }
+                        
                         Button {
                             text: "Open";
                             clicked => { open-file(); }
@@ -160,26 +161,27 @@ export component MainWindow inherits Window {
                 vertical-stretch: 1;
 
                 if root.outline-visible: ListView {
-                    width: 200px;
+                    width: 250px;
                     for outline_item in root.outline-items : Rectangle {
-                        height: 30px;
+                        height: 32px;
                         background: #ffffff;
                         width: parent.width;
 
                         HorizontalBox {
-                            padding-left: outline_item.level * 10px;
-                            spacing: 8px;
+                            padding-left: outline_item.level * 4px;
+                            spacing: 2px;
 
                             Text {
                                 text: outline_item.title;
-                                font-size: 12px;
+                                font-size: 13px;
                                 horizontal-alignment: left;
                                 wrap: no-wrap;
+                                width: 200px;
                             }
 
                             Text {
                                 text: outline_item.page + 1;
-                                font-size: 10px;
+                                font-size: 13px;
                                 color: #666666;
                                 horizontal-alignment: right;
                             }
@@ -204,7 +206,7 @@ export component MainWindow inherits Window {
                 }
 
                 Button {
-                    width: 24px;
+                    width: 22px;
                     text: root.outline-visible ? "◀" : "▶";
                     clicked => { outline-visible = !outline-visible; }
                 }

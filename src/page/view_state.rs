@@ -260,7 +260,7 @@ impl PageViewState {
                         // 提交解码任务到解码线程
                         let page_info = page.info.clone();
                         let crop = self.crop;
-                        info!("[PageViewState] 提交解码任务: page={}, key={}", page.info.index, key);
+                        debug!("[PageViewState] 提交解码任务: page={}, key={}", page.info.index, key);
                         self.decode_service.render_page(
                             key.clone(),
                             page_info,

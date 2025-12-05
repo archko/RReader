@@ -12,6 +12,7 @@ use image::GenericImageView;
 
 use crate::decoder::pdf::PdfDecoder;
 use crate::decoder::{Decoder, Link, PageInfo};
+use crate::ui::utils::generate_thumbnail_hash;
 
 /// 解码任务
 pub enum DecodeTask {
@@ -61,9 +62,8 @@ pub struct DecodeService {
 impl DecodeService {
     /// 保存封面缩略图
     fn save_cover_thumbnail(path: &PathBuf, dec: &Box<dyn Decoder>, first_page: &PageInfo) {
-        let mut hasher = DefaultHasher::new();
-        path.hash(&mut hasher);
-        let hash = hasher.finish();
+        let path_str = path.to_string_lossy();
+        let hash = generate_thumbnail_hash(&path_str);
         if let Some(data_dir) = dirs::data_dir() {
             let cache_dir = data_dir.join("RReader").join("images");
             let cache_path = cache_dir.join(format!("{}.png", hash));
