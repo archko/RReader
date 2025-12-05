@@ -61,33 +61,37 @@ pub struct DecodeService {
 impl DecodeService {
     /// 保存封面缩略图
     fn save_cover_thumbnail(path: &PathBuf, dec: &Box<dyn Decoder>, first_page: &PageInfo) {
-        // 计算缩放到最大 300 像素的 scale
-        let max_original = first_page.width.max(first_page.height);
-        let effective_scale = 300.0 / max_original;
-        let new_page_info = PageInfo {
-            index: first_page.index,
-            width: first_page.width,
-            height: first_page.height,
-            scale: effective_scale / 2.0, // 因为内部会乘以 2.0 (DPI scale)
-            crop_bounds: first_page.crop_bounds,
-        };
-        match dec.render_page(&new_page_info, false) {
-            Ok(image) => {
-                let mut hasher = DefaultHasher::new();
-                path.hash(&mut hasher);
-                let hash = hasher.finish();
-                if let Some(data_dir) = dirs::data_dir() {
-                    let cache_dir = data_dir.join("RReader").join("images");
+        let mut hasher = DefaultHasher::new();
+        path.hash(&mut hasher);
+        let hash = hasher.finish();
+        if let Some(data_dir) = dirs::data_dir() {
+            let cache_dir = data_dir.join("RReader").join("images");
+            let cache_path = cache_dir.join(format!("{}.png", hash));
+            if cache_path.exists() {
+                info!("[DecodeService] Cover thumbnail already exists: {:?}", cache_path);
+                return;
+            }
+            // 计算缩放到最大 300 像素的 scale
+            let max_original = first_page.width.max(first_page.height);
+            let effective_scale = 300.0 / max_original;
+            let new_page_info = PageInfo {
+                index: first_page.index,
+                width: first_page.width,
+                height: first_page.height,
+                scale: effective_scale / 2.0, // 因为内部会乘以 2.0 (DPI scale)
+                crop_bounds: first_page.crop_bounds,
+            };
+            match dec.render_page(&new_page_info, false) {
+                Ok(image) => {
                     if fs::create_dir_all(&cache_dir).is_ok() {
-                        let cache_path = cache_dir.join(format!("{}.png", hash));
                         if image.save(&cache_path).is_ok() {
                             info!("[DecodeService] Saved thumbnail to {:?}", cache_path);
                         }
                     }
                 }
-            }
-            Err(e) => {
-                info!("[DecodeService] Failed to render cover: {}", e);
+                Err(e) => {
+                    info!("[DecodeService] Failed to render cover: {}", e);
+                }
             }
         }
     }
