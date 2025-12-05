@@ -16,38 +16,49 @@ pub fn create_matrix(zoom: f32, rotation: f32) -> Matrix {
 }
 
 pub fn mupdf_to_image(pixmap: &Pixmap) -> DynamicImage {
+    let (pixels, width, height) = mupdf_to_pixels(pixmap);
+    let rgba_img = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, pixels).unwrap();
+    DynamicImage::ImageRgba8(rgba_img)
+}
+
+pub fn mupdf_to_pixels(pixmap: &Pixmap) -> (Vec<u8>, u32, u32) {
     let width = pixmap.width() as u32;
     let height = pixmap.height() as u32;
     let samples = pixmap.samples();
     let n = pixmap.n() as usize; // 每个像素的组件数
 
-    let mut img_buffer = ImageBuffer::<Rgba<u8>, Vec<u8>>::new(width, height);
+    let mut buffer = vec![0u8; (width * height * 4) as usize];
 
     for y in 0..height {
         for x in 0..width {
-            let idx = ((y * width + x) as usize) * n;
-            if idx + n <= samples.len() {
-                let pixel = if n == 4 {
+            let src_idx = ((y * width + x) as usize) * n;
+            let dst_idx = ((y * width + x) as usize) * 4;
+
+            if src_idx + n <= samples.len() && dst_idx + 4 <= buffer.len() {
+                if n == 4 {
                     // RGBA
-                    Rgba([
-                        samples[idx],
-                        samples[idx + 1],
-                        samples[idx + 2],
-                        samples[idx + 3],
-                    ])
+                    buffer[dst_idx] = samples[src_idx];
+                    buffer[dst_idx + 1] = samples[src_idx + 1];
+                    buffer[dst_idx + 2] = samples[src_idx + 2];
+                    buffer[dst_idx + 3] = samples[src_idx + 3];
                 } else if n == 3 {
                     // RGB
-                    Rgba([samples[idx], samples[idx + 1], samples[idx + 2], 255])
+                    buffer[dst_idx] = samples[src_idx];
+                    buffer[dst_idx + 1] = samples[src_idx + 1];
+                    buffer[dst_idx + 2] = samples[src_idx + 2];
+                    buffer[dst_idx + 3] = 255;
                 } else {
-                    // 灰度或其他
-                    Rgba([samples[idx], samples[idx], samples[idx], 255])
-                };
-                img_buffer.put_pixel(x, y, pixel);
+                    // 灰度或其他，复制到所有通道
+                    buffer[dst_idx] = if n > 0 { samples[src_idx] } else { 255 };
+                    buffer[dst_idx + 1] = buffer[dst_idx];
+                    buffer[dst_idx + 2] = buffer[dst_idx];
+                    buffer[dst_idx + 3] = if n > 1 { samples[src_idx + 1] } else { 255 };
+                }
             }
         }
     }
 
-    DynamicImage::ImageRgba8(img_buffer)
+    (buffer, width, height)
 }
 
 pub fn convert_to_slint_image(image: &image::DynamicImage) -> Image {

@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::path::Path;
 
 use super::{Decoder, Link, LinkType, PageInfo, Rect};
-use crate::pdf::utils::mupdf_to_image;
+use crate::pdf::utils::mupdf_to_pixels;
 
 pub struct DjvuDecoder {
     document: RefCell<Document>,
@@ -56,7 +56,7 @@ impl Decoder for DjvuDecoder {
         Ok(self.pages_info.clone())
     }
 
-    fn render_page(&self, page: &PageInfo, crop: bool) -> Result<DynamicImage> {
+    fn render_page(&self, page: &PageInfo, crop: bool) -> Result<(Vec<u8>, u32, u32)> {
         info!("[PDF] Rendering page {} with crop={}", page.index, crop);
         let document = self.document.borrow();
         let mupdf_page = document.load_page(page.index as i32)?;
@@ -81,7 +81,7 @@ impl Decoder for DjvuDecoder {
         let mut device = Device::from_pixmap(&pixmap)?;
         mupdf_page.run(&mut device, &matrix)?;
 
-        Ok(mupdf_to_image(&pixmap))
+        Ok(mupdf_to_pixels(&pixmap))
     }
 
     fn render_region(&self, page_index: usize, region: Rect, scale: f32) -> Result<DynamicImage> {
@@ -106,7 +106,7 @@ impl Decoder for DjvuDecoder {
         let mut device = Device::from_pixmap(&pixmap)?;
         page.run(&mut device, &matrix)?;
 
-        Ok(mupdf_to_image(&pixmap))
+        Ok(mupdf_to_pixels(&pixmap))
     }
 
     fn get_page_links(&self, page_index: usize) -> Result<Vec<Link>> {

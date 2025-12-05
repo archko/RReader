@@ -8,7 +8,6 @@ use std::time::Instant;
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
-use image::GenericImageView;
 
 use crate::decoder::pdf::PdfDecoder;
 use crate::decoder::{Decoder, Link, PageInfo};
@@ -82,7 +81,9 @@ impl DecodeService {
                 crop_bounds: first_page.crop_bounds,
             };
             match dec.render_page(&new_page_info, false) {
-                Ok(image) => {
+                Ok((pixels, width, height)) => {
+                    let rgba_img = image::RgbaImage::from_raw(width, height, pixels).unwrap();
+                    let image = image::DynamicImage::ImageRgba8(rgba_img);
                     if fs::create_dir_all(&cache_dir).is_ok() {
                         if image.save(&cache_path).is_ok() {
                             info!("[DecodeService] Saved thumbnail to {:?}", cache_path);
@@ -155,14 +156,9 @@ impl DecodeService {
                             let start_time = Instant::now();
                             
                             match dec.render_page(&page_info, crop != 0) {
-                                Ok(image) => {
+                                Ok((image_data, width, height)) => {
                                     let links = dec.get_page_links(page_info.index).unwrap_or_default();
-                                    
-                                    // 将DynamicImage转换为原始字节数据
-                                    let rgba_image = image.to_rgba8();
-                                    let (width, height) = rgba_image.dimensions();
-                                    let image_data = rgba_image.into_raw();
-                                    
+
                                     let duration = start_time.elapsed();
                                     info!(
                                         "[DecodeService] 页面 {} 解码完成，耗时: {:?}, links: {}",

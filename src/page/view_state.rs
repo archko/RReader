@@ -3,7 +3,7 @@ use log::{debug, info};
 use super::Page;
 use crate::cache::PageCache;
 use crate::decoder::decode_service::Priority;
-use crate::decoder::pdf::utils::{convert_to_slint_image, generate_thumbnail_key};
+use crate::decoder::pdf::utils::{generate_thumbnail_key};
 use crate::decoder::{DecodeService, Link, Rect};
 use crate::entity::OutlineItem;
 use std::cell::RefCell;
