@@ -74,12 +74,23 @@ component DocumentView inherits Rectangle {
                 border-width: 1px;
                 border-color: #d0d0d0;
                 clip: true;
+                background: #f5f5f5;
 
-                Image {
+                // 显示图片（如果有）
+                if page.image.width > 0 && page.image.height > 0: Image {
                     width: parent.width;
                     height: parent.height;
                     source: page.image;
                     image-fit: fill;
+                }
+
+                // 显示页码（如果没有图片）
+                if !(page.image.width > 0 && page.image.height > 0): Text {
+                    text: "Page " + (page.page_index + 1);
+                    font-size: 24px;
+                    color: #999999;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
                 }
 
                 TouchArea {
@@ -261,6 +272,7 @@ export component MainWindow inherits Window {
     preferred-height: 768px;
     min-width: 640px;
     min-height: 480px;
+    default-font-family: "Simsun";
 
     in property <int> page-count: 0;
     in-out property <int> current-page: 0;

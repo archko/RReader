@@ -147,11 +147,8 @@ async fn main() -> Result<()> {
                             );
 
                             if let Some(rgba_image) = image {
-                                info!("[Main] 成功创建RgbaImage: page={}", result.page_info.index);
                                 let dynamic_image = image::DynamicImage::ImageRgba8(rgba_image);
                                 let slint_image = convert_to_slint_image(&dynamic_image);
-                                
-                                info!("[Main] 转换为Slint图像完成: page={}", result.page_info.index);
                                 
                                 // 更新缓存
                                 state.cache.put_thumbnail(result.key.clone(), slint_image);
@@ -385,7 +382,7 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
                     debug!("[Main] 从缓存获取图像: key={}, page={}", key, page.info.index);
                     cached_image.as_ref().clone()
                 } else {
-                    debug!("[Main] 缓存中没有图像，使用默认: key={}, page={}", key, page.info.index);
+                    debug!("[Main] 缓存中没有图像，显示页码: key={}, page={}", key, page.info.index);
                     slint::Image::default()
                 }
             };
