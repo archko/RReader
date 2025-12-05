@@ -5,6 +5,10 @@ use crossbeam_channel::{unbounded, Sender, Receiver};
 use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
+use std::hash::{Hash, Hasher};
+use std::collections::hash_map::DefaultHasher;
+use std::fs;
+use image::GenericImageView;
 
 use crate::decoder::pdf::PdfDecoder;
 use crate::decoder::{Decoder, Link, PageInfo};
@@ -55,6 +59,41 @@ pub struct DecodeService {
 }
 
 impl DecodeService {
+    /// 保存封面缩略图
+    fn save_cover_thumbnail(path: &PathBuf, dec: &Box<dyn Decoder>, first_page: &PageInfo) {
+        // 计算缩放到最大 300 像素的 scale
+        let max_original = first_page.width.max(first_page.height);
+        let effective_scale = 300.0 / max_original;
+        let new_page_info = PageInfo {
+            index: first_page.index,
+            width: first_page.width,
+            height: first_page.height,
+            scale: effective_scale / 2.0, // 因为内部会乘以 2.0 (DPI scale)
+            crop_bounds: first_page.crop_bounds,
+        };
+        match dec.render_page(&new_page_info, false) {
+            Ok(image) => {
+                let mut hasher = DefaultHasher::new();
+                path.hash(&mut hasher);
+                let hash = hasher.finish();
+                if let Some(data_dir) = dirs::data_dir() {
+                    let cache_dir = data_dir.join("RReader").join("images");
+                    if fs::create_dir_all(&cache_dir).is_ok() {
+                        let cache_path = cache_dir.join(format!("{}.png", hash));
+                        if image.save(&cache_path).is_ok() {
+                            info!("[DecodeService] Saved thumbnail to {:?}", cache_path);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                info!("[DecodeService] Failed to render cover: {}", e);
+            }
+        }
+    }
+}
+
+impl DecodeService {
     pub fn new() -> Self {
         let (task_tx, task_rx) = unbounded::<DecodeTask>();
         let (result_tx, result_rx) = unbounded::<DecodeResult>();
@@ -82,9 +121,20 @@ impl DecodeService {
                         info!("[DecodeService] Loading document: {:?}", path);
                         match PdfDecoder::open(&path) {
                             Ok(pdf_decoder) => {
-                                let pages_result = pdf_decoder.get_all_pages();
-                                decoder = Some(Box::new(pdf_decoder));
+                                let boxed_decoder = Box::new(pdf_decoder);
+                                let pages_result = boxed_decoder.get_all_pages();
+                                decoder = Some(boxed_decoder);
+                                let first_page = if pages_result.is_ok() && !pages_result.as_ref().unwrap().is_empty() {
+                                    Some(pages_result.as_ref().unwrap()[0].clone())
+                                } else {
+                                    None
+                                };
                                 let _ = response_tx.send(pages_result);
+                                if let Some(fp) = first_page {
+                                    if let Some(ref dec) = decoder {
+                                        Self::save_cover_thumbnail(&path, dec, &fp);
+                                    }
+                                }
                             }
                             Err(e) => {
                                 let _ = response_tx.send(Err(e));
