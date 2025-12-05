@@ -1,28 +1,44 @@
 use anyhow::Result;
-use image::DynamicImage;
 use log::{debug, info};
-use std::cell::RefCell;
-use std::collections::VecDeque;
-use std::path::Path;
-use std::rc::Rc;
+use std::path::{Path, PathBuf};
+use crossbeam_channel::{unbounded, Sender, Receiver};
+use std::sync::Mutex;
+use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
 use crate::decoder::pdf::PdfDecoder;
 use crate::decoder::{Decoder, Link, PageInfo};
 
-/// 解码结果
-pub struct DecodeResult {
-    pub image: DynamicImage,
-    pub page_info: PageInfo,
-    pub links: Vec<Link>,
+/// 解码任务
+pub enum DecodeTask {
+    /// 加载文档
+    LoadDocument {
+        path: PathBuf,
+        response_tx: Sender<Result<Vec<PageInfo>>>,
+    },
+    /// 渲染页面
+    RenderPage {
+        key: String,
+        page_info: PageInfo,
+        crop: i32,
+        priority: Priority,
+    },
+    /// 获取大纲
+    GetOutline {
+        response_tx: Sender<Result<Vec<crate::entity::OutlineItem>>>,
+    },
+    /// 关闭服务
+    Shutdown,
 }
 
-pub struct DecodeTask {
+/// 解码结果（原始数据，可以跨线程传递）
+pub struct DecodeResult {
     pub key: String,
     pub page_info: PageInfo,
-    pub crop: i32,
-    pub priority: Priority,
-    pub callback: Box<dyn FnOnce(Result<DecodeResult>)>,
+    pub image_data: Vec<u8>,
+    pub image_width: u32,
+    pub image_height: u32,
+    pub links: Vec<Link>,
 }
 
 pub enum Priority {
@@ -31,98 +47,169 @@ pub enum Priority {
     Cropped = 2,   // 低优先级
 }
 
+/// 解码服务 - 单线程解码，通过channel通信
 pub struct DecodeService {
-    pub(crate) decoder: Option<Rc<dyn Decoder>>,
-    request_queue: RefCell<VecDeque<DecodeTask>>,
+    task_sender: Sender<DecodeTask>,
+    result_receiver: Mutex<Receiver<DecodeResult>>,
+    decode_thread: Option<JoinHandle<()>>,
 }
 
 impl DecodeService {
     pub fn new() -> Self {
+        let (task_tx, task_rx) = unbounded::<DecodeTask>();
+        let (result_tx, result_rx) = unbounded::<DecodeResult>();
+
+        // 启动解码线程
+        let decode_thread = thread::spawn(move || {
+            Self::decode_loop(task_rx, result_tx);
+        });
+
         Self {
-            decoder: None,
-            request_queue: RefCell::new(VecDeque::new()),
+            task_sender: task_tx,
+            result_receiver: Mutex::new(result_rx),
+            decode_thread: Some(decode_thread),
         }
     }
 
-    pub fn load_pdf<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
-        let decoder = Rc::new(PdfDecoder::open(path)?);
-        self.decoder = Some(decoder);
-        Ok(())
-    }
+    /// 解码线程主循环
+    fn decode_loop(task_rx: Receiver<DecodeTask>, result_tx: Sender<DecodeResult>) {
+        let mut decoder: Option<Box<dyn Decoder>> = None;
 
-    // 解码缩略图
-    pub fn render_page(&self, decode_task: DecodeTask) {
-        self.request_queue.borrow_mut().push_back(decode_task);
-    }
+        loop {
+            match task_rx.recv() {
+                Ok(task) => match task {
+                    DecodeTask::LoadDocument { path, response_tx } => {
+                        info!("[DecodeService] Loading document: {:?}", path);
+                        match PdfDecoder::open(&path) {
+                            Ok(pdf_decoder) => {
+                                let pages_result = pdf_decoder.get_all_pages();
+                                decoder = Some(Box::new(pdf_decoder));
+                                let _ = response_tx.send(pages_result);
+                            }
+                            Err(e) => {
+                                let _ = response_tx.send(Err(e));
+                            }
+                        }
+                    }
+                    DecodeTask::RenderPage {
+                        key,
+                        page_info,
+                        crop,
+                        priority,
+                    } => {
+                        if let Some(ref dec) = decoder {
+                            let start_time = Instant::now();
+                            
+                            match dec.render_page(&page_info, crop != 0) {
+                                Ok(image) => {
+                                    let links = dec.get_page_links(page_info.index).unwrap_or_default();
+                                    
+                                    // 将DynamicImage转换为原始字节数据
+                                    let rgba_image = image.to_rgba8();
+                                    let (width, height) = rgba_image.dimensions();
+                                    let image_data = rgba_image.into_raw();
+                                    
+                                    let duration = start_time.elapsed();
+                                    info!(
+                                        "[DecodeService] 页面 {} 解码完成，耗时: {:?}, links: {}",
+                                        page_info.index, duration, links.len()
+                                    );
 
-    // 处理队列中的一个解码请求
-    pub fn process_next_request(&self) -> bool {
-        if let Some(request) = self.request_queue.borrow_mut().pop_front() {
-            let start_time = Instant::now();
+                                    let result = DecodeResult {
+                                        key,
+                                        page_info,
+                                        image_data,
+                                        image_width: width,
+                                        image_height: height,
+                                        links,
+                                    };
 
-            let decoder = match self.decoder.as_ref() {
-                Some(decoder) => decoder,
-                None => {
-                    info!(
-                        "[DecodeService] 页面 {} 渲染失败: No decoder available",
-                        request.page_info.index
-                    );
-                    return false;
+                                    if result_tx.send(result).is_err() {
+                                        info!("[DecodeService] Result channel closed");
+                                        break;
+                                    }
+                                }
+                                Err(e) => {
+                                    info!("[DecodeService] 页面 {} 解码失败: {}", page_info.index, e);
+                                }
+                            }
+                        }
+                    }
+                    DecodeTask::GetOutline { response_tx } => {
+                        if let Some(ref dec) = decoder {
+                            let outline_result = dec.get_outline_items();
+                            let _ = response_tx.send(outline_result);
+                        } else {
+                            let _ = response_tx.send(Ok(Vec::new()));
+                        }
+                    }
+                    DecodeTask::Shutdown => {
+                        info!("[DecodeService] Shutting down decode thread");
+                        break;
+                    }
+                },
+                Err(_) => {
+                    info!("[DecodeService] Task channel closed");
+                    break;
                 }
-            };
-
-            let result = decoder.render_page(&request.page_info, request.crop != 0);
-
-            let links = if let Ok(links) = decoder.get_page_links(request.page_info.index) {
-                links
-            } else {
-                Vec::new()
-            };
-
-            let duration = start_time.elapsed();
-            if let Ok(image) = result {
-                info!(
-                    "[DecodeService] 页面 {} 渲染并缓存完成，耗时: {:?}, links:{:?}",
-                    request.page_info.index, duration, links.len()
-                );
-
-                let decode_result = DecodeResult {
-                    image,
-                    page_info: request.page_info.clone(),
-                    links,
-                };
-
-                (request.callback)(Ok(decode_result));
-            } else if let Err(e) = result {
-                info!(
-                    "[DecodeService] 页面 {} 渲染失败: {}",
-                    request.page_info.index, e
-                );
             }
-            true
-        } else {
-            false // 队列为空
         }
     }
 
-    // 处理队列中的所有解码请求
-    pub fn process_all_requests(&self) {
-        while self.process_next_request() {
-            // 继续处理直到队列为空
-        }
+    /// 加载PDF文档（同步等待）
+    pub fn load_pdf<P: AsRef<Path>>(&self, path: P) -> Result<Vec<PageInfo>> {
+        let (response_tx, response_rx) = unbounded();
+        self.task_sender
+            .send(DecodeTask::LoadDocument {
+                path: path.as_ref().to_path_buf(),
+                response_tx,
+            })
+            .map_err(|e| anyhow::anyhow!("Failed to send load task: {}", e))?;
+
+        response_rx
+            .recv()
+            .map_err(|e| anyhow::anyhow!("Failed to receive load response: {}", e))?
     }
 
-    pub fn page_count(&self) -> usize {
-        self.decoder
-            .as_ref()
-            .map(|decoder| decoder.page_count())
-            .unwrap_or(0)
+    /// 获取大纲（同步等待）
+    pub fn get_outline(&self) -> Result<Vec<crate::entity::OutlineItem>> {
+        let (response_tx, response_rx) = unbounded();
+        self.task_sender
+            .send(DecodeTask::GetOutline { response_tx })
+            .map_err(|e| anyhow::anyhow!("Failed to send outline task: {}", e))?;
+
+        response_rx
+            .recv()
+            .map_err(|e| anyhow::anyhow!("Failed to receive outline response: {}", e))?
     }
 
+    /// 提交渲染任务（异步，不等待）
+    pub fn render_page(&self, key: String, page_info: PageInfo, crop: i32, priority: Priority) {
+        let _ = self.task_sender.send(DecodeTask::RenderPage {
+            key,
+            page_info,
+            crop,
+            priority,
+        });
+    }
+
+    /// 尝试接收解码结果（非阻塞）
+    pub fn try_recv_result(&self) -> Option<DecodeResult> {
+        self.result_receiver.lock().unwrap().try_recv().ok()
+    }
+
+    /// 关闭服务
     pub fn destroy(&mut self) {
-        info!("[DecodeService] Destroying decoder service and clearing queue");
+        info!("[DecodeService] Destroying decoder service");
+        let _ = self.task_sender.send(DecodeTask::Shutdown);
+    }
+}
 
-        self.request_queue.borrow_mut().clear();
-        self.decoder = None;
+impl Drop for DecodeService {
+    fn drop(&mut self) {
+        self.destroy();
+        if let Some(handle) = self.decode_thread.take() {
+            let _ = handle.join();
+        }
     }
 }

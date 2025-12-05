@@ -21,7 +21,7 @@ mod dao;
 mod entity;
 
 use page::{PageViewState, Orientation};
-use crate::decoder::pdf::utils::{generate_thumbnail_key};
+use crate::decoder::pdf::utils::{generate_thumbnail_key, convert_to_slint_image};
 
 use crate::ui::MainViewmodel;
 use crate::dao::RecentDao;
@@ -108,7 +108,79 @@ async fn main() -> Result<()> {
     setup_page_up_handler(&app, page_view_state.clone());
     setup_history_item_click_handler(&app, page_view_state.clone(), viewmodel.clone());
 
+    // 设置定时器处理解码结果 - 必须保持timer存活
+    let decode_timer = {
+        let weak_app = app.as_weak();
+        let state_clone = Rc::clone(&page_view_state);
+        let timer = slint::Timer::default();
+        let timer_count = Rc::new(RefCell::new(0));
+        let timer_count_clone = Rc::clone(&timer_count);
+        
+        timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_millis(100),
+            move || {
+                let mut count = timer_count_clone.borrow_mut();
+                *count += 1;
+                if *count % 10 == 0 {
+                    debug!("[Main] 定时器运行中... count={}", *count);
+                }
+                
+                if let Some(app) = weak_app.upgrade() {
+                    // 处理所有待处理的结果
+                    let mut had_results = false;
+                    let mut result_count = 0;
+                    {
+                        let mut state = state_clone.borrow_mut();
+                        // 检查是否有结果（不消费）
+                        while let Some(result) = state.decode_service.try_recv_result() {
+                            had_results = true;
+                            result_count += 1;
+                            info!("[Main] 收到解码结果: page={}, key={}, size={}x{}", 
+                                result.page_info.index, result.key, result.image_width, result.image_height);
+                            
+                            // 将原始数据转换为Slint图像
+                            let image = image::RgbaImage::from_raw(
+                                result.image_width,
+                                result.image_height,
+                                result.image_data,
+                            );
+
+                            if let Some(rgba_image) = image {
+                                info!("[Main] 成功创建RgbaImage: page={}", result.page_info.index);
+                                let dynamic_image = image::DynamicImage::ImageRgba8(rgba_image);
+                                let slint_image = convert_to_slint_image(&dynamic_image);
+                                
+                                info!("[Main] 转换为Slint图像完成: page={}", result.page_info.index);
+                                
+                                // 更新缓存
+                                state.cache.put_thumbnail(result.key.clone(), slint_image);
+                                info!("[Main] 已更新缓存: key={}", result.key);
+                                
+                                // 更新链接
+                                state.page_links
+                                    .borrow_mut()
+                                    .insert(result.page_info.index, result.links);
+                            } else {
+                                error!("[Main] 创建RgbaImage失败: page={}", result.page_info.index);
+                            }
+                        }
+                    }
+                    
+                    if had_results {
+                        info!("[Main] 处理了 {} 个解码结果，刷新视图", result_count);
+                        refresh_view(&app, &state_clone.borrow());
+                    }
+                }
+            },
+        );
+        timer // 返回timer以保持其存活
+    };
+
     app.run()?;
+    
+    // 停止定时器
+    decode_timer.stop();
     Ok(())
 }
 
@@ -300,6 +372,8 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
         return;
     }
 
+    info!("[Main] refresh_view: visible_pages={:?}", page_view_state.visible_pages);
+
     let rendered_pages = page_view_state.visible_pages
         .iter()
         .filter_map(|&idx| page_view_state.pages.get(idx))
@@ -308,8 +382,10 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
             let key = generate_thumbnail_key(page);
             let image = {
                 if let Some(cached_image) = page_view_state.cache.get_thumbnail(&key) {
+                    debug!("[Main] 从缓存获取图像: key={}, page={}", key, page.info.index);
                     cached_image.as_ref().clone()
                 } else {
+                    debug!("[Main] 缓存中没有图像，使用默认: key={}, page={}", key, page.info.index);
                     slint::Image::default()
                 }
             };
@@ -325,10 +401,10 @@ fn refresh_view(app: &MainWindow, page_view_state: &PageViewState) {
         })
         .collect::<Vec<_>>();
 
-    /*debug!(
+    info!(
         "[Main] refresh_view {} page_models",
         rendered_pages.len()
-    );*/
+    );
     let model = Rc::new(VecModel::from(rendered_pages));
     app.set_document_pages(ModelRc::from(model));
     app.set_page_count(page_view_state.pages.len() as i32);
