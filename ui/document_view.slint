@@ -122,7 +122,7 @@ export component DocumentView inherits Rectangle {
     }
 
     scroll_timer := Timer {
-        interval: 200ms;
+        interval: 100ms;
         running: false;
         triggered => {
             scroll-changed(root.desired_offset_x, root.desired_offset_y);
