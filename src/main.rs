@@ -119,7 +119,7 @@ async fn main() -> Result<()> {
 
     setup_open_handler(&app, page_view_state.clone(), viewmodel.clone());
     setup_viewport_handler(&app, page_view_state.clone());
-    setup_history_viewport_handler(&app, page_view_state.clone());
+    setup_history_viewport_handler(&app, viewmodel.clone());
     setup_scroll_handler(&app, page_view_state.clone());
     setup_page_handler(&app, page_view_state.clone());
     setup_zoom_handler(&app, page_view_state.clone());
@@ -157,31 +157,26 @@ async fn main() -> Result<()> {
                         while let Some(result) = state.decode_service.try_recv_result() {
                             had_results = true;
                             result_count += 1;
-                            debug!("[Main] 收到解码结果: page={}, key={}, size={}x{}", 
+                            debug!("[Main] 收到解码结果: page={}, key={}, size={}x{}",
                                 result.page_info.index, result.key, result.image_width, result.image_height);
-                            
-                            // 将原始数据转换为Slint图像
-                            let image = image::RgbaImage::from_raw(
-                                result.image_width,
-                                result.image_height,
-                                result.image_data,
+
+                            // 注意：mupdf_to_pixels 返回的 RGBA 数据中 alpha 值为未预乘，若 Slint 期望预乘则需后续处理
+                            let slint_image = slint::Image::from_rgba8_premultiplied(
+                                slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+                                    &result.image_data,
+                                    result.image_width,
+                                    result.image_height,
+                                ),
                             );
 
-                            if let Some(rgba_image) = image {
-                                let dynamic_image = image::DynamicImage::ImageRgba8(rgba_image);
-                                let slint_image = convert_to_slint_image(&dynamic_image);
-                                
-                                // 更新缓存
-                                state.cache.put_thumbnail(result.key.clone(), slint_image);
-                                info!("[Main] 已更新缓存: key={}", result.key);
-                                
-                                // 更新链接
-                                state.page_links
-                                    .borrow_mut()
-                                    .insert(result.page_info.index, result.links);
-                            } else {
-                                error!("[Main] 创建RgbaImage失败: page={}", result.page_info.index);
-                            }
+                            // 更新缓存
+                            state.cache.put_thumbnail(result.key.clone(), slint_image);
+                            info!("[Main] 已更新缓存: key={}", result.key);
+
+                            // 更新链接
+                            state.page_links
+                                .borrow_mut()
+                                .insert(result.page_info.index, result.links);
                         }
                     }
                     
@@ -335,10 +330,24 @@ fn setup_viewport_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageView
     });
 }
 
-fn setup_history_viewport_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>) {
+fn setup_history_viewport_handler(app: &MainWindow, viewmodel: Rc<RefCell<MainViewmodel>>) {
+    let weak_app = app.as_weak();
     app.on_history_viewport_changed(move |width, height| {
         debug!("[Main] on_history_viewport_changed.width: {:?}, height: {:?}", width, height);
-        *HISTORY_VIEWPORT_WIDTH.write().unwrap() = width;
+
+        let old_width = *HISTORY_VIEWPORT_WIDTH.read().unwrap();
+        if (width - old_width).abs() > 0.1 { // 宽度变化阈值，防止抖动
+            *HISTORY_VIEWPORT_WIDTH.write().unwrap() = width;
+
+            // 重新计算列数并更新历史记录布局
+            if let Some(app) = weak_app.upgrade() {
+                let viewmodel_binding = viewmodel.borrow();
+                let history_records = viewmodel_binding.get_current_records();
+                let ui_history_items = convert_history_records_to_items(&history_records);
+                set_history_to_ui(&app, ui_history_items);
+                debug!("[Main] Updated history column count for new viewport width: {}", width);
+            }
+        }
     });
 }
 

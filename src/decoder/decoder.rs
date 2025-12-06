@@ -1,5 +1,4 @@
 use crate::{decoder::{Link, PageInfo, Rect}, entity::OutlineItem};
-use image::DynamicImage;
 
 /// 文档解码器统一接口
 /// 注意：由于某些底层库（如 mupdf）不是线程安全的，
