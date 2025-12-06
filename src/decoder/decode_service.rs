@@ -6,12 +6,40 @@ use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
+use std::collections::{hash_map::DefaultHasher, VecDeque, HashSet};
 use std::fs;
 
 use crate::decoder::pdf::PdfDecoder;
 use crate::decoder::{Decoder, Link, PageInfo};
 use crate::ui::utils::generate_thumbnail_hash;
+
+/// 渲染页面请求
+#[derive(Clone, Debug)]
+pub struct RenderPage {
+    pub key: String,
+    pub page_info: PageInfo,
+    pub crop: i32,
+    pub priority: Priority,
+}
+
+impl Hash for RenderPage {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.key.hash(state);
+    }
+}
+
+impl PartialEq for RenderPage {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+            && self.page_info.index == other.page_info.index
+            && (self.page_info.width - other.page_info.width).abs() < 0.1
+            && (self.page_info.height - other.page_info.height).abs() < 0.1
+            && (self.page_info.scale - other.page_info.scale).abs() < 0.001
+            && self.crop == other.crop
+    }
+}
+
+impl Eq for RenderPage {}
 
 /// 解码任务
 pub enum DecodeTask {
@@ -20,12 +48,9 @@ pub enum DecodeTask {
         path: PathBuf,
         response_tx: Sender<Result<Vec<PageInfo>>>,
     },
-    /// 渲染页面
-    RenderPage {
-        key: String,
-        page_info: PageInfo,
-        crop: i32,
-        priority: Priority,
+    /// 批量渲染页面
+    RenderPages {
+        pages: Vec<RenderPage>,
     },
     /// 获取大纲
     GetOutline {
@@ -45,6 +70,7 @@ pub struct DecodeResult {
     pub links: Vec<Link>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Priority {
     Thumbnail = 0, // 最高优先级
     FullImage = 1, // 中优先级
@@ -118,90 +144,160 @@ impl DecodeService {
     /// 解码线程主循环
     fn decode_loop(task_rx: Receiver<DecodeTask>, result_tx: Sender<DecodeResult>) {
         let mut decoder: Option<Box<dyn Decoder>> = None;
+        let mut task_queue: VecDeque<RenderPage> = VecDeque::new();
+        let mut current_visible: HashSet<RenderPage> = HashSet::new();
 
         loop {
+            // 1. 先检查是否有新任务（非阻塞）
+            while let Ok(task) = task_rx.try_recv() {
+                if Self::handle_task(
+                    task,
+                    &mut decoder,
+                    &mut task_queue,
+                    &mut current_visible,
+                ) {
+                    // 收到 Shutdown 信号
+                    return;
+                }
+            }
+
+            // 2. 处理队列中的一个任务
+            if let Some(render_page) = task_queue.pop_front() {
+                // 验证任务是否还在当前可见页中
+                if !current_visible.contains(&render_page) {
+                    info!("[DecodeService] 跳过不可见页: page={}, key={}", 
+                        render_page.page_info.index, render_page.key);
+                    // 继续处理下一个任务
+                    continue;
+                }
+
+                // 执行解码
+                if let Some(ref dec) = decoder {
+                    let start_time = Instant::now();
+                    
+                    match dec.render_page(&render_page.page_info, render_page.crop != 0) {
+                        Ok((image_data, width, height)) => {
+                            let links = dec.get_page_links(render_page.page_info.index)
+                                .unwrap_or_default();
+
+                            let duration = start_time.elapsed();
+                            info!(
+                                "[DecodeService] 页面 {} 解码完成，耗时: {:?}, links: {}",
+                                render_page.page_info.index, duration, links.len()
+                            );
+
+                            let result = DecodeResult {
+                                key: render_page.key.clone(),
+                                page_info: render_page.page_info.clone(),
+                                image_data,
+                                image_width: width,
+                                image_height: height,
+                                links,
+                            };
+
+                            if result_tx.send(result).is_err() {
+                                info!("[DecodeService] Result channel closed");
+                                return;
+                            }
+                        }
+                        Err(e) => {
+                            info!("[DecodeService] 页面 {} 解码失败: {}", render_page.page_info.index, e);
+                        }
+                    }
+                }
+                
+                // 解码完一个任务后，继续下一个循环（会先检查新任务）
+                continue;
+            }
+
+            // 3. 队列为空，阻塞等待新任务
             match task_rx.recv() {
-                Ok(task) => match task {
-                    DecodeTask::LoadDocument { path, response_tx } => {
-                        info!("[DecodeService] Loading document: {:?}", path);
-                        match PdfDecoder::open(&path) {
-                            Ok(pdf_decoder) => {
-                                let boxed_decoder = Box::new(pdf_decoder);
-                                let pages_result = boxed_decoder.get_all_pages();
-                                decoder = Some(boxed_decoder);
-                                let first_page = if pages_result.is_ok() && !pages_result.as_ref().unwrap().is_empty() {
-                                    Some(pages_result.as_ref().unwrap()[0].clone())
-                                } else {
-                                    None
-                                };
-                                let _ = response_tx.send(pages_result);
-                                if let Some(fp) = first_page {
-                                    if let Some(ref dec) = decoder {
-                                        Self::save_cover_thumbnail(&path, dec, &fp);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                let _ = response_tx.send(Err(e));
-                            }
-                        }
-                    }
-                    DecodeTask::RenderPage {
-                        key,
-                        page_info,
-                        crop,
-                        priority,
-                    } => {
-                        if let Some(ref dec) = decoder {
-                            let start_time = Instant::now();
-                            
-                            match dec.render_page(&page_info, crop != 0) {
-                                Ok((image_data, width, height)) => {
-                                    let links = dec.get_page_links(page_info.index).unwrap_or_default();
-
-                                    let duration = start_time.elapsed();
-                                    info!(
-                                        "[DecodeService] 页面 {} 解码完成，耗时: {:?}, links: {}",
-                                        page_info.index, duration, links.len()
-                                    );
-
-                                    let result = DecodeResult {
-                                        key,
-                                        page_info,
-                                        image_data,
-                                        image_width: width,
-                                        image_height: height,
-                                        links,
-                                    };
-
-                                    if result_tx.send(result).is_err() {
-                                        info!("[DecodeService] Result channel closed");
-                                        break;
-                                    }
-                                }
-                                Err(e) => {
-                                    info!("[DecodeService] 页面 {} 解码失败: {}", page_info.index, e);
-                                }
-                            }
-                        }
-                    }
-                    DecodeTask::GetOutline { response_tx } => {
-                        if let Some(ref dec) = decoder {
-                            let outline_result = dec.get_outline_items();
-                            let _ = response_tx.send(outline_result);
-                        } else {
-                            let _ = response_tx.send(Ok(Vec::new()));
-                        }
-                    }
-                    DecodeTask::Shutdown => {
-                        info!("[DecodeService] Shutting down decode thread");
+                Ok(task) => {
+                    if Self::handle_task(
+                        task,
+                        &mut decoder,
+                        &mut task_queue,
+                        &mut current_visible,
+                    ) {
+                        // 收到 Shutdown 信号
                         break;
                     }
-                },
+                }
                 Err(_) => {
                     info!("[DecodeService] Task channel closed");
                     break;
                 }
+            }
+        }
+    }
+
+    /// 处理单个任务，返回 true 表示应该退出循环
+    fn handle_task(
+        task: DecodeTask,
+        decoder: &mut Option<Box<dyn Decoder>>,
+        task_queue: &mut VecDeque<RenderPage>,
+        current_visible: &mut HashSet<RenderPage>,
+    ) -> bool {
+        match task {
+            DecodeTask::LoadDocument { path, response_tx } => {
+                info!("[DecodeService] Loading document: {:?}", path);
+                match PdfDecoder::open(&path) {
+                    Ok(pdf_decoder) => {
+                        let boxed_decoder = Box::new(pdf_decoder);
+                        let pages_result = boxed_decoder.get_all_pages();
+                        *decoder = Some(boxed_decoder);
+                        let first_page = if pages_result.is_ok() && !pages_result.as_ref().unwrap().is_empty() {
+                            Some(pages_result.as_ref().unwrap()[0].clone())
+                        } else {
+                            None
+                        };
+                        let _ = response_tx.send(pages_result);
+                        if let Some(fp) = first_page {
+                            if let Some(ref dec) = decoder {
+                                Self::save_cover_thumbnail(&path, dec, &fp);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = response_tx.send(Err(e));
+                    }
+                }
+                false
+            }
+            DecodeTask::RenderPages { pages } => {
+                debug!("[DecodeService] 收到批量渲染任务: {} 页", pages.len());
+                
+                // 1. 更新当前可见页集合（用于后续验证）
+                current_visible.clear();
+                current_visible.extend(pages.iter().cloned());
+
+                // 2. 将新任务加入队列（去重：检查队列中是否已存在相同key的任务）
+                for page in pages {
+                    let already_queued = task_queue.iter().any(|p| p.key == page.key);
+                    if !already_queued {
+                        debug!("[DecodeService] 加入队列: page={}, key={}", page.page_info.index, page.key);
+                        task_queue.push_back(page);
+                    } else {
+                        info!("[DecodeService] 跳过重复任务: page={}, key={}", page.page_info.index, page.key);
+                    }
+                }
+                
+                info!("[DecodeService] 当前队列长度: {}, 可见页数: {}", 
+                    task_queue.len(), current_visible.len());
+                false
+            }
+            DecodeTask::GetOutline { response_tx } => {
+                if let Some(ref dec) = decoder {
+                    let outline_result = dec.get_outline_items();
+                    let _ = response_tx.send(outline_result);
+                } else {
+                    let _ = response_tx.send(Ok(Vec::new()));
+                }
+                false
+            }
+            DecodeTask::Shutdown => {
+                info!("[DecodeService] Shutting down decode thread");
+                true
             }
         }
     }
@@ -233,14 +329,11 @@ impl DecodeService {
             .map_err(|e| anyhow::anyhow!("Failed to receive outline response: {}", e))?
     }
 
-    /// 提交渲染任务（异步，不等待）
-    pub fn render_page(&self, key: String, page_info: PageInfo, crop: i32, priority: Priority) {
-        let _ = self.task_sender.send(DecodeTask::RenderPage {
-            key,
-            page_info,
-            crop,
-            priority,
-        });
+    /// 批量提交渲染任务（异步，不等待）
+    pub fn render_pages(&self, pages: Vec<RenderPage>) {
+        if !pages.is_empty() {
+            let _ = self.task_sender.send(DecodeTask::RenderPages { pages });
+        }
     }
 
     /// 尝试接收解码结果（非阻塞）

@@ -2,7 +2,7 @@ use log::{debug, info};
 
 use super::Page;
 use crate::cache::PageCache;
-use crate::decoder::decode_service::Priority;
+use crate::decoder::decode_service::{Priority, RenderPage};
 use crate::decoder::pdf::utils::{generate_thumbnail_key};
 use crate::decoder::{DecodeService, Link, Rect};
 use crate::entity::OutlineItem;
@@ -231,7 +231,7 @@ impl PageViewState {
                 -offset_x,
                 -offset_y,
                 -offset_x + view_width,
-                -offset_y + view_height + preload_distance,
+                -offset_y + view_height  + preload_distance,
             ),
             Orientation::Horizontal => Rect::new(
                 -offset_x,
@@ -248,25 +248,26 @@ impl PageViewState {
         debug!("[PageViewState] update_visible_pages: first={}, last={}, total_pages={}", 
             first, last, self.pages.len());
 
+        let mut render_pages = Vec::new();
+
         if first <= last && first < self.pages.len() {
             for i in first..=last.min(self.pages.len() - 1) {
                 self.visible_pages.push(i);
 
                 let page = &self.pages[i];
                 let key = generate_thumbnail_key(page);
+                
                 if page.width > 0.0 && page.height > 0.0 {
                     // 先检查缓存中是否已有该页面
                     if self.cache.get_thumbnail(&key).is_none() {
-                        // 提交解码任务到解码线程
-                        let page_info = page.info.clone();
-                        let crop = self.crop;
-                        debug!("[PageViewState] 提交解码任务: page={}, key={}", page.info.index, key);
-                        self.decode_service.render_page(
-                            key.clone(),
-                            page_info,
-                            crop,
-                            Priority::Thumbnail,
-                        );
+                        debug!("[PageViewState] 需要解码: page={}, key={}", page.info.index, key);
+                        
+                        render_pages.push(RenderPage {
+                            key,
+                            page_info: page.info.clone(),
+                            crop: self.crop,
+                            priority: Priority::Thumbnail,
+                        });
                     } else {
                         debug!("[PageViewState] 页面已在缓存中: page={}, key={}", page.info.index, key);
                     }
@@ -275,9 +276,13 @@ impl PageViewState {
         }
         
         info!("[PageViewState] update_visible_pages完成: visible_pages={:?}", self.visible_pages);
+
+        // 批量提交解码任务
+        if !render_pages.is_empty() {
+            debug!("[PageViewState] 批量提交 {} 个解码任务:", render_pages.len());
+            self.decode_service.render_pages(render_pages);
+        }
     }
-
-
 
     /// 二分查找第一个可见页面
     fn find_first_visible(&self, visible_rect: &Rect) -> usize {
