@@ -66,7 +66,7 @@ pub struct PageViewState {
 impl PageViewState {
     pub fn new(orientation: Orientation, crop: i32) -> Self {
         Self {
-            cache: Rc::new(PageCache::new(168, 10)),
+            cache: Rc::new(PageCache::new(24, 10)),
             pages: Vec::new(),
             decode_service: Arc::new(DecodeService::new()),
             orientation,
