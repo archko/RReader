@@ -425,6 +425,7 @@ impl PageViewState {
         self.visible_pages.clear();
 
         self.page_links.borrow_mut().clear();
-        // DecodeService会在Drop时自动关闭
+        self.outline_items.clear();
+        self.cache.clear();
     }
 }
