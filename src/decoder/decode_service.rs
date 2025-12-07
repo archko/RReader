@@ -10,16 +10,34 @@ use std::collections::{hash_map::DefaultHasher, VecDeque, HashSet};
 use std::fs;
 
 use crate::decoder::pdf::PdfDecoder;
-use crate::decoder::{Decoder, Link, PageInfo};
+use crate::decoder::{Decoder, Link, PageInfo, Rect};
 use crate::ui::utils::generate_thumbnail_hash;
+use std::sync::Arc;
+
+/// 可见性检查回调类型：传入页面索引，返回是否可见
+pub type VisibilityChecker = Arc<dyn Fn(usize) -> bool + Send + Sync>;
 
 /// 渲染页面请求
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RenderPage {
     pub key: String,
     pub page_info: PageInfo,
     pub crop: i32,
     pub priority: Priority,
+    /// 可见性检查回调：传入页面bounds，返回是否可见
+    pub visibility_checker: Option<VisibilityChecker>,
+}
+
+impl std::fmt::Debug for RenderPage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RenderPage")
+            .field("key", &self.key)
+            .field("page_info", &self.page_info)
+            .field("crop", &self.crop)
+            .field("priority", &self.priority)
+            .field("has_visibility_checker", &self.visibility_checker.is_some())
+            .finish()
+    }
 }
 
 impl Hash for RenderPage {
@@ -162,8 +180,15 @@ impl DecodeService {
 
             // 2. 处理队列中的一个任务
             if let Some(render_page) = task_queue.pop_front() {
-                // 验证任务是否还在当前可见页中
-                if !current_visible.contains(&render_page) {
+                // 使用回调验证页面是否可见
+                let is_visible = if let Some(ref checker) = render_page.visibility_checker {
+                    checker(render_page.page_info.index)
+                } else {
+                    // 如果没有回调，回退到旧的检查方式
+                    current_visible.contains(&render_page)
+                };
+
+                if !is_visible {
                     info!("[DecodeService] 跳过不可见页: page={}, key={}", 
                         render_page.page_info.index, render_page.key);
                     // 继续处理下一个任务
@@ -176,6 +201,7 @@ impl DecodeService {
                     
                     match dec.render_page(&render_page.page_info, render_page.crop != 0) {
                         Ok((image_data, width, height)) => {
+                            std::thread::sleep(std::time::Duration::from_secs(2));
                             let links = dec.get_page_links(render_page.page_info.index)
                                 .unwrap_or_default();
 

@@ -88,9 +88,7 @@ impl Page {
     pub fn needs_decoding(&self) -> bool {
         !self.is_decoding //&& self.bitmap.is_none()
     }
-}
 
-impl Page {
     /// 重新计算页面的分块配置（PageNode 列表）
     fn invalidate_nodes(&mut self) {
         // 页面尚未有有效尺寸时不分块
