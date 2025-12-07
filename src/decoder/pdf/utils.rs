@@ -88,7 +88,7 @@ pub fn load_outline_items(doc: &Document) -> Vec<OutlineItem> {
 }
 
 fn process_outline_hierarchy(
-    doc: &Document,
+    _doc: &Document,
     outlines: &[Outline],
     items: &mut Vec<OutlineItem>,
     level: i32,
@@ -105,7 +105,7 @@ fn process_outline_hierarchy(
 
         // Recursively process children with increased level
         let children = &outline.down;
-        process_outline_hierarchy(doc, children, items, level + 1);
+        process_outline_hierarchy(_doc, children, items, level + 1);
     }
 }
 
