@@ -82,7 +82,7 @@ impl Decoder for PdfDecoder {
         pixmap.clear()?;
 
         let mut device = Device::from_pixmap(&pixmap)?;
-        mupdf_page.run(&mut device, &matrix)?;
+        mupdf_page.run(&device, &matrix)?;
 
         Ok(mupdf_to_pixels(&pixmap))
     }
@@ -107,7 +107,7 @@ impl Decoder for PdfDecoder {
         pixmap.clear()?;
 
         let mut device = Device::from_pixmap(&pixmap)?;
-        page.run(&mut device, &matrix)?;
+        page.run(&device, &matrix)?;
 
         Ok(mupdf_to_pixels(&pixmap))
     }
@@ -155,7 +155,7 @@ impl Decoder for PdfDecoder {
 
     fn get_outline_items(&self) -> Result<Vec<crate::entity::OutlineItem>> {
         use crate::decoder::pdf::utils::load_outline_items;
-        Ok(load_outline_items(&*self.document.borrow()))
+        Ok(load_outline_items(&self.document.borrow()))
     }
 
     fn close(&mut self) {

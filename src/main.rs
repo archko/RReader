@@ -11,7 +11,6 @@ use anyhow::Result;
 use env_logger::Env;
 use log::{debug, error, info};
 use slint::{ComponentHandle, ModelRc, VecModel};
-use dirs;
 
 slint::include_modules!();
 
@@ -112,7 +111,7 @@ async fn main() -> Result<()> {
     {
         let viewmodel_binding = viewmodel.borrow();
         let history_records = viewmodel_binding.get_current_records();
-        let ui_history_items = convert_history_records_to_items(&history_records);
+        let ui_history_items = convert_history_records_to_items(history_records);
 
         set_history_to_ui(&app, ui_history_items);
     }
@@ -238,7 +237,6 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
                         app.set_current_page(page);
                         app.set_document_opened(true);
 
-                        let zoom = zoom;
                         let mut borrowed_state = page_view_state.borrow_mut();
                         let width = borrowed_state.view_size.0;
                         let height = borrowed_state.view_size.1;
@@ -251,7 +249,7 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
                         );
 
                         // 设置保存的位置
-                        if let Some(_) = borrowed_state.jump_to_page((page - 1) as usize) {
+                        if borrowed_state.jump_to_page((page - 1) as usize).is_some() {
                             // 可以在这里做一些处理
                         }
                         //borrowed_state.update_offset(scroll_x as f32, scroll_y as f32);
@@ -272,8 +270,8 @@ fn setup_open_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
                             1.0, // zoom
                             0, // scroll_x
                             0, // scroll_y
-                            path_str.split('/').last().unwrap_or("").to_string(), // name
-                            path_str.split('.').last().unwrap_or("").to_string(), // ext
+                            path_str.split('/').next_back().unwrap_or("").to_string(), // name
+                            path_str.split('.').next_back().unwrap_or("").to_string(), // ext
                             0, // size
                             0, // read_times
                             1, // progress
@@ -343,7 +341,7 @@ fn setup_history_viewport_handler(app: &MainWindow, viewmodel: Rc<RefCell<MainVi
             if let Some(app) = weak_app.upgrade() {
                 let viewmodel_binding = viewmodel.borrow();
                 let history_records = viewmodel_binding.get_current_records();
-                let ui_history_items = convert_history_records_to_items(&history_records);
+                let ui_history_items = convert_history_records_to_items(history_records);
                 set_history_to_ui(&app, ui_history_items);
                 debug!("[Main] Updated history column count for new viewport width: {}", width);
             }
@@ -372,7 +370,7 @@ fn setup_page_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewStat
                 borrowed_state.update_visible_pages();
 
                 if let Some(app) = weak_app.upgrade() {
-                    refresh_view(&app, &*borrowed_state);
+                    refresh_view(&app, &borrowed_state);
                 }
             }
         }
@@ -488,7 +486,7 @@ fn setup_back_to_history_handler(app: &MainWindow, page_view_state: Rc<RefCell<P
                 let _ = vm.borrow_mut().load_history(0);
                 let vm_binding = vm.borrow();
                 let history_records = vm_binding.get_current_records();
-                let ui_history_items = convert_history_records_to_items(&history_records);
+                let ui_history_items = convert_history_records_to_items(history_records);
                 set_history_to_ui(&app, ui_history_items);
             }
 
@@ -567,7 +565,7 @@ fn setup_page_click_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageVi
                 let mut borrowed_state = page_view_state.borrow_mut();
                 if borrowed_state.jump_to_page(page_num).is_some() {
                     borrowed_state.update_visible_pages();
-                    refresh_view(&app, &*borrowed_state);
+                    refresh_view(&app, &borrowed_state);
                 }
             }
         }
@@ -604,7 +602,7 @@ fn setup_history_item_click_handler(app: &MainWindow, page_view_state: Rc<RefCel
                 .find(|rec| rec.book_path == path_str)
                 .cloned();
 
-            let open_result = page_view_state.borrow_mut().open_document(&path_obj);
+            let open_result = page_view_state.borrow_mut().open_document(path_obj);
             match open_result {
                 Ok(_) => {
                     if let Some(app) = weak_app.upgrade() {
@@ -631,7 +629,7 @@ fn setup_history_item_click_handler(app: &MainWindow, page_view_state: Rc<RefCel
                             );
                             // 设置保存的位置
                             //borrowed_state.update_offset(rec.scroll_x as f32, rec.scroll_y as f32);
-                            if let Some(_) = borrowed_state.jump_to_page((rec.page - 1) as usize) {
+                            if borrowed_state.jump_to_page((rec.page - 1) as usize).is_some() {
                                 // 可以在这里做一些处理
                             }
                         } else {
@@ -689,5 +687,5 @@ fn update_view_offset(app: &MainWindow, page_view_state: &mut PageViewState, off
     page_view_state.update_offset(offset_x, offset_y);
     page_view_state.update_visible_pages();
 
-    refresh_view(&app, page_view_state);
+    refresh_view(app, page_view_state);
 }

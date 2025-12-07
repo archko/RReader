@@ -86,7 +86,7 @@ pub struct DecodeService {
 
 impl DecodeService {
     /// 保存封面缩略图
-    fn save_cover_thumbnail(path: &PathBuf, dec: &Box<dyn Decoder>, first_page: &PageInfo) {
+    fn save_cover_thumbnail(path: &Path, dec: &Box<dyn Decoder>, first_page: &PageInfo) {
         let path_str = path.to_string_lossy();
         let hash = generate_thumbnail_hash(&path_str);
         if let Some(data_dir) = dirs::data_dir() {
@@ -110,10 +110,9 @@ impl DecodeService {
                 Ok((pixels, width, height)) => {
                     let rgba_img = image::RgbaImage::from_raw(width, height, pixels).unwrap();
                     let image = image::DynamicImage::ImageRgba8(rgba_img);
-                    if fs::create_dir_all(&cache_dir).is_ok() {
-                        if image.save(&cache_path).is_ok() {
-                            info!("[DecodeService] Saved thumbnail to {:?}", cache_path);
-                        }
+                    if fs::create_dir_all(&cache_dir).is_ok()
+                        && image.save(&cache_path).is_ok() {
+                        info!("[DecodeService] Saved thumbnail to {:?}", cache_path);
                     }
                 }
                 Err(e) => {
@@ -246,8 +245,12 @@ impl DecodeService {
                         let boxed_decoder = Box::new(pdf_decoder);
                         let pages_result = boxed_decoder.get_all_pages();
                         *decoder = Some(boxed_decoder);
-                        let first_page = if pages_result.is_ok() && !pages_result.as_ref().unwrap().is_empty() {
-                            Some(pages_result.as_ref().unwrap()[0].clone())
+                        let first_page = if let Ok(ref pages) = pages_result {
+                            if !pages.is_empty() {
+                                Some(pages[0].clone())
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         };
@@ -354,5 +357,11 @@ impl Drop for DecodeService {
         if let Some(handle) = self.decode_thread.take() {
             let _ = handle.join();
         }
+    }
+}
+
+impl Default for DecodeService {
+    fn default() -> Self {
+        Self::new()
     }
 }

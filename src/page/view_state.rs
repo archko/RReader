@@ -64,7 +64,7 @@ pub struct PageViewState {
 }
 
 impl PageViewState {
-    pub fn new(orientation: Orientation, crop: i32) -> Self {
+    pub fn new(orientation: Orientation, crop_int: i32) -> Self {
         Self {
             cache: Rc::new(PageCache::new(24, 10)),
             pages: Vec::new(),
@@ -72,7 +72,7 @@ impl PageViewState {
             orientation,
             view_offset: (0.0, 0.0),
             zoom: 1.0,
-            crop: crop,
+            crop: crop_int,
             total_width: 0.0,
             total_height: 0.0,
             view_size: (0.0, 0.0),
