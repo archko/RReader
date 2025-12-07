@@ -82,6 +82,7 @@ export component DocumentView inherits Rectangle {
             if (root.enable-scroll-events) {
                 root.desired_offset_x = scroller.viewport-x;
                 root.desired_offset_y = scroller.viewport-y;
+                //debug("scrolled", (scroller.viewport-x / 1px), (scroller.viewport-y / 1px));
                 if (!scroll_timer.running) {
                     scroll_timer.running = true;
                 } else {
@@ -122,9 +123,10 @@ export component DocumentView inherits Rectangle {
     }
 
     scroll_timer := Timer {
-        interval: 100ms;
+        interval: 75ms;
         running: false;
         triggered => {
+            //debug("scroll-changed", (root.desired_offset_x / 1px), (root.desired_offset_y / 1px));
             scroll-changed(root.desired_offset_x, root.desired_offset_y);
             self.running = false;
         }
