@@ -201,7 +201,7 @@ impl DecodeService {
                     
                     match dec.render_page(&render_page.page_info, render_page.crop != 0) {
                         Ok((image_data, width, height)) => {
-                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            //std::thread::sleep(std::time::Duration::from_secs(2));
                             let links = dec.get_page_links(render_page.page_info.index)
                                 .unwrap_or_default();
 
