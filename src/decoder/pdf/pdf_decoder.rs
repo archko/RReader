@@ -1,4 +1,4 @@
-use crate::decoder::pdf::utils::mupdf_to_image;
+use crate::decoder::pdf::utils::mupdf_to_pixels;
 use crate::decoder::{Decoder, Link, LinkType, PageInfo, Rect};
 use anyhow::Result;
 use image::DynamicImage;
@@ -59,7 +59,7 @@ impl Decoder for PdfDecoder {
         Ok(self.pages_info.clone())
     }
 
-    fn render_page(&self, page: &PageInfo, crop: bool) -> Result<DynamicImage> {
+    fn render_page(&self, page: &PageInfo, crop: bool) -> Result<(Vec<u8>, u32, u32)> {
         debug!("[PDF] Rendering page {} with crop={}", page.index, crop);
         let document = self.document.borrow();
         let mupdf_page = document.load_page(page.index as i32)?;
@@ -84,10 +84,10 @@ impl Decoder for PdfDecoder {
         let mut device = Device::from_pixmap(&pixmap)?;
         mupdf_page.run(&mut device, &matrix)?;
 
-        Ok(mupdf_to_image(&pixmap))
+        Ok(mupdf_to_pixels(&pixmap))
     }
 
-    fn render_region(&self, page_index: usize, region: Rect, scale: f32) -> Result<DynamicImage> {
+    fn render_region(&self, page_index: usize, region: Rect, scale: f32) -> Result<(Vec<u8>, u32, u32)> {
         let document = self.document.borrow();
         let page = document.load_page(page_index as i32)?;
 
@@ -109,7 +109,7 @@ impl Decoder for PdfDecoder {
         let mut device = Device::from_pixmap(&pixmap)?;
         page.run(&mut device, &matrix)?;
 
-        Ok(mupdf_to_image(&pixmap))
+        Ok(mupdf_to_pixels(&pixmap))
     }
 
     fn get_page_links(&self, page_index: usize) -> Result<Vec<Link>> {

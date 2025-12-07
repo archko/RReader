@@ -1,0 +1,132 @@
+import { ScrollView } from "std-widgets.slint";
+import { PageData } from "types.slint";
+
+export component DocumentView inherits Rectangle {
+    in property <[PageData]> pages;
+    in property <length> total-width: 0px;
+    in property <length> total-height: 0px;
+    in-out property <length> offset-x: 0px;
+    in-out property <length> offset-y: 0px;
+    in property <bool> enable-scroll-events: true;
+    in-out property <length> viewport-height: 0px;
+
+    callback viewport-changed(length, length);
+    callback scroll-changed(length, length);
+    callback page-down();
+    callback page-up();
+    callback page-clicked(float, float, int);
+
+    background: #fafafa;
+    border-width: 1px;
+    border-color: #e0e0e0;
+    clip: true;
+
+    property <length> last-visible-width: 0px;
+    property <length> last-visible-height: 0px;
+    property <length> desired_offset_x: 0px;
+    property <length> desired_offset_y: 0px;
+
+    scroller := ScrollView {
+        width: root.width;
+        height: root.height;
+        viewport-width: max(root.total-width, self.width);
+        viewport-height: max(root.total-height, self.height);
+        viewport-x <=> root.offset-x;
+        viewport-y <=> root.offset-y;
+        mouse-drag-pan-enabled: true;
+
+        content := Rectangle {
+            width: max(root.total-width, scroller.visible-width);
+            height: max(root.total-height, scroller.visible-height);
+            background: #ffffff;
+            clip: true;
+
+            for page in pages: Rectangle {
+                x: page.x * 1px;
+                y: page.y * 1px;
+                width: page.width * 1px;
+                height: page.height * 1px;
+                border-width: 1px;
+                border-color: #d0d0d0;
+                clip: true;
+                //background: #f5f5f5;
+
+                if page.image.width > 0 && page.image.height > 0: Image {
+                    width: parent.width;
+                    height: parent.height;
+                    source: page.image;
+                    image-fit: fill;
+                }
+
+                // 显示页码（如果没有图片）
+                if !(page.image.width > 0 && page.image.height > 0): Text {
+                    text: "Page " + (page.page_index + 1);
+                    font-size: 24px;
+                    color: #999999;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                TouchArea {
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                            //debug("down.event", (self.mouse-x / 1px), (self.mouse-y / 1px), event);
+                            root.page-clicked(self.mouse-x / 1px, self.mouse-y/ 1px, page.page_index);
+                        }
+                    }
+                }
+            }
+        }
+
+        scrolled => {
+            if (root.enable-scroll-events) {
+                root.desired_offset_x = scroller.viewport-x;
+                root.desired_offset_y = scroller.viewport-y;
+                if (!scroll_timer.running) {
+                    scroll_timer.running = true;
+                } else {
+                    scroll_timer.restart();
+                }
+            }
+        }
+    }
+
+    focus := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Space) {
+                root.page-down();
+                return accept;
+            } else if (event.text == Key.PageDown) {
+                root.page-down();
+                return accept;
+            } else if (event.text == Key.PageUp) {
+                root.page-up();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    viewport_timer := Timer {
+        interval: 200ms;
+        running: true;
+        triggered => {
+            if (root.last-visible-width != scroller.visible-width || root.last-visible-height != scroller.visible-height) {
+                root.last-visible-width = scroller.visible-width;
+                root.last-visible-height = scroller.visible-height;
+                root.viewport-height = scroller.visible-height;
+                root.viewport-changed(scroller.visible-width, scroller.visible-height);
+            }
+            viewport_timer.restart();
+        }
+    }
+
+    scroll_timer := Timer {
+        interval: 100ms;
+        running: false;
+        triggered => {
+            scroll-changed(root.desired_offset_x, root.desired_offset_y);
+            self.running = false;
+        }
+    }
+}

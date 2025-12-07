@@ -1,0 +1,112 @@
+import { Button, VerticalBox, ScrollView, HorizontalBox } from "std-widgets.slint";
+import { UIRecent, HistoryRow } from "types.slint";
+
+component HistoryItem inherits Rectangle {
+    in property <string> title;
+    in property <string> path;
+    in property <image> thumbnail;
+    in property <bool> has_thumbnail;
+
+    callback item-clicked();
+
+    // 使用TouchArea的has-hover属性来检测悬停状态
+    in property <bool> hovered: touch-area.has-hover;
+
+    background: hovered ? #f5f5f5 : #ffffff;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: hovered ? #6200ee : #e0e0e0;
+    // 添加阴影效果增强悬停视觉效果
+    drop-shadow-color: hovered ? #00000020 : #00000000;
+    drop-shadow-blur: hovered ? 4px : 0px;
+
+    VerticalBox {
+        padding: 8px;
+        spacing: 6px;
+
+        Rectangle {
+            background: #f5f5f5;
+            height: 170px;
+
+            Image {
+                source: has_thumbnail ? thumbnail : @image-url("../assets/slint-logo-full-light.svg");
+                width: 100%;
+                height: 100%;
+                image-fit: contain;
+            }
+        }
+
+        Text {
+            text: title;
+            font-size: 14px;
+            font-weight: 700;
+            horizontal-alignment: left;
+            wrap: no-wrap;
+            color: root.hovered ? #6200ee : #000000;
+        }
+
+        Text {
+            text: path;
+            font-size: 13px;
+            color: root.hovered ? #3700b3 : #666666;
+            horizontal-alignment: left;
+            wrap: no-wrap;
+        }
+    }
+
+    touch-area := TouchArea {
+        width: parent.width;
+        height: parent.height;
+
+        clicked => {
+            root.item-clicked();
+        }
+    }
+}
+
+export component HistoryView inherits Rectangle {
+    in property <[HistoryRow]> history-rows;
+
+    callback viewport-changed(length, length);
+    callback item-clicked(UIRecent);
+
+    property <length> last-visible-width: 0px;
+    property <length> last-visible-height: 0px;
+
+    history_scroller := ScrollView {
+        width: root.width;
+        height: root.height;
+
+        VerticalBox {
+            spacing: 8px;
+            for row in history-rows : HorizontalBox {
+                spacing: 8px;
+                for item in row.items : HistoryItem {
+                    width: 180px;
+                    height: 240px;
+                    title: item.title;
+                    path: item.path;
+                    thumbnail: item.thumbnail;
+                    has_thumbnail: item.has_thumbnail;
+
+                    item-clicked => {
+                        root.item-clicked(item);
+                    }
+                }
+            }
+        }
+    }
+
+    history_viewport_timer := Timer {
+        interval: 200ms;
+        running: true;
+        triggered => {
+            if (root.last-visible-width != history_scroller.visible-width || root.last-visible-height != history_scroller.visible-height) {
+                root.last-visible-width = history_scroller.visible-width;
+                root.last-visible-height = history_scroller.visible-height;
+                root.viewport-changed(history_scroller.visible-width, history_scroller.visible-height);
+            }
+            history_viewport_timer.restart();
+        }
+    }
+}
