@@ -1,0 +1,131 @@
+use image::{DynamicImage, ImageBuffer, Rgba};
+use log::debug;
+use mupdf::{Document, Matrix, Outline, Pixmap};
+use regex::Regex;
+use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
+
+use crate::{entity::OutlineItem, page::Page};
+
+pub fn create_matrix(zoom: f32, rotation: f32) -> Matrix {
+    let mut matrix = Matrix::new(zoom, 0.0, 0.0, zoom, 0.0, 0.0);
+    if rotation != 0.0 {
+        let rotate_matrix = Matrix::new_rotate(rotation);
+        matrix.concat(rotate_matrix);
+    }
+    matrix
+}
+
+pub fn mupdf_to_image(pixmap: &Pixmap) -> DynamicImage {
+    let (pixels, width, height) = mupdf_to_pixels(pixmap);
+    let rgba_img = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, pixels).unwrap();
+    DynamicImage::ImageRgba8(rgba_img)
+}
+
+pub fn mupdf_to_pixels(pixmap: &Pixmap) -> (Vec<u8>, u32, u32) {
+    let width = pixmap.width() as u32;
+    let height = pixmap.height() as u32;
+    let samples = pixmap.samples();
+    let n = pixmap.n() as usize; // 每个像素的组件数
+
+    let mut buffer = vec![0u8; (width * height * 4) as usize];
+
+    for y in 0..height {
+        for x in 0..width {
+            let src_idx = ((y * width + x) as usize) * n;
+            let dst_idx = ((y * width + x) as usize) * 4;
+
+            if src_idx + n <= samples.len() && dst_idx + 4 <= buffer.len() {
+                if n == 4 {
+                    // RGBA
+                    buffer[dst_idx] = samples[src_idx];
+                    buffer[dst_idx + 1] = samples[src_idx + 1];
+                    buffer[dst_idx + 2] = samples[src_idx + 2];
+                    buffer[dst_idx + 3] = samples[src_idx + 3];
+                } else if n == 3 {
+                    // RGB
+                    buffer[dst_idx] = samples[src_idx];
+                    buffer[dst_idx + 1] = samples[src_idx + 1];
+                    buffer[dst_idx + 2] = samples[src_idx + 2];
+                    buffer[dst_idx + 3] = 255;
+                } else {
+                    // 灰度或其他，复制到所有通道
+                    buffer[dst_idx] = if n > 0 { samples[src_idx] } else { 255 };
+                    buffer[dst_idx + 1] = buffer[dst_idx];
+                    buffer[dst_idx + 2] = buffer[dst_idx];
+                    buffer[dst_idx + 3] = if n > 1 { samples[src_idx + 1] } else { 255 };
+                }
+            }
+        }
+    }
+
+    (buffer, width, height)
+}
+
+pub fn convert_to_slint_image(image: &image::DynamicImage) -> Image {
+    let rgba_image = image.to_rgba8();
+    let (width, height) = rgba_image.dimensions();
+
+    let slint_image = Image::from_rgba8_premultiplied(
+        SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&rgba_image, width, height),
+    );
+    slint_image
+}
+
+pub fn generate_thumbnail_key(page: &Page) -> String {
+    format!(
+        "{}-{}-{}",
+        page.info.index, page.info.width, page.info.height
+    )
+}
+
+/// MuPDF outline processing
+/// Load document outline items
+pub fn load_outline_items(doc: &Document) -> Vec<OutlineItem> {
+    let mut items = Vec::new();
+    if let Ok(outlines) = doc.outlines() {
+        process_outline_hierarchy(doc, &outlines, &mut items, 0);
+    }
+    items
+}
+
+fn process_outline_hierarchy(
+    doc: &Document,
+    outlines: &[Outline],
+    items: &mut Vec<OutlineItem>,
+    level: i32,
+) {
+    for outline in outlines {
+        let title = outline.title.clone();
+        let uri = outline.uri.clone();
+        let page = outline.page.unwrap_or(0) as i32;
+        //debug!("extract_page_from_uri:{:?}, {:?}", page, uri.clone());
+
+        let item = OutlineItem::new(title, uri, page, level);
+        //debug!("outline:{:?}, {:?}", level, item.clone());
+        items.push(item);
+
+        // Recursively process children with increased level
+        let children = &outline.down;
+        process_outline_hierarchy(doc, &children, items, level + 1);
+    }
+}
+
+fn extract_page_from_uri(uri: String) -> i32 {
+    let pattern = Regex::new(r"#page=(\d+)").unwrap();
+    if let Some(captures) = pattern.captures(&uri) {
+        if let Some(page_match) = captures.get(1) {
+            if let Ok(page) = page_match.as_str().parse::<i32>() {
+                // PDFs are typically 1-based, but convert to 0-based for array indexing
+                return (page - 1).max(0);
+            }
+        }
+    }
+
+    // Try to parse the whole URI as a page number
+    if let Ok(page) = uri.parse::<i32>() {
+        return (page - 1).max(0);
+    }
+
+    // Default to page 0
+    0
+}

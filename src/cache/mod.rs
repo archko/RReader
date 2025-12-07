@@ -1,3 +1,4 @@
 pub mod cache;
 
-pub use cache::{ImageCache, PageCache};
+pub use cache::ImageCache;
+pub use cache::PageCache;
