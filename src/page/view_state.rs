@@ -461,6 +461,11 @@ impl PageViewState {
         }
     }
 
+    /// 获取页面文本
+    pub fn get_page_text(&self, page_index: usize) -> Result<String, Box<dyn std::error::Error>> {
+        Ok(self.decode_service.get_page_text(page_index)?)
+    }
+
     /// 回收资源
     pub fn shutdown(&mut self) {
         info!("[PageViewState] shutdown");

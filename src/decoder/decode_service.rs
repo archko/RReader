@@ -74,6 +74,11 @@ pub enum DecodeTask {
     GetOutline {
         response_tx: Sender<Result<Vec<crate::entity::OutlineItem>>>,
     },
+    /// 获取页面文本
+    GetPageText {
+        page_index: usize,
+        response_tx: Sender<Result<String>>,
+    },
     /// 关闭服务
     Shutdown,
 }
@@ -324,6 +329,15 @@ impl DecodeService {
                 }
                 false
             }
+            DecodeTask::GetPageText { page_index, response_tx } => {
+                if let Some(ref dec) = decoder {
+                    let text_result = dec.get_page_text(page_index);
+                    let _ = response_tx.send(text_result);
+                } else {
+                    let _ = response_tx.send(Err(anyhow::anyhow!("No decoder")));
+                }
+                false
+            }
             DecodeTask::Shutdown => {
                 info!("[DecodeService] Shutting down decode thread");
                 true
@@ -356,6 +370,18 @@ impl DecodeService {
         response_rx
             .recv()
             .map_err(|e| anyhow::anyhow!("Failed to receive outline response: {}", e))?
+    }
+
+    /// 获取页面文本（同步等待）
+    pub fn get_page_text(&self, page_index: usize) -> Result<String> {
+        let (response_tx, response_rx) = unbounded();
+        self.task_sender
+            .send(DecodeTask::GetPageText { page_index, response_tx })
+            .map_err(|e| anyhow::anyhow!("Failed to send page text task: {}", e))?;
+
+        response_rx
+            .recv()
+            .map_err(|e| anyhow::anyhow!("Failed to receive page text response: {}", e))?
     }
 
     /// 批量提交渲染任务（异步，不等待）

@@ -40,6 +40,7 @@ export component MainWindow inherits Window {
     callback page-clicked(float, float, int);
     callback history-item-clicked(UIRecent);
     callback history-viewport-changed(length, length);
+    callback speak-page();
 
     Rectangle {
 
@@ -96,12 +97,12 @@ export component MainWindow inherits Window {
                             text: "Back";
                             clicked => { back-to-history(); }
                         }
-                        
+
                         Button {
                             text: "Open";
                             clicked => { open-file(); }
                         }
-                    
+
                         Text {
                             text: root.file-path;
                             vertical-alignment: center;
@@ -115,6 +116,11 @@ export component MainWindow inherits Window {
 
                         padding: 12px;
                         spacing: 8px;
+
+                        Button {
+                            text: "Speak Page";
+                            clicked => { speak-page(); }
+                        }
 
                         Button {
                             text: "Previous";

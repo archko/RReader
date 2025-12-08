@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{LazyLock, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 use anyhow::Result;
 use env_logger::Env;
@@ -15,13 +15,15 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 slint::include_modules!();
 
 mod cache;
-mod decoder;
-mod page;
-mod ui;
 mod dao;
+mod decoder;
 mod entity;
+mod page;
+mod tts;
+mod ui;
 
 use page::{PageViewState, Orientation};
+use tts::TtsService;
 use crate::decoder::pdf::utils::{generate_thumbnail_key, convert_to_slint_image};
 
 use crate::ui::MainViewmodel;
@@ -107,6 +109,9 @@ async fn main() -> Result<()> {
     let viewmodel: Rc<RefCell<MainViewmodel>> = Rc::new(RefCell::new(MainViewmodel::new()));
     let _ = viewmodel.borrow_mut().load_history(0); // 加载第一页历史记录
 
+    // 创建TTS服务
+    let tts_service = Arc::new(Mutex::new(TtsService::new()));
+
     // 设置历史记录到UI
     {
         let viewmodel_binding = viewmodel.borrow();
@@ -127,6 +132,7 @@ async fn main() -> Result<()> {
     setup_page_down_handler(&app, page_view_state.clone());
     setup_page_up_handler(&app, page_view_state.clone());
     setup_history_item_click_handler(&app, page_view_state.clone(), viewmodel.clone());
+    setup_speak_page_handler(&app, page_view_state.clone(), tts_service.clone());
 
     // 设置定时器处理解码结果 - 必须保持timer存活
     let decode_timer = {
@@ -688,4 +694,24 @@ fn update_view_offset(app: &MainWindow, page_view_state: &mut PageViewState, off
     page_view_state.update_visible_pages();
 
     refresh_view(app, page_view_state);
+}
+
+/// TTS
+fn setup_speak_page_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>, tts_service: Arc<Mutex<TtsService>>) {
+    app.on_speak_page(move || {
+        if let Some(page_index) = page_view_state.borrow().get_first_visible_page() {
+            match page_view_state.borrow().get_page_text(page_index) {
+                Ok(text) => {
+                    info!("[TTS] Speaking page {} with text: {}", page_index, text);
+                    let tts = Arc::clone(&tts_service);
+                    let _ = tts.lock().unwrap().speak_text(text);
+                }
+                Err(e) => {
+                    error!("[TTS] Failed to get page text: {}", e);
+                }
+            }
+        } else {
+            error!("[TTS] No visible page found");
+        }
+    });
 }
