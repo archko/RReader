@@ -32,8 +32,11 @@ dirs = "6.0.0"
 [build-dependencies]
 slint-build = "1.14.1"
 
+[profile.dev]
+incremental = true          # 保留增量编译（核心提速点）
+
 [profile.release]
-opt-level = 3          # 最高优化级别
+opt-level = 1          # 最高优化级别
 lto = "fat"            # 链接时优化（消除跨模块冗余）
 codegen-units = 1      # 单代码生成单元（提升优化效果）
 strip = "debuginfo"    # 移除调试信息（不影响性能，减少二进制体积）
