@@ -43,6 +43,7 @@ export component MainWindow inherits Window {
     callback speak-page();
 
     Rectangle {
+        background: #ffffff;
 
         VerticalBox {
             visible: !root.document-opened;
@@ -170,7 +171,6 @@ export component MainWindow inherits Window {
                     width: 250px;
                     for outline_item in root.outline-items : Rectangle {
                         height: 32px;
-                        background: #ffffff;
                         width: parent.width;
 
                         HorizontalBox {
@@ -182,6 +182,7 @@ export component MainWindow inherits Window {
                                 font-size: 13px;
                                 horizontal-alignment: left;
                                 wrap: no-wrap;
+                                color: #666666;
                                 width: 200px;
                             }
 
@@ -211,10 +212,25 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                Button {
-                    width: 22px;
-                    text: root.outline-visible ? "◀" : "▶";
-                    clicked => { outline-visible = !outline-visible; }
+                Rectangle {
+                    width: 12px;
+                    height: 100%;
+                    //background: root.outline-visible ? #E3F2FD : transparent;
+                    //border-width: 1px;
+
+                    Text {
+                        text: root.outline-visible ? "◀" : "▶";
+                        color: #1976D2;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        clicked => { outline-visible = !outline-visible; }
+                    }
                 }
 
                 doc_view := DocumentView {

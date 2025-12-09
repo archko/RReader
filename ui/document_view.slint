@@ -16,7 +16,6 @@ export component DocumentView inherits Rectangle {
     callback page-up();
     callback page-clicked(float, float, int);
 
-    background: #fafafa;
     border-width: 1px;
     border-color: #e0e0e0;
     clip: true;
@@ -38,7 +37,6 @@ export component DocumentView inherits Rectangle {
         content := Rectangle {
             width: max(root.total-width, scroller.visible-width);
             height: max(root.total-height, scroller.visible-height);
-            background: #ffffff;
             clip: true;
 
             for page in pages: Rectangle {
