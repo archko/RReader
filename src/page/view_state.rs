@@ -466,6 +466,11 @@ impl PageViewState {
         Ok(self.decode_service.get_page_text(page_index)?)
     }
 
+    /// 从指定页面开始获取后续页面的reflow数据
+    pub fn get_reflow_from_page(&self, start_page: usize) -> Result<Vec<crate::entity::ReflowEntry>, Box<dyn std::error::Error>> {
+        Ok(self.decode_service.get_reflow_from_page(start_page)?)
+    }
+
     /// 回收资源
     pub fn shutdown(&mut self) {
         info!("[PageViewState] shutdown");

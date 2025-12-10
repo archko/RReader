@@ -1,16 +1,21 @@
 use crate::decoder::pdf::utils::mupdf_to_pixels;
 use crate::decoder::{Decoder, Link, LinkType, PageInfo, Rect};
+use crate::entity::{ReflowEntry, ReflowData};
 use anyhow::Result;
 use image::DynamicImage;
 use log::{info, debug};
 use mupdf::{Colorspace, Device, Document, Matrix, Pixmap};
+use regex::Regex;
 use std::cell::RefCell;
-use std::path::Path;
+use std::fs;
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
 
 pub struct PdfDecoder {
     document: RefCell<Document>,
     page_count: usize,
     pages_info: Vec<PageInfo>,
+    pdf_path: std::path::PathBuf,
 }
 
 impl PdfDecoder {
@@ -38,7 +43,65 @@ impl PdfDecoder {
             document: RefCell::new(document),
             page_count,
             pages_info,
+            pdf_path: path.as_ref().to_path_buf(),
         })
+    }
+}
+
+impl PdfDecoder {
+    fn get_cache_path(pdf_path: &Path) -> PathBuf {
+        use std::path::PathBuf;
+        let file_name = pdf_path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown");
+        dirs::data_dir()
+            .expect("Cannot get data directory")
+            .join("RReader")
+            .join("reflow")
+            .join(format!("{}_reflow.json", file_name))
+    }
+
+    fn get_or_create_reflow_data(&self, pdf_path: &Path) -> Result<ReflowData> {
+        let cache_path = Self::get_cache_path(pdf_path);
+
+        if cache_path.exists() {
+            return self.load_reflow_from_cache(&cache_path);
+        }
+
+        let page_count = self.page_count();
+        let file_size = fs::metadata(pdf_path)?.len();
+
+        let mut reflow = Vec::new();
+        for page in 0..page_count {
+            let text = self.get_page_text(page)?;
+            // 过滤掉字符数 <= 5 的页面
+            if text.chars().count() > 5 {
+                reflow.push(ReflowEntry {
+                    data: text,
+                    page: page.to_string(),
+                });
+            }
+        }
+
+        let reflow_data = ReflowData {
+            page_count: reflow.len(),
+            file_size,
+            reflow,
+        };
+
+        if let Some(parent) = cache_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let json = serde_json::to_string_pretty(&reflow_data)?;
+        fs::write(&cache_path, json)?;
+
+        Ok(reflow_data)
+    }
+
+    fn load_reflow_from_cache(&self, cache_path: &PathBuf) -> Result<ReflowData> {
+        let content = fs::read_to_string(cache_path)?;
+        let reflow_data: ReflowData = serde_json::from_str(&content)?;
+        Ok(reflow_data)
     }
 }
 
@@ -156,6 +219,17 @@ impl Decoder for PdfDecoder {
     fn get_outline_items(&self) -> Result<Vec<crate::entity::OutlineItem>> {
         use crate::decoder::pdf::utils::load_outline_items;
         Ok(load_outline_items(&self.document.borrow()))
+    }
+
+    fn get_reflow_from_page(&self, start_page: usize) -> Result<Vec<ReflowEntry>> {
+        let reflow_data = self.get_or_create_reflow_data(&self.pdf_path)?;
+
+        let start_index = reflow_data.reflow
+            .iter()
+            .position(|entry| entry.page.parse::<usize>().unwrap_or(0) >= start_page)
+            .unwrap_or(reflow_data.reflow.len());
+
+        Ok(reflow_data.reflow[start_index..].to_vec())
     }
 
     fn close(&mut self) {

@@ -692,15 +692,35 @@ fn update_view_offset(app: &MainWindow, page_view_state: &mut PageViewState, off
 /// TTS
 fn setup_speak_page_handler(app: &MainWindow, page_view_state: Rc<RefCell<PageViewState>>, tts_service: Arc<Mutex<TtsService>>) {
     app.on_speak_page(move || {
+        // 如果正在朗读，停止朗读
+        // TODO: 需要添加检查方式，目前简化处理，先停止再开始
+        
         if let Some(page_index) = page_view_state.borrow().get_first_visible_page() {
-            match page_view_state.borrow().get_page_text(page_index) {
-                Ok(text) => {
-                    info!("[TTS] Speaking page {} with text: {}", page_index, text);
-                    let tts = Arc::clone(&tts_service);
-                    let _ = tts.lock().unwrap().speak_text(text);
+            match page_view_state.borrow().get_reflow_from_page(page_index) {
+                Ok(reflow_entries) => {
+                    if !reflow_entries.is_empty() {
+                        info!("[TTS] Speaking reflow text from page {} onwards, {} entries", page_index, reflow_entries.len());
+                        let tts = Arc::clone(&tts_service);
+
+                        // 将所有reflow条目的文本拼接成一个长文本并发送
+                        let combined_text = reflow_entries.into_iter()
+                            .map(|entry| entry.data)
+                            .collect::<Vec<String>>()
+                            .join(" ");
+
+                        if !combined_text.is_empty() {
+                            let mut tts_locked = tts.lock().unwrap();
+                            tts_locked.stop_speaking(); // 先停止之前的朗读
+                            tts_locked.speak_text(combined_text);
+                        } else {
+                            error!("[TTS] No valid text content to speak");
+                        }
+                    } else {
+                        error!("[TTS] No reflow entries found");
+                    }
                 }
                 Err(e) => {
-                    error!("[TTS] Failed to get page text: {}", e);
+                    error!("[TTS] Failed to get reflow data: {}", e);
                 }
             }
         } else {

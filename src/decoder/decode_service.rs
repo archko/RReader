@@ -79,6 +79,11 @@ pub enum DecodeTask {
         page_index: usize,
         response_tx: Sender<Result<String>>,
     },
+    /// 解析reflow数据（从指定页面开始的后续页面）
+    ExtractReflowData {
+        start_page: usize,
+        response_tx: Sender<Result<Vec<crate::entity::ReflowEntry>>>,
+    },
     /// 关闭服务
     Shutdown,
 }
@@ -338,6 +343,15 @@ impl DecodeService {
                 }
                 false
             }
+            DecodeTask::ExtractReflowData { start_page, response_tx } => {
+                if let Some(ref dec) = decoder {
+                    let reflow_result = dec.get_reflow_from_page(start_page);
+                    let _ = response_tx.send(reflow_result);
+                } else {
+                    let _ = response_tx.send(Err(anyhow::anyhow!("No decoder")));
+                }
+                false
+            }
             DecodeTask::Shutdown => {
                 info!("[DecodeService] Shutting down decode thread");
                 true
@@ -382,6 +396,21 @@ impl DecodeService {
         response_rx
             .recv()
             .map_err(|e| anyhow::anyhow!("Failed to receive page text response: {}", e))?
+    }
+
+    /// 从指定页面开始获取后续页面的reflow数据
+    pub fn get_reflow_from_page(&self, start_page: usize) -> Result<Vec<crate::entity::ReflowEntry>> {
+        let (response_tx, response_rx) = unbounded();
+        self.task_sender
+            .send(DecodeTask::ExtractReflowData {
+                start_page,
+                response_tx
+            })
+            .map_err(|e| anyhow::anyhow!("Failed to send reflow task: {}", e))?;
+
+        response_rx
+            .recv()
+            .map_err(|e| anyhow::anyhow!("Failed to receive reflow response: {}", e))?
     }
 
     /// 批量提交渲染任务（异步，不等待）

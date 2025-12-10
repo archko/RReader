@@ -1,4 +1,6 @@
 use crate::{decoder::{Link, PageInfo, Rect}, entity::OutlineItem};
+use crate::entity::ReflowEntry;
+use std::path::{Path};
 
 /// 文档解码器统一接口
 /// 注意：由于某些底层库（如 mupdf）不是线程安全的，
@@ -36,6 +38,10 @@ pub trait Decoder {
     fn get_page_text(&self, page_index: usize) -> anyhow::Result<String>;
 
     fn get_outline_items(&self) -> anyhow::Result<Vec<OutlineItem>>;
+
+    /// 从指定页面开始获取后续页面的reflow数据
+    /// - start_page: 起始页面索引
+    fn get_reflow_from_page(&self, start_page: usize) -> anyhow::Result<Vec<ReflowEntry>>;
 
     /// 关闭文档
     fn close(&mut self);

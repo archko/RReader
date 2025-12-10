@@ -24,6 +24,7 @@ struct TtsState {
     current_voice: String,
     rate: f32,
     volume: f32,
+    is_speaking: bool,
 }
 
 pub struct TtsService {
@@ -52,6 +53,7 @@ impl TtsService {
             current_voice: "Mei-Jia".to_string(),
             rate: 0.6,
             volume: 0.8,
+            is_speaking: false,
         };
 
         loop {
