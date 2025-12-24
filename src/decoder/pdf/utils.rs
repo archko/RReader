@@ -96,7 +96,11 @@ fn process_outline_hierarchy(
     for outline in outlines {
         let title = outline.title.clone();
         let uri = outline.uri.clone();
-        let page = outline.page.unwrap_or(0) as i32;
+        let page = if let Some(dest) = &outline.dest {
+            dest.loc.page_number as i32
+        } else {
+            extract_page_from_uri(uri.clone().unwrap_or_default()) as i32
+        };
         //debug!("extract_page_from_uri:{:?}, {:?}", page, uri.clone());
 
         let item = OutlineItem::new(title, uri, page, level);
