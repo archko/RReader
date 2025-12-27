@@ -1,0 +1,96 @@
+import { Button, HorizontalBox } from "std-widgets.slint";
+
+export component DocumentToolbar {
+    in property <int> page-count: 0;
+    in-out property <int> current-page: 0;
+    in-out property <float> zoom: 1.0;
+    in property <string> file-path: "";
+
+    callback open-file();
+    callback back-to-history();
+    callback page-changed(int);
+    callback zoom-changed(float);
+    callback speak-page();
+
+    Rectangle {
+        height: 48px;
+        background: #f5f5f5;
+        border-width: 1px;
+        border-color: #e0e0e0;
+
+        HorizontalLayout {
+            alignment: space-between;
+            HorizontalLayout {
+                alignment: start;
+                padding: 12px;
+                spacing: 8px;
+
+                Button {
+                    text: "Back";
+                    clicked => { back-to-history(); }
+                }
+
+                Button {
+                    text: "Open";
+                    clicked => { open-file(); }
+                }
+
+                Text {
+                    text: root.file-path;
+                    vertical-alignment: center;
+                    horizontal-alignment: left;
+                    wrap: word-wrap;
+                }
+            }
+
+            HorizontalLayout {
+                alignment: end;
+                padding: 12px;
+                spacing: 8px;
+
+                Button {
+                    text: "Speak Page";
+                    clicked => { speak-page(); }
+                }
+
+                Button {
+                    text: "Previous";
+                    enabled: root.current-page > 0;
+                    clicked => { page-changed(root.current-page - 1); }
+                }
+
+                Button {
+                    text: "Next";
+                    enabled: root.current-page < root.page-count - 1;
+                    clicked => { page-changed(root.current-page + 1); }
+                }
+
+                Button {
+                    text: "Zoom -";
+                    clicked => {
+                        zoom = Math.max(0.5, zoom - 0.1);
+                        zoom-changed(zoom);
+                    }
+                }
+
+                Button {
+                    text: "Zoom +";
+                    clicked => {
+                        zoom = Math.min(4.0, zoom + 0.1);
+                        zoom-changed(zoom);
+                    }
+                }
+
+                Text {
+                    text: Math.round(zoom * 100) + "%";
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: "Page " + (root.current-page + 1) + " / " + Math.max(root.page-count, 1);
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}

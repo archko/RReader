@@ -1,0 +1,27 @@
+/// 历史记录项
+export struct UIRecent {
+    title: string,
+    path: string,
+    thumbnail: image,
+    has_thumbnail: bool,
+    page: int,
+}
+
+/// 历史记录行
+export struct HistoryRow {
+    items: [UIRecent],
+}
+
+/// 历史管理器全局对象
+export global HistoryManager {
+    // 属性
+    property <[UIRecent]> history_items;
+    property <[HistoryRow]> history_rows;
+    property <float> viewport_width: 1024;
+
+    // 回调
+    pure callback history_item_clicked(UIRecent);
+    pure callback history_viewport_changed(float, float);
+    pure callback remove_history(int);
+    pure callback clear_history();
+}

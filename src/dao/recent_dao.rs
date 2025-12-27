@@ -217,4 +217,18 @@ impl RecentDao {
             })
         })
     }
+
+    pub async fn clear_all() -> Result<(), DbErr> {
+        let db = crate::dao::get_connection().await?;
+        Entity::delete_many().exec(&*db).await?;
+        Ok(())
+    }
+
+    pub fn clear_all_sync() -> Result<(), Box<dyn std::error::Error>> {
+        tokio::task::block_in_place(|| {
+            futures::executor::block_on(async {
+                Self::clear_all().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+            })
+        })
+    }
 }

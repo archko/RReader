@@ -1,5 +1,5 @@
 import { ScrollView } from "std-widgets.slint";
-import { PageData } from "types.slint";
+import { PageData } from "datatypes/document_datatypes.slint";
 
 export component DocumentView inherits Rectangle {
     in property <[PageData]> pages;
@@ -47,7 +47,6 @@ export component DocumentView inherits Rectangle {
                 border-width: 1px;
                 border-color: #d0d0d0;
                 clip: true;
-                //background: #f5f5f5;
 
                 if page.image.width > 0 && page.image.height > 0: Image {
                     width: parent.width;
