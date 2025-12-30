@@ -10,16 +10,34 @@ use std::collections::{hash_map::DefaultHasher, VecDeque, HashSet};
 use std::fs;
 
 use crate::decoder::pdf::PdfDecoder;
-use crate::decoder::{Decoder, Link, PageInfo};
+use crate::decoder::{Decoder, Link, PageInfo, Rect};
 use crate::ui::utils::generate_thumbnail_hash;
+use std::sync::Arc;
+
+/// 可见性检查回调类型：传入页面索引，返回是否可见
+pub type VisibilityChecker = Arc<dyn Fn(usize) -> bool + Send + Sync>;
 
 /// 渲染页面请求
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RenderPage {
     pub key: String,
     pub page_info: PageInfo,
     pub crop: i32,
     pub priority: Priority,
+    /// 可见性检查回调：传入页面bounds，返回是否可见
+    pub visibility_checker: Option<VisibilityChecker>,
+}
+
+impl std::fmt::Debug for RenderPage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RenderPage")
+            .field("key", &self.key)
+            .field("page_info", &self.page_info)
+            .field("crop", &self.crop)
+            .field("priority", &self.priority)
+            .field("has_visibility_checker", &self.visibility_checker.is_some())
+            .finish()
+    }
 }
 
 impl Hash for RenderPage {
@@ -56,6 +74,16 @@ pub enum DecodeTask {
     GetOutline {
         response_tx: Sender<Result<Vec<crate::entity::OutlineItem>>>,
     },
+    /// 获取页面文本
+    GetPageText {
+        page_index: usize,
+        response_tx: Sender<Result<String>>,
+    },
+    /// 解析reflow数据（从指定页面开始的后续页面）
+    ExtractReflowData {
+        start_page: usize,
+        response_tx: Sender<Result<Vec<crate::entity::ReflowEntry>>>,
+    },
     /// 关闭服务
     Shutdown,
 }
@@ -86,7 +114,7 @@ pub struct DecodeService {
 
 impl DecodeService {
     /// 保存封面缩略图
-    fn save_cover_thumbnail(path: &PathBuf, dec: &Box<dyn Decoder>, first_page: &PageInfo) {
+    fn save_cover_thumbnail(path: &Path, dec: &Box<dyn Decoder>, first_page: &PageInfo) {
         let path_str = path.to_string_lossy();
         let hash = generate_thumbnail_hash(&path_str);
         if let Some(data_dir) = dirs::data_dir() {
@@ -110,10 +138,9 @@ impl DecodeService {
                 Ok((pixels, width, height)) => {
                     let rgba_img = image::RgbaImage::from_raw(width, height, pixels).unwrap();
                     let image = image::DynamicImage::ImageRgba8(rgba_img);
-                    if fs::create_dir_all(&cache_dir).is_ok() {
-                        if image.save(&cache_path).is_ok() {
-                            info!("[DecodeService] Saved thumbnail to {:?}", cache_path);
-                        }
+                    if fs::create_dir_all(&cache_dir).is_ok()
+                        && image.save(&cache_path).is_ok() {
+                        info!("[DecodeService] Saved thumbnail to {:?}", cache_path);
                     }
                 }
                 Err(e) => {
@@ -163,8 +190,15 @@ impl DecodeService {
 
             // 2. 处理队列中的一个任务
             if let Some(render_page) = task_queue.pop_front() {
-                // 验证任务是否还在当前可见页中
-                if !current_visible.contains(&render_page) {
+                // 使用回调验证页面是否可见
+                let is_visible = if let Some(ref checker) = render_page.visibility_checker {
+                    checker(render_page.page_info.index)
+                } else {
+                    // 如果没有回调，回退到旧的检查方式
+                    current_visible.contains(&render_page)
+                };
+
+                if !is_visible {
                     info!("[DecodeService] 跳过不可见页: page={}, key={}", 
                         render_page.page_info.index, render_page.key);
                     // 继续处理下一个任务
@@ -177,6 +211,7 @@ impl DecodeService {
                     
                     match dec.render_page(&render_page.page_info, render_page.crop != 0) {
                         Ok((image_data, width, height)) => {
+                            //std::thread::sleep(std::time::Duration::from_secs(2));
                             let links = dec.get_page_links(render_page.page_info.index)
                                 .unwrap_or_default();
 
@@ -246,8 +281,12 @@ impl DecodeService {
                         let boxed_decoder = Box::new(pdf_decoder);
                         let pages_result = boxed_decoder.get_all_pages();
                         *decoder = Some(boxed_decoder);
-                        let first_page = if pages_result.is_ok() && !pages_result.as_ref().unwrap().is_empty() {
-                            Some(pages_result.as_ref().unwrap()[0].clone())
+                        let first_page = if let Ok(ref pages) = pages_result {
+                            if !pages.is_empty() {
+                                Some(pages[0].clone())
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         };
@@ -295,6 +334,24 @@ impl DecodeService {
                 }
                 false
             }
+            DecodeTask::GetPageText { page_index, response_tx } => {
+                if let Some(ref dec) = decoder {
+                    let text_result = dec.get_page_text(page_index);
+                    let _ = response_tx.send(text_result);
+                } else {
+                    let _ = response_tx.send(Err(anyhow::anyhow!("No decoder")));
+                }
+                false
+            }
+            DecodeTask::ExtractReflowData { start_page, response_tx } => {
+                if let Some(ref dec) = decoder {
+                    let reflow_result = dec.get_reflow_from_page(start_page);
+                    let _ = response_tx.send(reflow_result);
+                } else {
+                    let _ = response_tx.send(Err(anyhow::anyhow!("No decoder")));
+                }
+                false
+            }
             DecodeTask::Shutdown => {
                 info!("[DecodeService] Shutting down decode thread");
                 true
@@ -329,6 +386,33 @@ impl DecodeService {
             .map_err(|e| anyhow::anyhow!("Failed to receive outline response: {}", e))?
     }
 
+    /// 获取页面文本（同步等待）
+    pub fn get_page_text(&self, page_index: usize) -> Result<String> {
+        let (response_tx, response_rx) = unbounded();
+        self.task_sender
+            .send(DecodeTask::GetPageText { page_index, response_tx })
+            .map_err(|e| anyhow::anyhow!("Failed to send page text task: {}", e))?;
+
+        response_rx
+            .recv()
+            .map_err(|e| anyhow::anyhow!("Failed to receive page text response: {}", e))?
+    }
+
+    /// 从指定页面开始获取后续页面的reflow数据
+    pub fn get_reflow_from_page(&self, start_page: usize) -> Result<Vec<crate::entity::ReflowEntry>> {
+        let (response_tx, response_rx) = unbounded();
+        self.task_sender
+            .send(DecodeTask::ExtractReflowData {
+                start_page,
+                response_tx
+            })
+            .map_err(|e| anyhow::anyhow!("Failed to send reflow task: {}", e))?;
+
+        response_rx
+            .recv()
+            .map_err(|e| anyhow::anyhow!("Failed to receive reflow response: {}", e))?
+    }
+
     /// 批量提交渲染任务（异步，不等待）
     pub fn render_pages(&self, pages: Vec<RenderPage>) {
         if !pages.is_empty() {
@@ -354,5 +438,11 @@ impl Drop for DecodeService {
         if let Some(handle) = self.decode_thread.take() {
             let _ = handle.join();
         }
+    }
+}
+
+impl Default for DecodeService {
+    fn default() -> Self {
+        Self::new()
     }
 }

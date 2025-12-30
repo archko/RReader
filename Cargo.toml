@@ -4,24 +4,18 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
-mupdf = { version = "0.5.0" }  # PDF文档处理和渲染引擎,加不了字体,会崩溃,链接失败
+mupdf = { path = "mupdf-rs", features = ["system-fonts", "all-fonts"] } #{ version = "0.6.0" }  # PDF文档处理和渲染引擎
 slint = "1.14.1"                                         # 现代UI框架，用于构建桌面应用界面
 tokio = { version = "1.48.0", features = ["full"] }      # 异步运行时，支持并发操作
-#serde = { version = "1.0.228", features = ["derive"] } # 序列化/反序列化框架
-#serde_json = "1.0.145"                                   # JSON数据处理
+serde = { version = "1.0.228", features = ["derive"] } # 序列化/反序列化框架
+serde_json = "1.0.145"                                   # JSON数据处理
 image = "0.25.9"                                         # 图像处理和操作库
 anyhow = "1.0.100"                                       # 错误处理库，简化错误传播
-#thiserror = "2.0.17"                                     # 自定义错误类型定义
 futures = "0.3.31"                                       # 异步编程工具集
-#async-trait = "0.1.89"                                   # 异步trait支持
 crossbeam-channel = "0.5.15"                                      # 并发数据结构和工具
-#arc-swap = "1.7.1"
-#imageproc = "0.25.0"                                     # 图像处理算法库
 rfd = "0.15.4"                                           # 文件对话框，用于文件选择
 log="0.4.28"                                             # 日志记录框架
 env_logger="0.11.8"                                      # 日志输出配置
-#diesel = { version = "2.3.4", features = ["sqlite", "returning_clauses_for_sqlite_3_35", "r2d2"] }
-#libsqlite3-sys = "0.35.0"
 sea-orm = { version = "1.1.19", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
 dotenvy = "0.15"
 lazy_static = "1.5.0"
@@ -32,8 +26,11 @@ dirs = "6.0.0"
 [build-dependencies]
 slint-build = "1.14.1"
 
+[profile.dev]
+incremental = true          # 保留增量编译（核心提速点）
+
 [profile.release]
-opt-level = 3          # 最高优化级别
+opt-level = 1          # 最高优化级别
 lto = "fat"            # 链接时优化（消除跨模块冗余）
 codegen-units = 1      # 单代码生成单元（提升优化效果）
 strip = "debuginfo"    # 移除调试信息（不影响性能，减少二进制体积）

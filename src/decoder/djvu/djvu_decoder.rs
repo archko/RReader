@@ -145,7 +145,7 @@ impl Decoder for DjvuDecoder {
     fn get_page_text(&self, page_index: usize) -> Result<String> {
         let document = self.document.borrow();
         let page = document.load_page(page_index as i32)?;
-        let opts = mupdf::TextPageOptions::empty();
+        let opts = mupdf::TextPageFlags::empty();
         let text_page = page.to_text_page(opts)?;
         Ok(text_page.to_text()?)
     }

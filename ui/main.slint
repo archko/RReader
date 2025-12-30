@@ -1,9 +1,19 @@
 import { Button, VerticalBox, HorizontalBox, ScrollView, ListView } from "std-widgets.slint";
-import { PageData, UIRecent, UIOutlineItem, HistoryRow } from "types.slint";
+import { PageData, OutlineItem } from "datatypes/document_datatypes.slint";
+import { UIRecent, HistoryRow } from "datatypes/history_datatypes.slint";
 import { DocumentView } from "document_view.slint";
-import { HistoryView } from "history_components.slint";
+import { HistoryView } from "history_view.slint";
+import { HistoryToolbar } from "controls/history_toolbar.slint";
+import { DocumentToolbar } from "controls/document_toolbar.slint";
+import { OutlinePanel } from "controls/outline_panel.slint";
+import { AppColors } from "style/styles.slint";
+import { WindowInfo, WindowInfoHelper } from "ui_utils.slint";
+import { BusyLayerController, BusyLayer } from "controls/busy-layer.slint";
 
-export component MainWindow inherits Window {
+// Re export for native rust
+export { WindowInfo, BusyLayerController }
+
+export component AppWindow inherits Window {
     title: "R-Reader";
     preferred-width: 1024px;
     preferred-height: 768px;
@@ -27,8 +37,8 @@ export component MainWindow inherits Window {
     in property <[HistoryRow]> history-rows: [];
     in-out property <length> viewport-height: 0px;
     in-out property <bool> outline-visible: false;
-    in property <[UIOutlineItem]> outline-items: [];
-    
+    in property <[OutlineItem]> outline-items: [];
+
     callback open-file();
     callback page-changed(int);
     callback zoom-changed(float);
@@ -40,33 +50,20 @@ export component MainWindow inherits Window {
     callback page-clicked(float, float, int);
     callback history-item-clicked(UIRecent);
     callback history-viewport-changed(length, length);
+    callback speak-page();
+    callback clear-history();
+
+    WindowInfoHelper {}
 
     Rectangle {
+        background: AppColors.background;
 
         VerticalBox {
             visible: !root.document-opened;
-            
-            Rectangle {
-                height: 48px;
-                background: #f5f5f5;
-                border-width: 1px;
-                border-color: #e0e0e0;
-                
-                HorizontalBox {
-                    alignment: start;
-                    padding: 12px;
-                    spacing: 8px;
-                    
-                    Button {
-                        text: "Open";
-                        clicked => { open-file(); }
-                    }
-                    
-                    Button {
-                        text: "Clear";
-                        clicked => { }
-                    }
-                }
+
+            history_toolbar := HistoryToolbar {
+                open-file => { root.open-file(); }
+                clear-history => { root.clear-history(); }
             }
 
             history_view := HistoryView {
@@ -75,140 +72,47 @@ export component MainWindow inherits Window {
                 item-clicked(item) => { root.history-item-clicked(item); }
             }
         }
-        
+
         VerticalBox {
             visible: root.document-opened;
 
-            Rectangle {
-                height: 48px;
-                background: #f5f5f5;
-                border-width: 1px;
-                border-color: #e0e0e0;
-                
-                HorizontalLayout {
-                    alignment: space-between;
-                    HorizontalLayout {
-                        alignment: start;
-                        padding: 12px;
-                        spacing: 8px;
-
-                        Button {
-                            text: "Back";
-                            clicked => { back-to-history(); }
-                        }
-                        
-                        Button {
-                            text: "Open";
-                            clicked => { open-file(); }
-                        }
-                    
-                        Text {
-                            text: root.file-path;
-                            vertical-alignment: center;
-                            horizontal-alignment: left;
-                            wrap: word-wrap;
-                        }
-                    }
-                
-                    HorizontalLayout {
-                        alignment: end;
-
-                        padding: 12px;
-                        spacing: 8px;
-
-                        Button {
-                            text: "Previous";
-                            enabled: root.current-page > 0;
-                            clicked => { page-changed(root.current-page - 1); }
-                        }
-                    
-                        Button {
-                            text: "Next";
-                            enabled: root.current-page < root.page-count - 1;
-                            clicked => { page-changed(root.current-page + 1); }
-                        }
-                        
-                        Button {
-                            text: "Zoom -";
-                            clicked => {
-                                zoom = Math.max(0.5, zoom - 0.1);
-                                zoom-changed(zoom);
-                            }
-                        }
-                    
-                        Button {
-                            text: "Zoom +";
-                            clicked => {
-                                zoom = Math.min(4.0, zoom + 0.1);
-                                zoom-changed(zoom);
-                            }
-                        }
-    
-                        Text {
-                            text: Math.round(zoom * 100) + "%";
-                            vertical-alignment: center;
-                        }
-    
-                        Text {
-                            text: "Page " + (root.current-page + 1) + " / " + Math.max(root.page-count, 1);
-                            vertical-alignment: center;
-                        }
-                    }
-                }
+            document_toolbar := DocumentToolbar {
+                page-count: root.page-count;
+                current-page: root.current-page;
+                zoom: root.zoom;
+                file-path: root.file-path;
+                open-file => { root.open-file(); }
+                back-to-history => { root.back-to-history(); }
+                page-changed(page) => { root.page-changed(page); }
+                zoom-changed(z) => { root.zoom-changed(z); }
+                speak-page => { root.speak-page(); }
             }
-            
+
             HorizontalLayout {
                 vertical-stretch: 1;
-
-                if root.outline-visible: ListView {
+                if root.outline-visible: outline_panel := OutlinePanel {
                     width: 250px;
-                    for outline_item in root.outline-items : Rectangle {
-                        height: 32px;
-                        background: #ffffff;
-                        width: parent.width;
-
-                        HorizontalBox {
-                            padding-left: outline_item.level * 4px;
-                            spacing: 2px;
-
-                            Text {
-                                text: outline_item.title;
-                                font-size: 13px;
-                                horizontal-alignment: left;
-                                wrap: no-wrap;
-                                width: 200px;
-                            }
-
-                            Text {
-                                text: outline_item.page + 1;
-                                font-size: 13px;
-                                color: #666666;
-                                horizontal-alignment: right;
-                            }
-                        }
-
-                        Rectangle {
-                            height: 1px;
-                            background: #e0e0e0;
-                            width: parent.width;
-                            x: 0;
-                            y: parent.height - 1px;
-                        }
-
-                        TouchArea {
-                            width: parent.width;
-                            height: parent.height;
-                            clicked => {
-                                root.page-changed(outline_item.page);
-                            }
-                        }
-                    }
+                    outline-items: root.outline-items;
+                    page-changed(page) => { root.page-changed(page); }
                 }
 
-                Button {
-                    width: 22px;
-                    text: root.outline-visible ? "◀" : "▶";
-                    clicked => { outline-visible = !outline-visible; }
+                Rectangle {
+                    width: 12px;
+                    height: 100%;
+
+                    Text {
+                        text: root.outline-visible ? "◀" : "▶";
+                        color: AppColors.accent;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        clicked => { outline-visible = !outline-visible; }
+                    }
                 }
 
                 doc_view := DocumentView {
@@ -229,4 +133,6 @@ export component MainWindow inherits Window {
             }
         }
     }
+
+    if BusyLayerController.is-busy: BusyLayer {}
 }

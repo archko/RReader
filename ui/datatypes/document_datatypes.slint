@@ -1,0 +1,52 @@
+/// 页面数据结构
+export struct PageData {
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    image: image,
+    page_index: int,
+}
+
+/// 文档信息
+export struct DocumentInfo {
+    path: string,
+    name: string,
+    page_count: int,
+    current_page: int,
+}
+
+/// 大纲项
+export struct OutlineItem {
+    title: string,
+    page: int,
+    level: int,
+}
+
+/// 文档查看器全局对象
+export global DocumentViewer {
+    // 属性
+    property <[PageData]> document_pages;
+    property <[OutlineItem]> outline_items;
+    property <string> file_path;
+    property <bool> document_opened: false;
+    property <int> page_count: 0;
+    property <int> current_page: 1;
+    property <float> zoom: 1.0;
+    property <float> offset_x: 0;
+    property <float> offset_y: 0;
+    property <float> total_width: 0;
+    property <float> total_height: 0;
+
+    // 回调
+    pure callback open_file();
+    pure callback viewport_changed(float, float);
+    pure callback scroll_changed(float, float);
+    pure callback page_changed(int);
+    pure callback zoom_changed(float);
+    pure callback back_to_history();
+    pure callback page_up();
+    pure callback page_down();
+    pure callback page_clicked(float, float, int);
+    pure callback speak_page();
+}

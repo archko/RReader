@@ -2,7 +2,7 @@ use log::{debug, info};
 
 use super::Page;
 use crate::cache::PageCache;
-use crate::decoder::decode_service::{Priority, RenderPage};
+use crate::decoder::decode_service::{Priority, RenderPage, VisibilityChecker};
 use crate::decoder::pdf::utils::{generate_thumbnail_key};
 use crate::decoder::{DecodeService, Link, Rect};
 use crate::entity::OutlineItem;
@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// 滚动方向
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -61,10 +61,16 @@ pub struct PageViewState {
     pub page_links: Rc<RefCell<HashMap<usize, Vec<Link>>>>,
 
     pub outline_items: Vec<OutlineItem>,
+
+    /// 可见区域（用于跨线程可见性检查）
+    visible_rect: Arc<Mutex<Rect>>,
+
+    /// 页面bounds映射（用于跨线程可见性检查）
+    page_bounds_map: Arc<Mutex<HashMap<usize, Rect>>>,
 }
 
 impl PageViewState {
-    pub fn new(orientation: Orientation, crop: i32) -> Self {
+    pub fn new(orientation: Orientation, crop_int: i32) -> Self {
         Self {
             cache: Rc::new(PageCache::new(24, 10)),
             pages: Vec::new(),
@@ -72,7 +78,7 @@ impl PageViewState {
             orientation,
             view_offset: (0.0, 0.0),
             zoom: 1.0,
-            crop: crop,
+            crop: crop_int,
             total_width: 0.0,
             total_height: 0.0,
             view_size: (0.0, 0.0),
@@ -80,6 +86,8 @@ impl PageViewState {
             visible_pages: Vec::new(),
             page_links: Rc::new(RefCell::new(HashMap::new())),
             outline_items: Vec::new(),
+            visible_rect: Arc::new(Mutex::new(Rect::new(0.0, 0.0, 0.0, 0.0))),
+            page_bounds_map: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -241,6 +249,18 @@ impl PageViewState {
             ),
         };
 
+        // 更新共享的可见区域
+        *self.visible_rect.lock().unwrap() = visible_rect.clone();
+
+        // 更新页面bounds映射
+        {
+            let mut bounds_map = self.page_bounds_map.lock().unwrap();
+            bounds_map.clear();
+            for page in &self.pages {
+                bounds_map.insert(page.info.index, page.bounds.clone());
+            }
+        }
+
         // 使用二分查找优化
         let first = self.find_first_visible(&visible_rect);
         let last = self.find_last_visible(&visible_rect);
@@ -249,6 +269,32 @@ impl PageViewState {
             first, last, self.pages.len());
 
         let mut render_pages = Vec::new();
+
+        // 创建可见性检查回调
+        let visible_rect_arc = Arc::clone(&self.visible_rect);
+        let page_bounds_map_arc = Arc::clone(&self.page_bounds_map);
+        let orientation = self.orientation;
+        let visibility_checker: VisibilityChecker = Arc::new(move |page_index: usize| -> bool {
+            let current_visible = visible_rect_arc.lock().unwrap();
+            let bounds_map = page_bounds_map_arc.lock().unwrap();
+            
+            // 获取页面bounds
+            if let Some(page_bounds) = bounds_map.get(&page_index) {
+                // 根据方向判断页面是否与可见区域相交
+                let intersects = match orientation {
+                    Orientation::Vertical => {
+                        page_bounds.bottom > current_visible.top && page_bounds.top < current_visible.bottom
+                    },
+                    Orientation::Horizontal => {
+                        page_bounds.right > current_visible.left && page_bounds.left < current_visible.right
+                    },
+                };
+                intersects
+            } else {
+                // 如果找不到bounds，默认为不可见
+                false
+            }
+        });
 
         if first <= last && first < self.pages.len() {
             for i in first..=last.min(self.pages.len() - 1) {
@@ -267,6 +313,7 @@ impl PageViewState {
                             page_info: page.info.clone(),
                             crop: self.crop,
                             priority: Priority::Thumbnail,
+                            visibility_checker: Some(Arc::clone(&visibility_checker)),
                         });
                     } else {
                         debug!("[PageViewState] 页面已在缓存中: page={}, key={}", page.info.index, key);
@@ -412,6 +459,16 @@ impl PageViewState {
             // 更新可见页面以触发重新解码
             self.update_visible_pages();
         }
+    }
+
+    /// 获取页面文本
+    pub fn get_page_text(&self, page_index: usize) -> Result<String, Box<dyn std::error::Error>> {
+        Ok(self.decode_service.get_page_text(page_index)?)
+    }
+
+    /// 从指定页面开始获取后续页面的reflow数据
+    pub fn get_reflow_from_page(&self, start_page: usize) -> Result<Vec<crate::entity::ReflowEntry>, Box<dyn std::error::Error>> {
+        Ok(self.decode_service.get_reflow_from_page(start_page)?)
     }
 
     /// 回收资源

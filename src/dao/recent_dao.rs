@@ -70,31 +70,31 @@ impl RecentDao {
         let mut updater = Entity::update_many();
 
         if let ActiveValue::Set(ref val) = update_data.update_at {
-            updater = updater.col_expr(crate::entity::recent::Column::UpdateAt, Expr::value(val.clone()));
+            updater = updater.col_expr(crate::entity::recent::Column::UpdateAt, Expr::value(*val));
         }
         if let ActiveValue::Set(ref val) = update_data.page {
-            updater = updater.col_expr(crate::entity::recent::Column::Page, Expr::value(val.clone()));
+            updater = updater.col_expr(crate::entity::recent::Column::Page, Expr::value(*val));
         }
         if let ActiveValue::Set(ref val) = update_data.page_count {
-            updater = updater.col_expr(crate::entity::recent::Column::PageCount, Expr::value(val.clone()));
+            updater = updater.col_expr(crate::entity::recent::Column::PageCount, Expr::value(*val));
         }
         if let ActiveValue::Set(ref val) = update_data.crop {
-            updater = updater.col_expr(crate::entity::recent::Column::Crop, Expr::value(val.clone()));
+            updater = updater.col_expr(crate::entity::recent::Column::Crop, Expr::value(*val));
         }
         if let ActiveValue::Set(ref val) = update_data.reflow {
-            updater = updater.col_expr(crate::entity::recent::Column::Reflow, Expr::value(val.clone()));
+            updater = updater.col_expr(crate::entity::recent::Column::Reflow, Expr::value(*val));
         }
         if let ActiveValue::Set(ref val) = update_data.scroll_ori {
-            updater = updater.col_expr(crate::entity::recent::Column::ScrollOri, Expr::value(val.clone()));
+            updater = updater.col_expr(crate::entity::recent::Column::ScrollOri, Expr::value(*val));
         }
         if let ActiveValue::Set(ref val) = update_data.zoom {
-            updater = updater.col_expr(crate::entity::recent::Column::Zoom, Expr::value(val.clone()));
+            updater = updater.col_expr(crate::entity::recent::Column::Zoom, Expr::value(*val));
         }
         if let ActiveValue::Set(ref val) = update_data.scroll_x {
-            updater = updater.col_expr(crate::entity::recent::Column::ScrollX, Expr::value(val.clone()));
+            updater = updater.col_expr(crate::entity::recent::Column::ScrollX, Expr::value(*val));
         }
         if let ActiveValue::Set(ref val) = update_data.scroll_y {
-            updater = updater.col_expr(crate::entity::recent::Column::ScrollY, Expr::value(val.clone()));
+            updater = updater.col_expr(crate::entity::recent::Column::ScrollY, Expr::value(*val));
         }
         if let ActiveValue::Set(ref val) = update_data.name {
             updater = updater.col_expr(crate::entity::recent::Column::Name, Expr::value(val.clone()));
@@ -103,19 +103,19 @@ impl RecentDao {
             updater = updater.col_expr(crate::entity::recent::Column::Ext, Expr::value(val.clone()));
         }
         if let ActiveValue::Set(ref val) = update_data.size {
-            updater = updater.col_expr(crate::entity::recent::Column::Size, Expr::value(val.clone()));
+            updater = updater.col_expr(crate::entity::recent::Column::Size, Expr::value(*val));
         }
         if let ActiveValue::Set(ref val) = update_data.read_times {
-            updater = updater.col_expr(crate::entity::recent::Column::ReadTimes, Expr::value(val.clone()));
+            updater = updater.col_expr(crate::entity::recent::Column::ReadTimes, Expr::value(*val));
         }
         if let ActiveValue::Set(ref val) = update_data.progress {
-            updater = updater.col_expr(crate::entity::recent::Column::Progress, Expr::value(val.clone()));
+            updater = updater.col_expr(crate::entity::recent::Column::Progress, Expr::value(*val));
         }
         if let ActiveValue::Set(ref val) = update_data.favorited {
-            updater = updater.col_expr(crate::entity::recent::Column::Favorited, Expr::value(val.clone()));
+            updater = updater.col_expr(crate::entity::recent::Column::Favorited, Expr::value(*val));
         }
         if let ActiveValue::Set(ref val) = update_data.in_recent {
-            updater = updater.col_expr(crate::entity::recent::Column::InRecent, Expr::value(val.clone()));
+            updater = updater.col_expr(crate::entity::recent::Column::InRecent, Expr::value(*val));
         }
 
         updater
@@ -214,6 +214,20 @@ impl RecentDao {
         tokio::task::block_in_place(|| {
             futures::executor::block_on(async {
                 Self::delete_by_path(other_path).await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+            })
+        })
+    }
+
+    pub async fn clear_all() -> Result<(), DbErr> {
+        let db = crate::dao::get_connection().await?;
+        Entity::delete_many().exec(&*db).await?;
+        Ok(())
+    }
+
+    pub fn clear_all_sync() -> Result<(), Box<dyn std::error::Error>> {
+        tokio::task::block_in_place(|| {
+            futures::executor::block_on(async {
+                Self::clear_all().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
             })
         })
     }

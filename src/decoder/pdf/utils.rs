@@ -22,8 +22,8 @@ pub fn mupdf_to_image(pixmap: &Pixmap) -> DynamicImage {
 }
 
 pub fn mupdf_to_pixels(pixmap: &Pixmap) -> (Vec<u8>, u32, u32) {
-    let width = pixmap.width() as u32;
-    let height = pixmap.height() as u32;
+    let width = pixmap.width();
+    let height = pixmap.height();
     let samples = pixmap.samples();
     let n = pixmap.n() as usize; // 每个像素的组件数
 
@@ -65,10 +65,9 @@ pub fn convert_to_slint_image(image: &image::DynamicImage) -> Image {
     let rgba_image = image.to_rgba8();
     let (width, height) = rgba_image.dimensions();
 
-    let slint_image = Image::from_rgba8_premultiplied(
+    Image::from_rgba8_premultiplied(
         SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&rgba_image, width, height),
-    );
-    slint_image
+    )
 }
 
 pub fn generate_thumbnail_key(page: &Page) -> String {
@@ -89,7 +88,7 @@ pub fn load_outline_items(doc: &Document) -> Vec<OutlineItem> {
 }
 
 fn process_outline_hierarchy(
-    doc: &Document,
+    _doc: &Document,
     outlines: &[Outline],
     items: &mut Vec<OutlineItem>,
     level: i32,
@@ -97,7 +96,11 @@ fn process_outline_hierarchy(
     for outline in outlines {
         let title = outline.title.clone();
         let uri = outline.uri.clone();
-        let page = outline.page.unwrap_or(0) as i32;
+        let page = if let Some(dest) = &outline.dest {
+            dest.loc.page_number as i32
+        } else {
+            extract_page_from_uri(uri.clone().unwrap_or_default()) as i32
+        };
         //debug!("extract_page_from_uri:{:?}, {:?}", page, uri.clone());
 
         let item = OutlineItem::new(title, uri, page, level);
@@ -106,7 +109,7 @@ fn process_outline_hierarchy(
 
         // Recursively process children with increased level
         let children = &outline.down;
-        process_outline_hierarchy(doc, &children, items, level + 1);
+        process_outline_hierarchy(_doc, children, items, level + 1);
     }
 }
 

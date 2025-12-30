@@ -1,0 +1,29 @@
+import { Button, HorizontalBox } from "std-widgets.slint";
+
+export component HistoryToolbar {
+    callback open-file();
+    callback clear-history();
+
+    Rectangle {
+        height: 48px;
+        background: #f5f5f5;
+        border-width: 1px;
+        border-color: #e0e0e0;
+
+        HorizontalBox {
+            alignment: start;
+            padding: 12px;
+            spacing: 8px;
+
+            Button {
+                text: "Open";
+                clicked => { open-file(); }
+            }
+
+            Button {
+                text: "Clear";
+                clicked => { clear-history(); }
+            }
+        }
+    }
+}

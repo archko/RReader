@@ -1,0 +1,47 @@
+import { AppColors } from "../style/styles.slint";
+
+export global BusyLayerController {
+    out property<bool> is-busy: false;
+
+    property<int> busy-counter: 0;
+
+    public function set-busy() {
+        busy-counter += 1;
+
+        if (!root.is-busy) {
+            root.is-busy = true;
+        }
+    }
+
+    public function unset-busy() {
+        busy-counter -= 1;
+
+        if (root.is-busy && busy-counter == 0) {
+            root.is-busy = false;
+        }
+    }
+}
+
+export component BusyLayer inherits Rectangle {
+    Rectangle {
+        background: black;
+        opacity: 0.75;
+    }
+
+    Rectangle {
+        width: 40px;
+        height: 40px;
+        background: AppColors.accent;
+        border-radius: 4px;
+
+        Text {
+            text: "Loading...";
+            color: AppColors.background;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    TouchArea {}
+}

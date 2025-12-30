@@ -13,6 +13,12 @@ pub struct MainViewmodel{
     current_page_records: Vec<Recent>,
 }
 
+impl Default for MainViewmodel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MainViewmodel {
     pub fn new() -> Self {
         Self {
@@ -47,7 +53,7 @@ impl MainViewmodel {
         if PAGE_SIZE == 0 {
             0
         } else {
-            (self.total_records + PAGE_SIZE - 1) / PAGE_SIZE
+            self.total_records.div_ceil(PAGE_SIZE)
         }
     }
 

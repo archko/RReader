@@ -1,0 +1,52 @@
+import { ListView, HorizontalBox } from "std-widgets.slint";
+import { OutlineItem } from "../datatypes/document_datatypes.slint";
+
+export component OutlinePanel {
+    in property <[OutlineItem]> outline-items: [];
+
+    callback page-changed(int);
+
+    ListView {
+        for outline_item in root.outline-items : Rectangle {
+            height: 36px;
+            width: parent.width;
+
+            HorizontalBox {
+                padding-left: outline_item.level * 4px;
+                spacing: 2px;
+
+                Text {
+                    text: outline_item.title;
+                    font-size: 13px;
+                    horizontal-alignment: left;
+                    wrap: no-wrap;
+                    color: #666666;
+                    width: 200px;
+                }
+
+                Text {
+                    text: outline_item.page + 1;
+                    font-size: 13px;
+                    color: #666666;
+                    horizontal-alignment: right;
+                }
+            }
+
+            Rectangle {
+                height: 1px;
+                background: #e0e0e0;
+                width: parent.width;
+                x: 0;
+                y: parent.height - 1px;
+            }
+
+            TouchArea {
+                width: parent.width;
+                height: parent.height;
+                clicked => {
+                    root.page-changed(outline_item.page);
+                }
+            }
+        }
+    }
+}
