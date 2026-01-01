@@ -36,6 +36,10 @@ impl DocumentController {
             let weak_window = window.as_weak();
             window.on_viewport_changed(move |width, height| {
                 debug!("[DocumentController] on_viewport_changed: width={}, height={}", width, height);
+                if width == 0.0 || height == 0.0 {
+                    return;
+                }
+
                 let mut current_page = None;
                 {
                     let borrowed_state = page_view_state.borrow();
@@ -47,18 +51,16 @@ impl DocumentController {
                     let mut state = page_view_state.borrow_mut();
                     let zoom = state.zoom;
                     state.update_view_size(width as f32, height as f32, zoom, false);
-                    state.update_visible_pages();
 
                     // 如果当前页面不再可见，则跳转到该页面，大纲显示与隐藏会触发布局变化
                     if let Some(page) = current_page {
                         state.jump_to_page(page);
-                        state.update_visible_pages();
                     }
-                }
-                debug!("[DocumentController] on_viewport_changed completed");
-                if let Some(window) = weak_window.upgrade() {
-                    let state = page_view_state.borrow();
-                    Self::refresh_view(&window, &state);
+                    state.update_visible_pages();
+
+                    if let Some(window) = weak_window.upgrade() {
+                        Self::refresh_view(&window, &state);
+                    }
                 }
             });
         }
@@ -143,50 +145,6 @@ impl DocumentController {
                 // 重置页面状态
                 let mut borrowed_state = page_view_state.borrow_mut();
                 borrowed_state.shutdown();
-            });
-        }
-
-        // 页面向下回调
-        {
-            let page_view_state = Rc::clone(&self.page_view_state);
-            let weak_window = window.as_weak();
-            window.on_page_down(move || {
-                if let Some(window) = weak_window.upgrade() {
-                    let viewport_height = window.get_viewport_height();
-                    let current_offset_y = window.get_offset_y();
-
-                    let offset_y = current_offset_y - viewport_height + 16.0;
-                    let offset_x = window.get_offset_x();
-
-                    debug!("[DocumentController] on_page_down, {offset_x}, {current_offset_y}, {offset_y}, height:{viewport_height}");
-
-                    let mut state = page_view_state.borrow_mut();
-                    state.update_offset(offset_x, offset_y);
-                    state.update_visible_pages();
-                    Self::refresh_view(&window, &state);
-                }
-            });
-        }
-
-        // 页面向上回调
-        {
-            let page_view_state = Rc::clone(&self.page_view_state);
-            let weak_window = window.as_weak();
-            window.on_page_up(move || {
-                if let Some(window) = weak_window.upgrade() {
-                    let viewport_height = window.get_viewport_height();
-                    let current_offset_y = window.get_offset_y();
-
-                    let offset_y = current_offset_y + viewport_height - 16.0;
-                    let offset_x = window.get_offset_x();
-
-                    debug!("[DocumentController] on_page_up, {offset_x}, {current_offset_y}, {offset_y}, height:{viewport_height}");
-
-                    let mut state = page_view_state.borrow_mut();
-                    state.update_offset(offset_x, offset_y);
-                    state.update_visible_pages();
-                    Self::refresh_view(&window, &state);
-                }
             });
         }
 
@@ -321,25 +279,13 @@ impl DocumentController {
             })
             .collect::<Vec<_>>();
 
-        let (offset_x, offset_y) = (state.view_offset.0, state.view_offset.1);
-        window.set_scroll_events_enabled(false);
-        window.set_offset_x(offset_x);
-        window.set_offset_y(offset_y);
-        window.set_scroll_events_enabled(true);
-
-        debug!("[DocumentController] refresh_view {} page_models", rendered_pages.len());
+        info!("[DocumentController] refresh_view {} page_models", rendered_pages.len());
         let model = Rc::new(VecModel::from(rendered_pages));
         window.set_document_pages(ModelRc::from(model));
-        window.set_page_count(state.pages.len() as i32);
-        window.set_zoom(state.zoom);
 
         if let Some(first_visible) = state.get_first_visible_page() {
             window.set_current_page((first_visible + 1) as i32);  // UI expects 1-based page numbers
         }
-
-        let (total_width, total_height) = (state.total_width, state.total_height);
-        window.set_total_width(total_width);
-        window.set_total_height(total_height);
     }
 
     /// 打开文档 - 触发文档加载流程
@@ -357,12 +303,16 @@ impl DocumentController {
                     (1.0, 1, 0, 0) // 默认值
                 };
 
+                let mut state = self.page_view_state.borrow_mut();
+
                 window.set_file_path(path.into());
                 window.set_zoom(zoom);
                 window.set_current_page(page);
                 window.set_document_opened(true);
+                window.set_page_count(state.pages.len() as i32);
+                window.set_offset_x(scroll_x as f32);
+                window.set_offset_y(scroll_y as f32);
 
-                let mut state = self.page_view_state.borrow_mut();
                 let width = state.view_size.0;
                 let height = state.view_size.1;
 
@@ -372,9 +322,11 @@ impl DocumentController {
                     zoom,
                     true
                 );
+                let (total_width, total_height) = (state.total_width, state.total_height);
+                window.set_total_width(total_width);
+                window.set_total_height(total_height);
 
                 if state.jump_to_page((page - 1) as usize).is_some() {
-                    // 可以在这里做一些处理
                 }
 
                 Self::set_outline_to_ui(window, &state);

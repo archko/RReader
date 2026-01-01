@@ -7,36 +7,29 @@ export component DocumentView inherits Rectangle {
     in property <length> total-height: 0px;
     in-out property <length> offset-x: 0px;
     in-out property <length> offset-y: 0px;
-    in property <bool> enable-scroll-events: true;
+    in-out property <length> viewport-width: 0px;
     in-out property <length> viewport-height: 0px;
 
     callback viewport-changed(length, length);
     callback scroll-changed(length, length);
-    callback page-down();
-    callback page-up();
     callback page-clicked(float, float, int);
 
     border-width: 1px;
     border-color: #e0e0e0;
-    clip: true;
 
     property <length> last-visible-width: 0px;
     property <length> last-visible-height: 0px;
-    property <length> desired_offset_x: 0px;
-    property <length> desired_offset_y: 0px;
 
     scroller := ScrollView {
         width: root.width;
         height: root.height;
-        viewport-width: max(root.total-width, self.width);
-        viewport-height: max(root.total-height, self.height);
+        viewport-width: max(root.total-width, root.width);
+        viewport-height: max(root.total-height, root.height);
         viewport-x <=> root.offset-x;
         viewport-y <=> root.offset-y;
         mouse-drag-pan-enabled: true;
 
         content := Rectangle {
-            width: max(root.total-width, scroller.visible-width);
-            height: max(root.total-height, scroller.visible-height);
             clip: true;
 
             for page in pages: Rectangle {
@@ -76,29 +69,24 @@ export component DocumentView inherits Rectangle {
         }
 
         scrolled => {
-            if (root.enable-scroll-events) {
-                root.desired_offset_x = scroller.viewport-x;
-                root.desired_offset_y = scroller.viewport-y;
-                //debug("scrolled", (scroller.viewport-x / 1px), (scroller.viewport-y / 1px));
-                if (!scroll_timer.running) {
-                    scroll_timer.running = true;
-                } else {
-                    scroll_timer.restart();
-                }
+            //debug("scrolled", (scroller.viewport-x / 1px), (scroller.viewport-y / 1px));
+            if (!scroll_timer.running) {
+                scroll_timer.running = true;
+            } else {
+                scroll_timer.restart();
             }
         }
     }
 
     focus := FocusScope {
         key-pressed(event) => {
-            if (event.text == Key.Space) {
-                root.page-down();
-                return accept;
-            } else if (event.text == Key.PageDown) {
-                root.page-down();
+            if (event.text == Key.Space || event.text == Key.PageDown) {
+                root.offset-y = root.offset-y - root.viewport-height + 16px;
+                root.scroll-changed(root.offset-x, root.offset-y);
                 return accept;
             } else if (event.text == Key.PageUp) {
-                root.page-up();
+                root.offset-y = root.offset-y + root.viewport-height - 16px;
+                root.scroll-changed(root.offset-x, root.offset-y);
                 return accept;
             }
             reject
@@ -112,19 +100,24 @@ export component DocumentView inherits Rectangle {
             if (root.last-visible-width != scroller.visible-width || root.last-visible-height != scroller.visible-height) {
                 root.last-visible-width = scroller.visible-width;
                 root.last-visible-height = scroller.visible-height;
+                //debug("viewport-changed", (root.last-visible-width / 1px), (root.last-visible-height / 1px));
+                root.viewport-width = scroller.visible-width;
                 root.viewport-height = scroller.visible-height;
                 root.viewport-changed(scroller.visible-width, scroller.visible-height);
+                //不加这个,绘制不会刷新
+                scroll-changed(root.offset_x, root.offset_y);
             }
             viewport_timer.restart();
         }
     }
 
+    //不是每滚动一像素都更新,作个节流,如果机器比较强,可以不节流,直接在scrolled上面更新
     scroll_timer := Timer {
-        interval: 75ms;
+        interval: 50ms;
         running: false;
         triggered => {
             //debug("scroll-changed", (root.desired_offset_x / 1px), (root.desired_offset_y / 1px));
-            scroll-changed(root.desired_offset_x, root.desired_offset_y);
+            scroll-changed(root.offset_x, root.offset_y);
             self.running = false;
         }
     }

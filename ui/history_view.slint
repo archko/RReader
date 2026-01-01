@@ -69,7 +69,25 @@ export component HistoryView {
     callback viewport-changed(length, length);
     callback item-clicked(UIRecent);
 
-    ScrollView {
+    property <length> last-width: 0px;
+    property <length> last-height: 0px;
+
+    // 监听根组件大小变化
+    changed width => {
+        if (root.last-width != root.width && root.width > 0px) {
+            root.last-width = root.width;
+            root.viewport-changed(root.width, root.height);
+        }
+    }
+
+    changed height => {
+        if (root.last-height != root.height && root.height > 0px) {
+            root.last-height = root.height;
+            root.viewport-changed(root.width, root.height);
+        }
+    }
+
+    scroller := ScrollView {
         width: root.width;
         height: root.height;
 

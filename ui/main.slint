@@ -30,11 +30,12 @@ export component AppWindow inherits Window {
     in-out property <length> offset-x: 0px;
     in-out property <length> offset-y: 0px;
     in-out property <bool> scroll-events-enabled: true;
-    in property <string> file-path: "/book/sample.pdf";
+    in property <string> file-path: "";
     in property <bool> document-opened: false;
 
     in property <[UIRecent]> history-items: [];
     in property <[HistoryRow]> history-rows: [];
+    in-out property <length> viewport-width: 0px;
     in-out property <length> viewport-height: 0px;
     in-out property <bool> outline-visible: false;
     in property <[OutlineItem]> outline-items: [];
@@ -122,12 +123,10 @@ export component AppWindow inherits Window {
                     total-height: root.total-height;
                     offset-x <=> root.offset-x;
                     offset-y <=> root.offset-y;
-                    enable-scroll-events: root.scroll-events-enabled;
+                    viewport-width <=> root.viewport-width;
                     viewport-height <=> root.viewport-height;
                     viewport-changed(width, height) => { root.viewport-changed(width, height); }
                     scroll-changed(x, y) => { root.scroll-changed(x, y); }
-                    page-down() => { root.page-down(); }
-                    page-up() => { root.page-up(); }
                     page-clicked(x, y, page_index) => { root.page-clicked(x, y, page_index); }
                 }
             }

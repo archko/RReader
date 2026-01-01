@@ -150,7 +150,7 @@ impl HistoryController for DefaultHistoryController {
             let path_obj = std::path::Path::new(&path_str);
 
             if path_obj.exists() {
-                log::info!("Opening document: {}", path_str);
+                log::info!("Opening history document: {}", path_str);
                 if let Some(window) = weak_window.upgrade() {
                     document_controller.borrow().open_document(&window, &path_str);
                 }
