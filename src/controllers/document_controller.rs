@@ -3,6 +3,7 @@ use crate::ui::MainViewmodel;
 use std::cell::RefCell;
 use std::rc::Rc;
 use crate::page::{PageViewState, Orientation};
+use crate::decoder::{PageInfo};
 use crate::decoder::pdf::utils::{convert_to_slint_image, generate_thumbnail_key};
 use crate::tts::TtsService;
 use std::sync::Arc;
@@ -16,12 +17,13 @@ pub struct DocumentController {
     viewmodel: Rc<RefCell<MainViewmodel>>,
     page_view_state: Rc<RefCell<PageViewState>>,
     tts_service: Arc<Mutex<TtsService>>,
+    load_timer: RefCell<Option<Timer>>,
 }
 
 impl DocumentController {
     pub fn new(viewmodel: Rc<RefCell<MainViewmodel>>, tts_service: Arc<Mutex<TtsService>>) -> Self {
         let page_view_state = Rc::new(RefCell::new(PageViewState::new(Orientation::Vertical, 0)));
-        Self { viewmodel, page_view_state, tts_service }
+        Self { viewmodel, page_view_state, tts_service, load_timer: RefCell::new(None) }
     }
 
     /// 初始化UI，将控制器连接到Slint窗口
@@ -107,6 +109,7 @@ impl DocumentController {
                     }
                 }
             });
+        }
 
         // 返回历史回调
         {
@@ -138,7 +141,7 @@ impl DocumentController {
                     set_history_to_ui(&window, ui_history_items);
 
                     // 清空文件路径
-                    window.set_file_path("".into());
+                    window.set_file_path(SharedString::from(""));
                     window.set_document_opened(false);
                 }
 
@@ -240,7 +243,6 @@ impl DocumentController {
                 }
             });
         }
-        }
     }
 
     /// 刷新视图
@@ -288,22 +290,60 @@ impl DocumentController {
         }
     }
 
-    /// 打开文档 - 触发文档加载流程
+    /// 打开文档 - 触发异步文档加载流程
     pub fn open_document(&self, window: &AppWindow, path: &str) {
         info!("Opening document: {}", path);
+
+        if let Some(mut old_timer) = self.load_timer.take() {
+            old_timer.stop();
+        }
+
+        let weak_window = window.as_weak();
+        let path_str = path.to_string();
+        let state = Rc::clone(&self.page_view_state);
+        let viewmodel_clone = Rc::clone(&self.viewmodel);
+
+        let timer_active = Rc::new(RefCell::new(true));
+        let timer_active_clone = Rc::clone(&timer_active);
+        
+        let mut timer = Timer::default();
+        timer.start(TimerMode::Repeated, std::time::Duration::from_millis(100), move || {
+            if !*timer_active_clone.borrow() {
+                return;
+            }
+
+            let result = {
+                let borrowed = state.borrow();
+                borrowed.decode_service.try_recv_load_result()
+            };
+            if let Some(result) = result {
+                *timer_active_clone.borrow_mut() = false;
+                
+                if let Some(window) = weak_window.upgrade() {
+                    Self::handle_document_opened(&window, result, &path_str, Rc::clone(&state), Rc::clone(&viewmodel_clone));
+                }
+            }
+        });
+        
+        self.load_timer.replace(Some(timer));
+
         let open_result = self.page_view_state.borrow_mut().open_document(path);
-        match open_result {
-            Ok(_) => {
+    }
+
+    fn handle_document_opened(window: &AppWindow, result: Result<Vec<PageInfo>, anyhow::Error>, path: &str, page_view_state: Rc<RefCell<PageViewState>>, viewmodel: Rc<RefCell<MainViewmodel>>) {
+        match result {
+            Ok(pages) => {
+                let mut state = page_view_state.borrow_mut();
+                state.set_pages_from_info(pages);
+
                 // 先查询数据库是否存在记录
-                let existing_recent = self.viewmodel.borrow().get_recent_by_path(path).unwrap_or(None);
+                let existing_recent = viewmodel.borrow().get_recent_by_path(path).unwrap_or(None);
 
                 let (zoom, page, scroll_x, scroll_y) = if let Some(ref rec) = existing_recent {
                     (rec.zoom, rec.page, rec.scroll_x, rec.scroll_y)
                 } else {
                     (1.0, 1, 0, 0) // 默认值
                 };
-
-                let mut state = self.page_view_state.borrow_mut();
 
                 window.set_file_path(path.into());
                 window.set_zoom(zoom);
@@ -350,7 +390,7 @@ impl DocumentController {
                         0, // favorited
                         0, // in_recent
                     );
-                    if let Err(e) = self.viewmodel.borrow().add_recent(recent) {
+                    if let Err(e) = viewmodel.borrow().add_recent(recent) {
                         error!("Failed to add recent: {e}");
                     }
                 }
@@ -360,6 +400,8 @@ impl DocumentController {
             }
             Err(err) => {
                 error!("Failed to open PDF: {err}");
+                window.set_error_message("打开文档失败".into());
+                window.set_show_error_dialog(true);
             }
         }
     }

@@ -20,24 +20,27 @@ pub struct PdfDecoder {
 
 impl PdfDecoder {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        info!("[PDF] Opening document: {:?}", path.as_ref());
-        // Windows COM初始化，可能解决字体加载问题
-        #[cfg(windows)]
-        {
-            info!("[DecodeService] 初始化Windows COM环境");
-            // 使用winapi进行COM初始化
-            unsafe {
-                use std::ffi::c_void;
-                extern "system" {
-                    fn CoInitializeEx(pvReserved: *mut c_void, dwCoInit: u32) -> i32;
+        let path_str = path.as_ref().to_string_lossy().to_lowercase();
+        info!("[PDF] Opening document: {:?}", &path_str);
+        if path_str.ends_with(".epub") || path_str.ends_with(".mobi") {
+            // Windows COM初始化，可能解决字体加载问题
+            #[cfg(windows)]
+            {
+                info!("[DecodeService] 初始化Windows COM环境");
+                // 使用winapi进行COM初始化
+                unsafe {
+                    use std::ffi::c_void;
+                    extern "system" {
+                        fn CoInitializeEx(pvReserved: *mut c_void, dwCoInit: u32) -> i32;
+                    }
+                    let result = CoInitializeEx(std::ptr::null_mut(), 0x2); // COINIT_APARTMENTTHREADED
+                    info!("[DecodeService] COM初始化结果: {}", result);
                 }
-                let result = CoInitializeEx(std::ptr::null_mut(), 0x2); // COINIT_APARTMENTTHREADED
-                info!("[DecodeService] COM初始化结果: {}", result);
             }
         }
 
-        let mut document = Document::open(path.as_ref().to_str().unwrap())?;
-        let path_str = path.as_ref().to_string_lossy().to_lowercase();
+        let mut document = Document::open(&path_str)?;
+        info!("[PDF] Document opened");
         if path_str.ends_with(".epub") || path_str.ends_with(".mobi") {
             document.layout(1024.0, 1280.0, 25.0)?;
         }
@@ -54,15 +57,17 @@ impl PdfDecoder {
             pages_info.push(PageInfo::new(i, width, height));
         }
 
-        // Windows COM清理
-        #[cfg(windows)]
-        {
-            info!("[DecodeService] 清理Windows COM环境");
-            unsafe {
-                extern "system" {
-                    fn CoUninitialize();
+        if path_str.ends_with(".epub") || path_str.ends_with(".mobi") {
+            // Windows COM清理
+            #[cfg(windows)]
+            {
+                info!("[DecodeService] 清理Windows COM环境");
+                unsafe {
+                    extern "system" {
+                        fn CoUninitialize();
+                    }
+                    CoUninitialize();
                 }
-                CoUninitialize();
             }
         }
 

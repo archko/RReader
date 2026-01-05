@@ -1,4 +1,4 @@
-import { Button, VerticalBox, HorizontalBox, ScrollView, ListView } from "std-widgets.slint";
+import { Button, VerticalBox, HorizontalBox, ScrollView, ListView, StandardButton } from "std-widgets.slint";
 import { PageData, OutlineItem } from "datatypes/document_datatypes.slint";
 import { UIRecent, HistoryRow } from "datatypes/history_datatypes.slint";
 import { DocumentView } from "document_view.slint";
@@ -39,6 +39,9 @@ export component AppWindow inherits Window {
     in-out property <length> viewport-height: 0px;
     in-out property <bool> outline-visible: false;
     in property <[OutlineItem]> outline-items: [];
+
+    in-out property <string> error-message: "";
+    in-out property <bool> show-error-dialog: false;
 
     callback open-file();
     callback page-changed(int);
@@ -134,4 +137,27 @@ export component AppWindow inherits Window {
     }
 
     if BusyLayerController.is-busy: BusyLayer {}
+
+    if root.show-error-dialog: 
+        Dialog {
+            title: "打开文档错误";
+            preferred-width: 300px;
+            preferred-height: 300px;
+            Text {
+                text: root.error-message;
+                color: AppColors.accent;
+                font-weight: 500;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                font-size: 14px;
+            }
+
+            StandardButton {
+                kind: yes;
+                clicked => {
+                    root.show-error-dialog = false;
+                    root.error-message = "";
+                }
+            }
+        }
 }

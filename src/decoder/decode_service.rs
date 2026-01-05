@@ -64,7 +64,6 @@ pub enum DecodeTask {
     /// 加载文档
     LoadDocument {
         path: PathBuf,
-        response_tx: Sender<Result<Vec<PageInfo>>>,
     },
     /// 批量渲染页面
     RenderPages {
@@ -109,6 +108,8 @@ pub enum Priority {
 pub struct DecodeService {
     task_sender: Sender<DecodeTask>,
     result_receiver: Mutex<Receiver<DecodeResult>>,
+    load_result_sender: Sender<Result<Vec<PageInfo>>>,
+    load_result_receiver: Mutex<Receiver<Result<Vec<PageInfo>>>>,
     decode_thread: Option<JoinHandle<()>>,
 }
 
@@ -155,21 +156,25 @@ impl DecodeService {
     pub fn new() -> Self {
         let (task_tx, task_rx) = unbounded::<DecodeTask>();
         let (result_tx, result_rx) = unbounded::<DecodeResult>();
+        let (load_result_tx, load_result_rx) = unbounded::<Result<Vec<PageInfo>>>();
 
         // 启动解码线程
+        let load_result_tx_for_thread = load_result_tx.clone();
         let decode_thread = thread::spawn(move || {
-            Self::decode_loop(task_rx, result_tx);
+            Self::decode_loop(task_rx, result_tx, load_result_tx_for_thread);
         });
 
         Self {
             task_sender: task_tx,
             result_receiver: Mutex::new(result_rx),
+            load_result_sender: load_result_tx,
+            load_result_receiver: Mutex::new(load_result_rx),
             decode_thread: Some(decode_thread),
         }
     }
 
     /// 解码线程主循环
-    fn decode_loop(task_rx: Receiver<DecodeTask>, result_tx: Sender<DecodeResult>) {
+    fn decode_loop(task_rx: Receiver<DecodeTask>, result_tx: Sender<DecodeResult>, load_result_tx: Sender<Result<Vec<PageInfo>>>) {
         let mut decoder: Option<Box<dyn Decoder>> = None;
         let mut task_queue: VecDeque<RenderPage> = VecDeque::new();
         let mut current_visible: HashSet<RenderPage> = HashSet::new();
@@ -182,6 +187,7 @@ impl DecodeService {
                     &mut decoder,
                     &mut task_queue,
                     &mut current_visible,
+                    &load_result_tx,
                 ) {
                     // 收到 Shutdown 信号
                     return;
@@ -253,6 +259,7 @@ impl DecodeService {
                         &mut decoder,
                         &mut task_queue,
                         &mut current_visible,
+                        &load_result_tx,
                     ) {
                         // 收到 Shutdown 信号
                         break;
@@ -272,9 +279,10 @@ impl DecodeService {
         decoder: &mut Option<Box<dyn Decoder>>,
         task_queue: &mut VecDeque<RenderPage>,
         current_visible: &mut HashSet<RenderPage>,
+        load_result_tx: &Sender<Result<Vec<PageInfo>>>,
     ) -> bool {
         match task {
-            DecodeTask::LoadDocument { path, response_tx } => {
+            DecodeTask::LoadDocument { path } => {
                 info!("[DecodeService] Loading document: {:?}", path);
                 match PdfDecoder::open(&path) {
                     Ok(pdf_decoder) => {
@@ -291,7 +299,7 @@ impl DecodeService {
                         } else {
                             None
                         };
-                        let _ = response_tx.send(pages_result);
+                        let _ = load_result_tx.send(pages_result);
                         if let Some(fp) = first_page {
                             if let Some(ref dec) = decoder {
                                 Self::save_cover_thumbnail(&path, dec, &fp);
@@ -300,7 +308,7 @@ impl DecodeService {
                     }
                     Err(e) => {
                         info!("[DecodeService] PdfDecoder::open 失败: {}", e);
-                        let _ = response_tx.send(Err(e));
+                        let _ = load_result_tx.send(Err(e));
                     }
                 }
                 false
@@ -361,30 +369,13 @@ impl DecodeService {
         }
     }
 
-    /// 加载PDF文档（同步等待）
-    pub fn load_pdf<P: AsRef<Path>>(&self, path: P) -> Result<Vec<PageInfo>> {
-        let (response_tx, response_rx) = unbounded();
+    /// 加载PDF文档（异步）
+    pub fn load_pdf<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         self.task_sender
             .send(DecodeTask::LoadDocument {
                 path: path.as_ref().to_path_buf(),
-                response_tx,
             })
-            .map_err(|e| anyhow::anyhow!("Failed to send load task: {}", e))?;
-
-        match response_rx.recv_timeout(Duration::from_secs(20)) {
-            Ok(result) => {
-                info!("[DecodeService] 收到响应");
-                result
-            }
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                info!("[DecodeService] 等待超时！");
-                Err(anyhow::anyhow!("Load timeout"))
-            }
-            Err(e) => {
-                info!("[DecodeService] 接收错误: {}", e);
-                Err(anyhow::anyhow!("Failed to receive load response: {}", e))
-            }
-        }
+            .map_err(|e| anyhow::anyhow!("Failed to send load task: {}", e))
     }
 
     /// 获取大纲（同步等待）
@@ -436,6 +427,12 @@ impl DecodeService {
     /// 尝试接收解码结果（非阻塞）
     pub fn try_recv_result(&self) -> Option<DecodeResult> {
         self.result_receiver.lock().unwrap().try_recv().ok()
+    }
+
+    /// 尝试接收加载结果（非阻塞）
+    pub fn try_recv_load_result(&self) -> Option<Result<Vec<PageInfo>>> {
+        //info!("[DecodeService] try_recv_load_result");
+        self.load_result_receiver.lock().unwrap().try_recv().ok()
     }
 
     /// 关闭服务

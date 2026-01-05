@@ -94,19 +94,18 @@ impl PageViewState {
     /// 打开文档
     pub fn open_document<P: AsRef<Path>>(&mut self, path: P) -> anyhow::Result<()> {
         Self::reset(self);
-        
-        // 加载文档并获取页面信息
-        let pages_info = self.decode_service.load_pdf(path)?;
+        self.decode_service.load_pdf(path)?;
+        Ok(())
+    }
+
+    pub fn set_pages_from_info(&mut self, pages_info: Vec<crate::decoder::PageInfo>) {
         let pages: Vec<Page> = pages_info
             .into_iter()
-            .map(|info: crate::decoder::PageInfo| Page::new(info, 0.0, 0.0, 0.0, 0.0))
+            .map(|info| Page::new(info, 0.0, 0.0, 0.0, 0.0))
             .collect();
         self.pages = pages;
 
-        // 加载outline
-        self.outline_items = self.decode_service.get_outline()?;
-        
-        Ok(())
+        self.outline_items = self.decode_service.get_outline().unwrap_or_default();
     }
 
     pub fn reset(&mut self) {
