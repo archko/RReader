@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crossbeam_channel::{unbounded, Sender, Receiver};
 use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
-use std::time::Instant;
+use std::time::{ Instant, Duration};
 use std::hash::{Hash, Hasher};
 use std::collections::{hash_map::DefaultHasher, VecDeque, HashSet};
 use std::fs;
@@ -278,6 +278,7 @@ impl DecodeService {
                 info!("[DecodeService] Loading document: {:?}", path);
                 match PdfDecoder::open(&path) {
                     Ok(pdf_decoder) => {
+                        info!("[DecodeService] PdfDecoder::open 成功");
                         let boxed_decoder = Box::new(pdf_decoder);
                         let pages_result = boxed_decoder.get_all_pages();
                         *decoder = Some(boxed_decoder);
@@ -298,6 +299,7 @@ impl DecodeService {
                         }
                     }
                     Err(e) => {
+                        info!("[DecodeService] PdfDecoder::open 失败: {}", e);
                         let _ = response_tx.send(Err(e));
                     }
                 }
@@ -369,9 +371,21 @@ impl DecodeService {
             })
             .map_err(|e| anyhow::anyhow!("Failed to send load task: {}", e))?;
 
-        response_rx
-            .recv()
-            .map_err(|e| anyhow::anyhow!("Failed to receive load response: {}", e))?
+        info!("[DecodeService] 任务发送成功，开始等待响应");
+        match response_rx.recv_timeout(Duration::from_secs(20)) {
+            Ok(result) => {
+                info!("[DecodeService] 收到响应");
+                result
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                info!("[DecodeService] 等待超时！");
+                Err(anyhow::anyhow!("Load timeout"))
+            }
+            Err(e) => {
+                info!("[DecodeService] 接收错误: {}", e);
+                Err(anyhow::anyhow!("Failed to receive load response: {}", e))
+            }
+        }
     }
 
     /// 获取大纲（同步等待）
