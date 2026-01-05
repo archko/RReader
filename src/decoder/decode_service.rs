@@ -371,7 +371,6 @@ impl DecodeService {
             })
             .map_err(|e| anyhow::anyhow!("Failed to send load task: {}", e))?;
 
-        info!("[DecodeService] 任务发送成功，开始等待响应");
         match response_rx.recv_timeout(Duration::from_secs(20)) {
             Ok(result) => {
                 info!("[DecodeService] 收到响应");
