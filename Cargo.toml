@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
-mupdf = { path = "mupdf-rs", features = ["system-fonts", "all-fonts"] } #{ version = "0.6.0" }  # PDF文档处理和渲染引擎
+mupdf = { path = "mupdf-rs", features = ["system-fonts"] } #{ version = "0.6.0" }  # PDF文档处理和渲染引擎
 slint = "1.14.1"                                         # 现代UI框架，用于构建桌面应用界面
 tokio = { version = "1.48.0", features = ["full"] }      # 异步运行时，支持并发操作
 serde = { version = "1.0.228", features = ["derive"] } # 序列化/反序列化框架

@@ -4,7 +4,7 @@ use crate::entity::{ReflowEntry, ReflowData};
 use anyhow::Result;
 use image::DynamicImage;
 use log::{info, debug};
-use mupdf::{Colorspace, Device, Document, Matrix, Pixmap};
+use mupdf::{Colorspace, Context, Device, Document, Matrix, Pixmap};
 use regex::Regex;
 use std::cell::RefCell;
 use std::fs;
@@ -19,30 +19,63 @@ pub struct PdfDecoder {
 }
 
 impl PdfDecoder {
+    fn get_def_font_size() -> f32 {
+        25.0
+    }
+
+    fn generate_font_css(font_path: Option<&str>, margin: &str) -> String {
+        let mut buffer = String::new();
+
+        // 忽略mupdf的边距
+        buffer.push_str(&format!("    @page {{ margin:{} {} !important; }}\n", margin, margin));
+        buffer.push_str("    p { margin: 20px !important; padding: 0 !important; }\n");
+        buffer.push_str("    blockquote { margin: 0 !important; padding: 0 !important; }\n");
+
+        // 强制所有元素的边距和内边距，并删除字体
+        buffer.push_str("* {\n");
+        buffer.push_str("    margin: 0 !important;\n");
+        buffer.push_str("    padding: 0 !important;\n");
+        buffer.push_str("    line-height: 1.5 !important;\n");
+        buffer.push_str("    font-family: none !important;\n");
+        buffer.push_str("    font-size: inherit !important;\n");
+        buffer.push_str("    font-weight: normal !important;\n");
+        buffer.push_str("    font-style: normal !important;\n");
+        buffer.push_str("}\n");
+
+        // 针对常见选择器强制删除字体
+        buffer.push_str("body, p, div, span, h1, h2, h3, h4, h5, h6 {\n");
+        buffer.push_str("    font-family: unset !important;\n");
+        buffer.push_str("}\n");
+
+        // 针对EPUB常见类强制删除字体
+        buffer.push_str(".calibre, .calibre1, .calibre2, .calibre3, .calibre4, .calibre5, contents, contents1, contents2, center1, center2 {\n");
+        buffer.push_str("    font-family: unset !important;\n");
+        buffer.push_str("}\n");
+
+        buffer
+    }
+
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_str = path.as_ref().to_string_lossy().to_lowercase();
         info!("[PDF] Opening document: {:?}", &path_str);
-        if path_str.ends_with(".epub") || path_str.ends_with(".mobi") {
-            // Windows COM初始化，可能解决字体加载问题
-            #[cfg(windows)]
-            {
-                info!("[DecodeService] 初始化Windows COM环境");
-                // 使用winapi进行COM初始化
-                unsafe {
-                    use std::ffi::c_void;
-                    extern "system" {
-                        fn CoInitializeEx(pvReserved: *mut c_void, dwCoInit: u32) -> i32;
-                    }
-                    let result = CoInitializeEx(std::ptr::null_mut(), 0x2); // COINIT_APARTMENTTHREADED
-                    info!("[DecodeService] COM初始化结果: {}", result);
-                }
-            }
-        }
-
+        
         let mut document = Document::open(&path_str)?;
         info!("[PDF] Document opened");
         if path_str.ends_with(".epub") || path_str.ends_with(".mobi") {
-            document.layout(1024.0, 1280.0, 25.0)?;
+            let css = Self::generate_font_css(None, "20px");
+            info!("应用自定义CSS: {}", css);
+
+            let mut ctx = mupdf::Context::get();
+            ctx.set_use_document_css(false);  // 禁用文档CSS，只使用用户CSS
+            ctx.set_user_css(&css)?;
+
+            let font_size = Self::get_def_font_size();
+            let fs = font_size as f32;
+            let w = 1024.0;
+            let h = 1280.0;
+            info!("layout.width:{}, height:{}, font:{}->{}, open:{:?}", w, h, font_size, fs, path.as_ref());
+
+            document.layout(w, h, fs)?;
         }
         let page_count = document.page_count()? as usize;
         info!("[PDF] Document opened with {} pages", page_count);
@@ -55,20 +88,6 @@ impl PdfDecoder {
             let width = bounds.x1 - bounds.x0;
             let height = bounds.y1 - bounds.y0;
             pages_info.push(PageInfo::new(i, width, height));
-        }
-
-        if path_str.ends_with(".epub") || path_str.ends_with(".mobi") {
-            // Windows COM清理
-            #[cfg(windows)]
-            {
-                info!("[DecodeService] 清理Windows COM环境");
-                unsafe {
-                    extern "system" {
-                        fn CoUninitialize();
-                    }
-                    CoUninitialize();
-                }
-            }
         }
 
         Ok(Self {
