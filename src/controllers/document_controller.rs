@@ -84,7 +84,27 @@ impl DocumentController {
             window.on_zoom_changed(move |zoom| {
                 if let Some(window) = weak_window.upgrade() {
                     let mut state = page_view_state.borrow_mut();
+                    
+                    // 获取当前页面，缩放后保持在同一页面
+                    let current_page = state.get_first_visible_page();
+                    
                     state.update_zoom(zoom as f32);
+                    
+                    // 更新总尺寸
+                    window.set_total_width(state.total_width);
+                    window.set_total_height(state.total_height);
+                    
+                    // 如果有当前页面，跳转回该页面并同步偏移量
+                    if let Some(page) = current_page {
+                        if let Some((new_x, new_y)) = state.jump_to_page(page) {
+                            // 同步更新 UI 偏移量，但临时禁用滚动事件
+                            window.set_scroll_events_enabled(false);
+                            window.set_offset_x(new_x);
+                            window.set_offset_y(new_y);
+                            window.set_scroll_events_enabled(true);
+                        }
+                    }
+                    
                     state.update_visible_pages();
                     Self::refresh_view(&window, &state);
                 }
@@ -97,7 +117,7 @@ impl DocumentController {
             let weak_window = window.as_weak();
             window.on_scroll_changed(move |x, y| {
                 if let Some(window) = weak_window.upgrade() {
-                    info!("on_scroll_changed");
+                    debug!("on_scroll_changed");
                     let mut state = page_view_state.borrow_mut();
                     state.update_offset(x as f32, y as f32);
                     state.update_visible_pages();
@@ -173,29 +193,37 @@ impl DocumentController {
             window.on_page_clicked(move |x, y, page_index| {
                 debug!("on_page_clicked: x={}, y={}, page_index={}", x, y, page_index);
 
-                let state = page_view_state.borrow();
-                let jump_to_page = if let Some(link) = state.handle_click(page_index as usize, x as f32, y as f32) {
-                    info!("Clicked link: uri={:?}, page={:?}", link.uri, link.page);
-                    // 处理链接类型
-                    if let Some(uri) = &link.uri {
-                        debug!("URI link clicked: {}", uri);
-                        None
-                    } else if let Some(page) = link.page {
-                        debug!("Page link clicked: {}", page);
-                        Self::parse_page_from_param(&page)
+                // 先处理链接，获取跳转页面
+                let jump_to_page = {
+                    let state = page_view_state.borrow();
+                    if let Some(link) = state.handle_click(page_index as usize, x as f32, y as f32) {
+                        info!("Clicked link: uri={:?}, page={:?}", link.uri, link.page);
+                        // 处理链接类型
+                        if let Some(uri) = &link.uri {
+                            debug!("URI link clicked: {}", uri);
+                            None
+                        } else if let Some(page) = link.page {
+                            debug!("Page link clicked: {}", page);
+                            Self::parse_page_from_param(&page)
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
-                } else {
-                    None
                 };
 
                 if let Some(page_num) = jump_to_page {
                     if let Some(window) = weak_window.upgrade() {
-                        let mut borrowed_state = page_view_state.borrow_mut();
-                        if borrowed_state.jump_to_page(page_num).is_some() {
-                            borrowed_state.update_visible_pages();
-                            Self::refresh_view(&window, &borrowed_state);
+                        let mut state = page_view_state.borrow_mut();
+                        if state.jump_to_page(page_num).is_some() {
+                            state.update_visible_pages();
+                            Self::refresh_view(&window, &state);
+                            
+                            window.set_scroll_events_enabled(false);
+                            window.set_offset_x(state.view_offset.0);
+                            window.set_offset_y(state.view_offset.1);
+                            window.set_scroll_events_enabled(true);
                         }
                     }
                 }
@@ -430,10 +458,15 @@ impl DocumentController {
 
     fn parse_page_from_param(page_param: &str) -> Option<usize> {
         if page_param.starts_with("#page=") {
-            let start = "#page=".len();
-            let end = page_param[start..].find('&').map(|pos| pos + start).unwrap_or(page_param.len());
-            let num_str = &page_param[start..end];
-            num_str.parse::<usize>().ok()
+            // 以 '&' 为分割符，得到第一个元素
+            let first_part = page_param.split('&').next()?;
+            // 以 '=' 为分割符，得到第二个元素（数字部分）
+            let parts: Vec<&str> = first_part.split('=').collect();
+            if parts.len() == 2 {
+                parts[1].parse::<usize>().ok()
+            } else {
+                None
+            }
         } else {
             None
         }
