@@ -128,6 +128,7 @@ export component AppWindow inherits Window {
                     offset-y <=> root.offset-y;
                     viewport-width <=> root.viewport-width;
                     viewport-height <=> root.viewport-height;
+                    enable-scroll-events <=> root.scroll-events-enabled;
                     viewport-changed(width, height) => { root.viewport-changed(width, height); }
                     scroll-changed(x, y) => { root.scroll-changed(x, y); }
                     page-clicked(x, y, page_index) => { root.page-clicked(x, y, page_index); }

@@ -9,6 +9,7 @@ export component DocumentView inherits Rectangle {
     in-out property <length> offset-y: 0px;
     in-out property <length> viewport-width: 0px;
     in-out property <length> viewport-height: 0px;
+    in property <bool> enable-scroll-events: true;
 
     callback viewport-changed(length, length);
     callback scroll-changed(length, length);
@@ -69,11 +70,13 @@ export component DocumentView inherits Rectangle {
         }
 
         scrolled => {
-            //debug("scrolled", (scroller.viewport-x / 1px), (scroller.viewport-y / 1px));
-            if (!scroll_timer.running) {
-                scroll_timer.running = true;
-            } else {
-                scroll_timer.restart();
+            if (root.enable-scroll-events) {
+                //debug("scrolled", (scroller.viewport-x / 1px), (scroller.viewport-y / 1px));
+                if (!scroll_timer.running) {
+                    scroll_timer.running = true;
+                } else {
+                    scroll_timer.restart();
+                }
             }
         }
     }
@@ -124,8 +127,10 @@ export component DocumentView inherits Rectangle {
         interval: 50ms;
         running: false;
         triggered => {
-            //debug("scroll-changed", (root.offset_x / 1px), (root.offset_y / 1px));
-            scroll-changed(root.offset_x, root.offset_y);
+            if (root.enable-scroll-events) {
+                //debug("scroll-changed", (root.offset_x / 1px), (root.offset_y / 1px));
+                scroll-changed(root.offset_x, root.offset_y);
+            }
             self.running = false;
         }
     }

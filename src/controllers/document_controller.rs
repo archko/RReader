@@ -51,14 +51,22 @@ impl DocumentController {
                     }
                 }
                 {
-                    debug!("current_page: width={}", current_page.unwrap_or_default());
+                    info!("current_page: width={}", current_page.unwrap_or_default());
                     let mut state = page_view_state.borrow_mut();
                     let zoom = state.zoom;
                     state.update_view_size(width as f32, height as f32, zoom, false);
 
                     // 如果当前页面不再可见，则跳转到该页面，大纲显示与隐藏会触发布局变化
                     if let Some(page) = current_page {
-                        state.jump_to_page(page);
+                        if let Some((new_x, new_y)) = state.jump_to_page(page) {
+                            // 同步更新 UI 偏移量，但临时禁用滚动事件
+                            if let Some(window) = weak_window.upgrade() {
+                                window.set_scroll_events_enabled(false);
+                                window.set_offset_x(new_x);
+                                window.set_offset_y(new_y);
+                                window.set_scroll_events_enabled(true);
+                            }
+                        }
                     }
                     state.update_visible_pages();
 
@@ -253,10 +261,10 @@ impl DocumentController {
                 let key = crate::decoder::pdf::utils::generate_thumbnail_key(page);
                 let image = {
                     if let Some(cached_image) = state.cache.get_thumbnail(&key) {
-                        debug!("从缓存获取图像: key={}, page={}", key, page.info.index);
+                        //debug!("从缓存获取图像: key={}, page={}", key, page.info.index);
                         cached_image.as_ref().clone()
                     } else {
-                        debug!("缓存中没有图像，显示页码: key={}, page={}", key, page.info.index);
+                        //debug!("缓存中没有图像，显示页码: key={}, page={}", key, page.info.index);
                         slint::Image::default()
                     }
                 };
@@ -393,6 +401,8 @@ impl DocumentController {
                 error!("Failed to open PDF: {err}");
                 window.set_error_message("打开文档失败".into());
                 window.set_show_error_dialog(true);
+                let mut borrowed_state = page_view_state.borrow_mut();
+                borrowed_state.shutdown();
             }
         }
     }
