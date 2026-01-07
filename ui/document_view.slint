@@ -81,11 +81,19 @@ export component DocumentView inherits Rectangle {
     focus := FocusScope {
         key-pressed(event) => {
             if (event.text == Key.Space || event.text == Key.PageDown) {
-                root.offset-y = root.offset-y - root.viewport-height + 16px;
+                root.offset-y = root.offset-y - (root.viewport-height - 48px) + 24px;
                 root.scroll-changed(root.offset-x, root.offset-y);
                 return accept;
             } else if (event.text == Key.PageUp) {
-                root.offset-y = root.offset-y + root.viewport-height - 16px;
+                root.offset-y = root.offset-y + (root.viewport-height - 48px) - 24px;
+                root.scroll-changed(root.offset-x, root.offset-y);
+                return accept;
+            } else if (event.text == Key.Home) {
+                root.offset-y = 0px;
+                root.scroll-changed(root.offset-x, root.offset-y);
+                return accept;
+            } else if (event.text == Key.End) {
+                root.offset-y = max(0px, root.total-height - root.viewport-height);
                 root.scroll-changed(root.offset-x, root.offset-y);
                 return accept;
             }
