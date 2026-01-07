@@ -20,7 +20,7 @@ pub struct PdfDecoder {
 
 impl PdfDecoder {
     fn get_def_font_size() -> f32 {
-        25.0
+        24.0
     }
 
     fn generate_font_css(font_path: Option<&str>, margin: &str) -> String {
@@ -68,6 +68,7 @@ impl PdfDecoder {
             let mut ctx = mupdf::Context::get();
             ctx.set_use_document_css(false);  // 禁用文档CSS，只使用用户CSS
             ctx.set_user_css(&css)?;
+            ctx.disable_icc();
 
             let font_size = Self::get_def_font_size();
             let fs = font_size as f32;
