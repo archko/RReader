@@ -71,6 +71,8 @@ impl DocumentController {
                     state.update_visible_pages();
 
                     if let Some(window) = weak_window.upgrade() {
+                        window.set_total_width(state.total_width);
+                        window.set_total_height(state.total_height);
                         Self::refresh_view(&window, &state);
                     }
                 }
