@@ -109,7 +109,7 @@ impl PageViewState {
     }
 
     pub fn reset(&mut self) {
-        info!("[PageViewState] reset");
+        info!("reset");
         self.pages.clear();
         self.total_width = 0.0;
         self.total_height = 0.0;
@@ -126,7 +126,7 @@ impl PageViewState {
 
         if !size_changed && !zoom_changed && !force {
             info!(
-                "[PageViewState] don't update_view_size. w-h:{:?}-{:?}, zoom:{:?}",
+                "don't update_view_size. w-h:{:?}-{:?}, zoom:{:?}",
                 width, height, zoom
             );
             return;
@@ -135,7 +135,7 @@ impl PageViewState {
         self.view_size = (width, height);
         self.zoom = zoom;
         info!(
-            "[PageViewState] update_view_size. w-h:{:?}-{:?}, zoom:{:?}, view:{:?}-{:?}",
+            "update_view_size. w-h:{:?}-{:?}, zoom:{:?}, view:{:?}-{:?}",
             width, height, zoom, self.view_size.0, self.view_size.1
         );
 
@@ -186,7 +186,7 @@ impl PageViewState {
         }
 
         debug!(
-            "[PageViewState] layout_vertical.end:total_width:{:?}-total_height:{:?}",
+            "layout_vertical.end:total_width:{:?}-total_height:{:?}",
             scaled_width, current_y
         );
         self.total_width = scaled_width;
@@ -264,7 +264,7 @@ impl PageViewState {
         let first = self.find_first_visible(&visible_rect);
         let last = self.find_last_visible(&visible_rect);
 
-        debug!("[PageViewState] update_visible_pages: first={}, last={}, total_pages={}", 
+        debug!("update_visible_pages: first={}, last={}, total_pages={}", 
             first, last, self.pages.len());
 
         let mut render_pages = Vec::new();
@@ -305,7 +305,7 @@ impl PageViewState {
                 if page.width > 0.0 && page.height > 0.0 {
                     // 先检查缓存中是否已有该页面
                     if self.cache.get_thumbnail(&key).is_none() {
-                        debug!("[PageViewState] 需要解码: page={}, key={}", page.info.index, key);
+                        debug!("需要解码: page={}, key={}", page.info.index, key);
                         
                         render_pages.push(RenderPage {
                             key,
@@ -315,17 +315,17 @@ impl PageViewState {
                             visibility_checker: Some(Arc::clone(&visibility_checker)),
                         });
                     } else {
-                        debug!("[PageViewState] 页面已在缓存中: page={}, key={}", page.info.index, key);
+                        debug!("页面已在缓存中: page={}, key={}", page.info.index, key);
                     }
                 }
             }
         }
         
-        info!("[PageViewState] update_visible_pages完成: visible_pages={:?}", self.visible_pages);
+        info!("update_visible_pages完成: visible_pages={:?}", self.visible_pages);
 
         // 批量提交解码任务
         if !render_pages.is_empty() {
-            debug!("[PageViewState] 批量提交 {} 个解码任务:", render_pages.len());
+            debug!("批量提交 {} 个解码任务:", render_pages.len());
             self.decode_service.render_pages(render_pages);
         }
     }
@@ -422,7 +422,7 @@ impl PageViewState {
                     let scaled_right = link.bounds.right * scale;
                     let scaled_top = link.bounds.top * scale;
                     let scaled_bottom = link.bounds.bottom * scale;
-                    info!("[PageViewState] link check: click_x={}, click_y={}, link=({}, {}, {}, {}) scaled to ({}, {}, {}, {})",
+                    debug!("link check: click_x={}, click_y={}, link=({}, {}, {}, {}) scaled to ({}, {}, {}, {})",
                                    doc_x, doc_y, link.bounds.left, link.bounds.top, link.bounds.right, link.bounds.bottom,
                                    scaled_left, scaled_top, scaled_right, scaled_bottom);
                     if doc_x >= scaled_left
@@ -436,7 +436,7 @@ impl PageViewState {
             }
         } else {
             info!(
-                "[PageViewState] handle_click no links cached for page_index:{}",
+                "handle_click no links cached for page_index:{}",
                 index
             );
         }
@@ -472,7 +472,7 @@ impl PageViewState {
 
     /// 回收资源
     pub fn shutdown(&mut self) {
-        info!("[PageViewState] shutdown");
+        info!("shutdown");
 
         for page in &mut self.pages {
             page.recycle();

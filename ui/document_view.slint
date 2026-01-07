@@ -81,11 +81,11 @@ export component DocumentView inherits Rectangle {
     focus := FocusScope {
         key-pressed(event) => {
             if (event.text == Key.Space || event.text == Key.PageDown) {
-                root.offset-y = root.offset-y - (root.viewport-height - 48px) + 24px;
+                root.offset-y = root.offset-y - (root.viewport-height - 48px) + 28px;
                 root.scroll-changed(root.offset-x, root.offset-y);
                 return accept;
             } else if (event.text == Key.PageUp) {
-                root.offset-y = root.offset-y + (root.viewport-height - 48px) - 24px;
+                root.offset-y = root.offset-y + (root.viewport-height - 48px) - 28px;
                 root.scroll-changed(root.offset-x, root.offset-y);
                 return accept;
             } else if (event.text == Key.Home) {
@@ -93,7 +93,7 @@ export component DocumentView inherits Rectangle {
                 root.scroll-changed(root.offset-x, root.offset-y);
                 return accept;
             } else if (event.text == Key.End) {
-                root.offset-y = max(0px, root.total-height - root.viewport-height);
+                root.offset-y = - root.viewport-height;
                 root.scroll-changed(root.offset-x, root.offset-y);
                 return accept;
             }
@@ -124,7 +124,7 @@ export component DocumentView inherits Rectangle {
         interval: 50ms;
         running: false;
         triggered => {
-            //debug("scroll-changed", (root.desired_offset_x / 1px), (root.desired_offset_y / 1px));
+            //debug("scroll-changed", (root.offset_x / 1px), (root.offset_y / 1px));
             scroll-changed(root.offset_x, root.offset_y);
             self.running = false;
         }

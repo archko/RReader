@@ -16,10 +16,10 @@ pub struct TiffDecoder {
 
 impl TiffDecoder {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        info!("[PDF] Opening document: {:?}", path.as_ref());
+        info!("Opening document: {:?}", path.as_ref());
         let document = Document::open(path.as_ref().to_str().unwrap())?;
         let page_count = document.page_count()? as usize;
-        info!("[PDF] Document opened with {} pages", page_count);
+        info!("Document opened with {} pages", page_count);
 
         // 预加载所有页面尺寸
         let mut pages_info = Vec::with_capacity(page_count);
@@ -57,7 +57,7 @@ impl Decoder for TiffDecoder {
     }
 
     fn render_page(&self, page: &PageInfo, crop: bool) -> Result<(Vec<u8>, u32, u32)> {
-        info!("[PDF] Rendering page {} with crop={}", page.index, crop);
+        info!("Rendering page {} with crop={}", page.index, crop);
         let document = self.document.borrow();
         let mupdf_page = document.load_page(page.index as i32)?;
 

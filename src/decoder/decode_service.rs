@@ -122,7 +122,7 @@ impl DecodeService {
             let cache_dir = data_dir.join("RReader").join("images");
             let cache_path = cache_dir.join(format!("{}.png", hash));
             if cache_path.exists() {
-                info!("[DecodeService] Cover thumbnail already exists: {:?}", cache_path);
+                info!("Cover thumbnail already exists: {:?}", cache_path);
                 return;
             }
             // 计算缩放到最大 300 像素的 scale
@@ -141,11 +141,11 @@ impl DecodeService {
                     let image = image::DynamicImage::ImageRgba8(rgba_img);
                     if fs::create_dir_all(&cache_dir).is_ok()
                         && image.save(&cache_path).is_ok() {
-                        info!("[DecodeService] Saved thumbnail to {:?}", cache_path);
+                        info!("Saved thumbnail to {:?}", cache_path);
                     }
                 }
                 Err(e) => {
-                    info!("[DecodeService] Failed to render cover: {}", e);
+                    info!("Failed to render cover: {}", e);
                 }
             }
         }
@@ -205,7 +205,7 @@ impl DecodeService {
                 };
 
                 if !is_visible {
-                    info!("[DecodeService] 跳过不可见页: page={}, key={}", 
+                    info!("跳过不可见页: page={}, key={}", 
                         render_page.page_info.index, render_page.key);
                     // 继续处理下一个任务
                     continue;
@@ -223,7 +223,7 @@ impl DecodeService {
 
                             let duration = start_time.elapsed();
                             info!(
-                                "[DecodeService] 页面 {} 解码完成，耗时: {:?}, links: {}",
+                                "页面 {} 解码完成，耗时: {:?}, links: {}",
                                 render_page.page_info.index, duration, links.len()
                             );
 
@@ -237,12 +237,12 @@ impl DecodeService {
                             };
 
                             if result_tx.send(result).is_err() {
-                                info!("[DecodeService] Result channel closed");
+                                info!("Result channel closed");
                                 return;
                             }
                         }
                         Err(e) => {
-                            info!("[DecodeService] 页面 {} 解码失败: {}", render_page.page_info.index, e);
+                            info!("页面 {} 解码失败: {}", render_page.page_info.index, e);
                         }
                     }
                 }
@@ -266,7 +266,7 @@ impl DecodeService {
                     }
                 }
                 Err(_) => {
-                    info!("[DecodeService] Task channel closed");
+                    info!("Task channel closed");
                     break;
                 }
             }
@@ -283,10 +283,10 @@ impl DecodeService {
     ) -> bool {
         match task {
             DecodeTask::LoadDocument { path } => {
-                info!("[DecodeService] Loading document: {:?}", path);
+                info!("Loading document: {:?}", path);
                 match PdfDecoder::open(&path) {
                     Ok(pdf_decoder) => {
-                        info!("[DecodeService] PdfDecoder::open 成功");
+                        info!("PdfDecoder::open 成功");
                         let boxed_decoder = Box::new(pdf_decoder);
                         let pages_result = boxed_decoder.get_all_pages();
                         *decoder = Some(boxed_decoder);
@@ -307,14 +307,14 @@ impl DecodeService {
                         }
                     }
                     Err(e) => {
-                        info!("[DecodeService] PdfDecoder::open 失败: {}", e);
+                        info!("PdfDecoder::open 失败: {}", e);
                         let _ = load_result_tx.send(Err(e));
                     }
                 }
                 false
             }
             DecodeTask::RenderPages { pages } => {
-                debug!("[DecodeService] 收到批量渲染任务: {} 页", pages.len());
+                debug!("收到批量渲染任务: {} 页", pages.len());
                 
                 // 1. 更新当前可见页集合（用于后续验证）
                 current_visible.clear();
@@ -324,14 +324,14 @@ impl DecodeService {
                 for page in pages {
                     let already_queued = task_queue.iter().any(|p| p.key == page.key);
                     if !already_queued {
-                        debug!("[DecodeService] 加入队列: page={}, key={}", page.page_info.index, page.key);
+                        debug!("加入队列: page={}, key={}", page.page_info.index, page.key);
                         task_queue.push_back(page);
                     } else {
-                        info!("[DecodeService] 跳过重复任务: page={}, key={}", page.page_info.index, page.key);
+                        info!("跳过重复任务: page={}, key={}", page.page_info.index, page.key);
                     }
                 }
                 
-                info!("[DecodeService] 当前队列长度: {}, 可见页数: {}", 
+                info!("当前队列长度: {}, 可见页数: {}", 
                     task_queue.len(), current_visible.len());
                 false
             }
@@ -363,7 +363,7 @@ impl DecodeService {
                 false
             }
             DecodeTask::Shutdown => {
-                info!("[DecodeService] Shutting down decode thread");
+                info!("Shutting down decode thread");
                 true
             }
         }
@@ -431,13 +431,13 @@ impl DecodeService {
 
     /// 尝试接收加载结果（非阻塞）
     pub fn try_recv_load_result(&self) -> Option<Result<Vec<PageInfo>>> {
-        //info!("[DecodeService] try_recv_load_result");
+        //info!("try_recv_load_result");
         self.load_result_receiver.lock().unwrap().try_recv().ok()
     }
 
     /// 关闭服务
     pub fn destroy(&mut self) {
-        info!("[DecodeService] Destroying decoder service");
+        info!("Destroying decoder service");
         let _ = self.task_sender.send(DecodeTask::Shutdown);
     }
 }

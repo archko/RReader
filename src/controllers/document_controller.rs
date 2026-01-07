@@ -33,11 +33,12 @@ impl DocumentController {
 
     /// 设置文档相关的回调
     fn setup_callbacks(&self, window: &AppWindow) {
+        // View大小变化回调
         {
             let page_view_state = Rc::clone(&self.page_view_state);
             let weak_window = window.as_weak();
             window.on_viewport_changed(move |width, height| {
-                debug!("[DocumentController] on_viewport_changed: width={}, height={}", width, height);
+                debug!("on_viewport_changed: width={}, height={}", width, height);
                 if width == 0.0 || height == 0.0 {
                     return;
                 }
@@ -50,6 +51,7 @@ impl DocumentController {
                     }
                 }
                 {
+                    debug!("current_page: width={}", current_page.unwrap_or_default());
                     let mut state = page_view_state.borrow_mut();
                     let zoom = state.zoom;
                     state.update_view_size(width as f32, height as f32, zoom, false);
@@ -87,6 +89,7 @@ impl DocumentController {
             let weak_window = window.as_weak();
             window.on_scroll_changed(move |x, y| {
                 if let Some(window) = weak_window.upgrade() {
+                    info!("on_scroll_changed");
                     let mut state = page_view_state.borrow_mut();
                     state.update_offset(x as f32, y as f32);
                     state.update_visible_pages();
@@ -95,17 +98,21 @@ impl DocumentController {
             });
         }
 
-        // 页面变化回调
+        // 页码变化回调
         {
             let page_view_state = Rc::clone(&self.page_view_state);
             let weak_window = window.as_weak();
             window.on_page_changed(move |page_index| {  // page_index is 1-based from UI
                 let mut state = page_view_state.borrow_mut();
+                info!("on_page_changed.page={:?}", page_index);
                 if state.jump_to_page((page_index - 1) as usize).is_some() {
                     state.update_visible_pages();
 
                     if let Some(window) = weak_window.upgrade() {
                         Self::refresh_view(&window, &state);
+
+                        window.set_offset_x(state.view_offset.0);
+                        window.set_offset_y(state.view_offset.1);
                     }
                 }
             });
@@ -156,17 +163,17 @@ impl DocumentController {
             let page_view_state = Rc::clone(&self.page_view_state);
             let weak_window = window.as_weak();
             window.on_page_clicked(move |x, y, page_index| {
-                debug!("[DocumentController] on_page_clicked: x={}, y={}, page_index={}", x, y, page_index);
+                debug!("on_page_clicked: x={}, y={}, page_index={}", x, y, page_index);
 
                 let state = page_view_state.borrow();
                 let jump_to_page = if let Some(link) = state.handle_click(page_index as usize, x as f32, y as f32) {
-                    debug!("[DocumentController] Clicked link: uri={:?}, page={:?}", link.uri, link.page);
+                    info!("Clicked link: uri={:?}, page={:?}", link.uri, link.page);
                     // 处理链接类型
                     if let Some(uri) = &link.uri {
-                        debug!("[DocumentController] URI link clicked: {}", uri);
+                        debug!("URI link clicked: {}", uri);
                         None
                     } else if let Some(page) = link.page {
-                        debug!("[DocumentController] Page link clicked: {}", page);
+                        debug!("Page link clicked: {}", page);
                         Self::parse_page_from_param(&page)
                     } else {
                         None
@@ -227,32 +234,16 @@ impl DocumentController {
                 }
             });
         }
-
-        // 大纲项点击回调
-        {
-            let page_view_state = Rc::clone(&self.page_view_state);
-            let weak_window = window.as_weak();
-            window.on_page_changed(move |page_index| {  // page_index is 1-based from UI
-                let mut state = page_view_state.borrow_mut();
-                if state.jump_to_page((page_index - 1) as usize).is_some() {
-                    state.update_visible_pages();
-
-                    if let Some(window) = weak_window.upgrade() {
-                        Self::refresh_view(&window, &state);
-                    }
-                }
-            });
-        }
     }
 
     /// 刷新视图
     pub(crate) fn refresh_view(window: &AppWindow, state: &PageViewState) {
         if state.pages.is_empty() {
-            debug!("[DocumentController] No pages to refresh");
+            debug!("No pages to refresh");
             return;
         }
 
-        debug!("[DocumentController] refresh_view: visible_pages={:?}", state.visible_pages);
+        debug!("refresh_view: visible_pages={:?}", state.visible_pages);
 
         let rendered_pages = state.visible_pages
             .iter()
@@ -262,10 +253,10 @@ impl DocumentController {
                 let key = crate::decoder::pdf::utils::generate_thumbnail_key(page);
                 let image = {
                     if let Some(cached_image) = state.cache.get_thumbnail(&key) {
-                        debug!("[DocumentController] 从缓存获取图像: key={}, page={}", key, page.info.index);
+                        debug!("从缓存获取图像: key={}, page={}", key, page.info.index);
                         cached_image.as_ref().clone()
                     } else {
-                        debug!("[DocumentController] 缓存中没有图像，显示页码: key={}, page={}", key, page.info.index);
+                        debug!("缓存中没有图像，显示页码: key={}, page={}", key, page.info.index);
                         slint::Image::default()
                     }
                 };
@@ -281,7 +272,7 @@ impl DocumentController {
             })
             .collect::<Vec<_>>();
 
-        info!("[DocumentController] refresh_view {} page_models", rendered_pages.len());
+        info!("refresh_view {} page_models", rendered_pages.len());
         let model = Rc::new(VecModel::from(rendered_pages));
         window.set_document_pages(ModelRc::from(model));
 
@@ -350,8 +341,6 @@ impl DocumentController {
                 window.set_current_page(page);
                 window.set_document_opened(true);
                 window.set_page_count(state.pages.len() as i32);
-                window.set_offset_x(scroll_x as f32);
-                window.set_offset_y(scroll_y as f32);
 
                 let width = state.view_size.0;
                 let height = state.view_size.1;
@@ -368,6 +357,8 @@ impl DocumentController {
 
                 if state.jump_to_page((page - 1) as usize).is_some() {
                 }
+                window.set_offset_x(scroll_x as f32);
+                window.set_offset_y(scroll_y as f32);
 
                 Self::set_outline_to_ui(window, &state);
 
