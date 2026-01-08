@@ -20,37 +20,55 @@ pub struct PdfDecoder {
 
 impl PdfDecoder {
     fn get_def_font_size() -> f32 {
-        24.0
+        25.0
     }
 
     fn generate_font_css(font_path: Option<&str>, margin: &str) -> String {
         let mut buffer = String::new();
 
-        // 忽略mupdf的边距
-        buffer.push_str(&format!("    @page {{ margin:{} {} !important; }}\n", margin, margin));
-        buffer.push_str("    p { margin: 20px !important; padding: 0 !important; }\n");
-        buffer.push_str("    blockquote { margin: 0 !important; padding: 0 !important; }\n");
+        // 1. 恢复并强制应用你传入的边距
+        // 使用 padding 而不是 margin 有时在 MuPDF 渲染 Epub 时更稳健
+        buffer.push_str(&format!(
+            "    @page {{ margin: {0} {0} !important; }}\n\
+                body {{ \
+                    padding: {0} {0} !important; \
+                    margin: 0 !important; \
+                    text-align: left !important; \
+                }}\n", 
+            margin
+        ));
 
-        // 强制所有元素的边距和内边距，并删除字体
-        buffer.push_str("* {\n");
-        buffer.push_str("    margin: 0 !important;\n");
-        buffer.push_str("    padding: 0 !important;\n");
-        buffer.push_str("    line-height: 1.5 !important;\n");
-        buffer.push_str("    font-family: none !important;\n");
-        buffer.push_str("    font-size: inherit !important;\n");
-        buffer.push_str("    font-weight: normal !important;\n");
-        buffer.push_str("    font-style: normal !important;\n");
-        buffer.push_str("}\n");
+        // 2. 核心提速优化：仅针对块级容器禁用 justify
+        // 这样不会影响公式等内联元素的排版
+        buffer.push_str("    div, p, section, article {\n");
+        buffer.push_str("        text-align: left !important;\n"); // 提速的关键
+        buffer.push_str("        word-spacing: normal !important;\n");
+        buffer.push_str("        letter-spacing: normal !important;\n");
+        buffer.push_str("        text-indent: 2em;\n"); // 恢复你原本希望的段落缩进
+        buffer.push_str("    }\n");
 
-        // 针对常见选择器强制删除字体
-        buffer.push_str("body, p, div, span, h1, h2, h3, h4, h5, h6 {\n");
-        buffer.push_str("    font-family: unset !important;\n");
-        buffer.push_str("}\n");
+        // 3. 修复公式换行：严禁对所有元素使用 display: block
+        // 恢复内联元素的默认行为
+        buffer.push_str("    span, b, i, em, strong, a, sub, sup, code, img {\n");
+        buffer.push_str("        display: inline !important;\n"); 
+        buffer.push_str("        margin: 0 !important;\n");
+        buffer.push_str("        padding: 0 !important;\n");
+        buffer.push_str("        white-space: normal !important;\n"); // 允许正常换行，但不在内部强制断行
+        buffer.push_str("    }\n");
 
-        // 针对EPUB常见类强制删除字体
-        buffer.push_str(".calibre, .calibre1, .calibre2, .calibre3, .calibre4, .calibre5, contents, contents1, contents2, center1, center2 {\n");
-        buffer.push_str("    font-family: unset !important;\n");
-        buffer.push_str("}\n");
+        // 4. 清理 Calibre 的冗余样式，但保留基本的结构
+        buffer.push_str("    .calibre, .calibre1, .calibre2, .calibre3, .calibre4, .calibre5 {\n");
+        buffer.push_str("        font-family: inherit !important;\n");
+        buffer.push_str("        text-align: left !important;\n");
+        buffer.push_str("    }\n");
+
+        // 5. 针对数学公式的特殊处理
+        // 常见的数学公式容器，强制它们不换行并保持在行内
+        buffer.push_str("    .math, .formula, mjx-container, m-row {\n");
+        buffer.push_str("        display: inline-block !important;\n");
+        buffer.push_str("        text-indent: 0 !important;\n");
+        buffer.push_str("        white-space: nowrap !important;\n");
+        buffer.push_str("    }\n");
 
         buffer
     }
@@ -72,8 +90,8 @@ impl PdfDecoder {
 
             let font_size = Self::get_def_font_size();
             let fs = font_size as f32;
-            let w = 1024.0;
-            let h = 1280.0;
+            let w = 1280.0;
+            let h = 1024.0;
             info!("layout.width:{}, height:{}, font:{}->{}, open:{:?}", w, h, font_size, fs, path.as_ref());
 
             document.layout(w, h, fs)?;
