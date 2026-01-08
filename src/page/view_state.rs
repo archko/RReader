@@ -422,8 +422,8 @@ impl PageViewState {
                     let scaled_right = link.bounds.right * scale;
                     let scaled_top = link.bounds.top * scale;
                     let scaled_bottom = link.bounds.bottom * scale;
-                    debug!("link check: click_x={}, click_y={}, link=({}, {}, {}, {}) scaled to ({}, {}, {}, {})",
-                                   doc_x, doc_y, link.bounds.left, link.bounds.top, link.bounds.right, link.bounds.bottom,
+                    debug!("link check: index={}, click_x={}, click_y={}, link=({}, {}, {}, {}) scaled to ({}, {}, {}, {})",
+                                   index, doc_x, doc_y, link.bounds.left, link.bounds.top, link.bounds.right, link.bounds.bottom,
                                    scaled_left, scaled_top, scaled_right, scaled_bottom);
                     if doc_x >= scaled_left
                         && doc_x <= scaled_right
