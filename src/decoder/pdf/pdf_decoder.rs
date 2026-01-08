@@ -26,48 +26,53 @@ impl PdfDecoder {
     fn generate_font_css(font_path: Option<&str>, margin: &str) -> String {
         let mut buffer = String::new();
 
-        // 1. 恢复并强制应用你传入的边距
-        // 使用 padding 而不是 margin 有时在 MuPDF 渲染 Epub 时更稳健
+        // 1. 全局配置：强制左对齐，这是消除计算量最直接的手段
         buffer.push_str(&format!(
-            "    @page {{ margin: {0} {0} !important; }}\n\
+            "    @page {{ margin: {0} !important; }}\n\
                 body {{ \
-                    padding: {0} {0} !important; \
+                    padding: {0} !important; \
                     margin: 0 !important; \
                     text-align: left !important; \
-                }}\n", 
-            margin
-        ));
+                    line-height: 1.5 !important; \
+                    orphans: 1 !important; widows: 1 !important; \
+                }}\n", margin));
 
-        // 2. 核心提速优化：仅针对块级容器禁用 justify
-        // 这样不会影响公式等内联元素的排版
-        buffer.push_str("    div, p, section, article {\n");
-        buffer.push_str("        text-align: left !important;\n"); // 提速的关键
-        buffer.push_str("        word-spacing: normal !important;\n");
-        buffer.push_str("        letter-spacing: normal !important;\n");
-        buffer.push_str("        text-indent: 2em;\n"); // 恢复你原本希望的段落缩进
+        // 2. 暴力降噪：屏蔽所有导致微调计算的属性
+        // word-spacing 和 letter-spacing 在 justify 时会导致 layout 引擎执行数百万次浮点加法
+        buffer.push_str("    * {\n");
+        buffer.push_str("        text-align: left !important;\n"); 
+        buffer.push_str("        word-break: break-all !important;\n"); 
+        buffer.push_str("        word-spacing: 0 !important;\n");      
+        buffer.push_str("        letter-spacing: 0 !important;\n");    
+        buffer.push_str("        box-sizing: border-box !important;\n"); // 简化盒模型计算
         buffer.push_str("    }\n");
 
-        // 3. 修复公式换行：严禁对所有元素使用 display: block
-        // 恢复内联元素的默认行为
-        buffer.push_str("    span, b, i, em, strong, a, sub, sup, code, img {\n");
+        // 3. 针对图片：禁止浮动（Float）
+        // MuPDF 处理 float 时需要计算文字环绕路径，这是导致 40 秒卡顿的头号嫌疑犯
+        buffer.push_str("    img {\n");
+        buffer.push_str("        max-width: 100% !important;\n");
+        buffer.push_str("        height: auto !important;\n");
+        buffer.push_str("        display: inline-block !important;\n"); 
+        buffer.push_str("        float: none !important;\n"); // 强制取消浮动，瞬间降低计算维度
+        buffer.push_str("        page-break-inside: avoid !important;\n"); 
+        buffer.push_str("    }\n");
+
+        // 4. 块级元素：解决递归边距计算
+        // 很多 EPUB 嵌套了 10 层 div，每层都有不同的 margin，MuPDF 算这个非常慢
+        buffer.push_str("    p, div, section, article, li {\n");
+        buffer.push_str("        display: block !important;\n");
+        buffer.push_str("        text-indent: 2em !important;\n");
+        buffer.push_str("        margin-top: 0.5em !important;\n"); 
+        buffer.push_str("        margin-bottom: 0.5em !important;\n");
+        buffer.push_str("        margin-left: 0 !important;\n"); // 屏蔽复杂的层级偏移
+        buffer.push_str("        margin-right: 0 !important;\n");
+        buffer.push_str("    }\n");
+
+        // 5. 内联元素（公式保护）：保持原有渲染逻辑
+        buffer.push_str("    span, b, i, em, strong, a, sub, sup, code {\n");
         buffer.push_str("        display: inline !important;\n"); 
-        buffer.push_str("        margin: 0 !important;\n");
-        buffer.push_str("        padding: 0 !important;\n");
-        buffer.push_str("        white-space: normal !important;\n"); // 允许正常换行，但不在内部强制断行
-        buffer.push_str("    }\n");
-
-        // 4. 清理 Calibre 的冗余样式，但保留基本的结构
-        buffer.push_str("    .calibre, .calibre1, .calibre2, .calibre3, .calibre4, .calibre5 {\n");
-        buffer.push_str("        font-family: inherit !important;\n");
-        buffer.push_str("        text-align: left !important;\n");
-        buffer.push_str("    }\n");
-
-        // 5. 针对数学公式的特殊处理
-        // 常见的数学公式容器，强制它们不换行并保持在行内
-        buffer.push_str("    .math, .formula, mjx-container, m-row {\n");
-        buffer.push_str("        display: inline-block !important;\n");
         buffer.push_str("        text-indent: 0 !important;\n");
-        buffer.push_str("        white-space: nowrap !important;\n");
+        buffer.push_str("        white-space: normal !important;\n");
         buffer.push_str("    }\n");
 
         buffer

@@ -126,7 +126,7 @@ export component DocumentView inherits Rectangle {
 
     //不是每滚动一像素都更新,作个节流,如果机器比较强,可以不节流,直接在scrolled上面更新
     scroll_timer := Timer {
-        interval: 50ms;
+        interval: 30ms;
         running: false;
         triggered => {
             if (root.enable-scroll-events) {
