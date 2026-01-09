@@ -73,12 +73,8 @@ export component DocumentView inherits Rectangle {
 
         scrolled => {
             if (root.enable-scroll-events) {
-                //debug("scrolled", (scroller.viewport-x / 1px), (scroller.viewport-y / 1px));
-                if (!scroll_timer.running) {
-                    scroll_timer.running = true;
-                } else {
-                    scroll_timer.restart();
-                }
+                //debug("scroll-changed", (root.offset_x / 1px), (root.offset_y / 1px));
+                scroll-changed(root.offset_x, root.offset_y);
             }
         }
     }
@@ -121,19 +117,6 @@ export component DocumentView inherits Rectangle {
                 //scroll-changed(root.offset_x, root.offset_y);
             }
             viewport_timer.restart();
-        }
-    }
-
-    //不是每滚动一像素都更新,作个节流,如果机器比较强,可以不节流,直接在scrolled上面更新
-    scroll_timer := Timer {
-        interval: 20ms;
-        running: false;
-        triggered => {
-            if (root.enable-scroll-events) {
-                //debug("scroll-changed", (root.offset_x / 1px), (root.offset_y / 1px));
-                scroll-changed(root.offset_x, root.offset_y);
-            }
-            self.running = false;
         }
     }
 }
