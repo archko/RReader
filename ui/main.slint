@@ -63,6 +63,7 @@ export component AppWindow inherits Window {
         background: AppColors.background;
 
         VerticalBox {
+            spacing: 0px;
             visible: !root.document-opened;
 
             history_toolbar := HistoryToolbar {
@@ -78,6 +79,7 @@ export component AppWindow inherits Window {
         }
 
         VerticalBox {
+            spacing: 0px;
             visible: root.document-opened;
 
             document_toolbar := DocumentToolbar {
@@ -93,6 +95,7 @@ export component AppWindow inherits Window {
             }
 
             HorizontalLayout {
+                spacing: 0px;
                 vertical-stretch: 1;
                 if root.outline-visible: outline_panel := OutlinePanel {
                     width: 250px;
