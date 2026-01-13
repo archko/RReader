@@ -1,6 +1,6 @@
-use slint::Image;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use image::DynamicImage;
 
 pub struct ImageCache {
     cache: Arc<Mutex<HashMap<String, CachedImage>>>,
@@ -9,7 +9,7 @@ pub struct ImageCache {
 
 #[derive(Clone)]
 pub struct CachedImage {
-    pub image: Arc<Image>,
+    pub image: Arc<DynamicImage>,
     pub timestamp: std::time::Instant,
     pub access_count: u64,
 }
@@ -22,7 +22,7 @@ impl ImageCache {
         }
     }
 
-    pub fn get(&self, key: &str) -> Option<Arc<Image>> {
+    pub fn get(&self, key: &str) -> Option<Arc<DynamicImage>> {
         let mut cache = self.cache.lock().unwrap();
 
         if let Some(cached) = cache.get_mut(key) {
@@ -34,7 +34,7 @@ impl ImageCache {
         None
     }
 
-    pub fn put(&self, key: String, image: Image) -> Arc<Image> {
+    pub fn put(&self, key: String, image: DynamicImage) -> Arc<DynamicImage> {
         let mut cache = self.cache.lock().unwrap();
 
         // 如果缓存已满，清理最久未使用的项
@@ -100,7 +100,7 @@ impl PageCache {
         }
     }
 
-    pub fn get_page_image(&self, page_index: usize, zoom: f32) -> Option<Arc<Image>> {
+    pub fn get_page_image(&self, page_index: usize, zoom: f32) -> Option<Arc<DynamicImage>> {
         let key = format!("page_{}_{:.2}", page_index, zoom);
         self.image_cache.get(&key)
     }
@@ -109,17 +109,17 @@ impl PageCache {
         &self,
         page_index: usize,
         zoom: f32,
-        image: Image,
-    ) -> Arc<Image> {
+        image: DynamicImage,
+    ) -> Arc<DynamicImage> {
         let key = format!("page_{}_{:.2}", page_index, zoom);
         self.image_cache.put(key, image)
     }
 
-    pub fn get_thumbnail(&self, key: &str) -> Option<Arc<Image>> {
+    pub fn get_thumbnail(&self, key: &str) -> Option<Arc<DynamicImage>> {
         self.thumbnail_cache.get(key)
     }
 
-    pub fn put_thumbnail(&self, key: String, image: Image) -> Arc<Image> {
+    pub fn put_thumbnail(&self, key: String, image: DynamicImage) -> Arc<DynamicImage> {
         self.thumbnail_cache.put(key, image)
     }
 

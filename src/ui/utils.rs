@@ -1,7 +1,6 @@
 use dirs;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use slint::{Image, SharedPixelBuffer};
 
 // 生成简单hash用于缓存图片名
 pub fn generate_thumbnail_hash(path: &str) -> u64 {
@@ -38,14 +37,5 @@ struct CachedImageData {
 impl CachedImageData {
     fn new(data: Vec<u8>, width: u32, height: u32) -> Self {
         Self { data, width, height }
-    }
-
-    fn to_slint_image(&self) -> Image {
-        let shared_buffer = SharedPixelBuffer::clone_from_slice(
-            &self.data,
-            self.width,
-            self.height,
-        );
-        Image::from_rgba8(shared_buffer)
     }
 }
