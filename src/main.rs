@@ -77,6 +77,7 @@ fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryI
 
     // Create a signal to trigger UI refresh when decode results are available
     let decode_refresh_trigger = RwSignal::new(0u64);
+    let doc_info_trigger = RwSignal::new(0u64);
 
     // Create decode timer for handling page rendering
     let state_for_decode_timer = page_view_state.clone();
@@ -95,14 +96,13 @@ fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryI
             let mut had_results = false;
             let mut result_count = 0;
             
-            // Update timer count in a separate scope
             {
                 let mut count = timer_count_clone.borrow_mut();
                 *count += 1;
                 if *count % 10 == 0 {
                     debug!("[Main] 定时器运行中... count={}", *count);
                 }
-            } // count is dropped here, releasing the borrow
+            } 
             
             {
                 let mut state_borrowed = state_clone.borrow_mut();
@@ -280,7 +280,6 @@ fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryI
                             if result.is_ok() {
                                 let path_str = path.to_string_lossy().to_string();
                                 
-                                // Use Floem's exec_after for polling document load result
                                 let state_clone = state.clone();
                                 let document_opened_clone = document_opened.clone();
                                 let file_path_clone = file_path.clone();
@@ -318,6 +317,16 @@ fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryI
                                         match result {
                                             Ok(pages) => {
                                                 state.borrow_mut().set_pages_from_info(pages);
+                                                let width = state.borrow_mut().view_size.0;
+                                                let height = state.borrow_mut().view_size.1;
+
+                                                state.borrow_mut().update_view_size(
+                                                    width,
+                                                    height,
+                                                    1.0,
+                                                    true
+                                                );
+
                                                 page_count.set(state.borrow().pages.len() as i32);
                                                 document_opened.set(true);
                                                 file_path.set(path_str.clone());
@@ -453,6 +462,7 @@ fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryI
                 current_page,
                 page_count,
                 decode_refresh_trigger,
+                doc_info_trigger,
             ).into_any()
         } else {
             container(history_grid(
@@ -747,6 +757,7 @@ fn document_view(
     current_page: RwSignal<i32>,
     page_count: RwSignal<i32>,
     decode_refresh_trigger: RwSignal<u64>,
+    doc_info_trigger: RwSignal<u64>,
 ) -> impl IntoView {
     let rendered_pages = RwSignal::new(Vec::<RenderedPage>::new());
 
@@ -768,31 +779,26 @@ fn document_view(
     });
 
     // 监听解码刷新信号
-    let state_for_decode_refresh = page_view_state.clone();
+    let state_for_decode = page_view_state.clone();
     create_effect(move |_| {
-        // Listen to the decode refresh trigger
         let _ = decode_refresh_trigger.get();
         
-        let state = state_for_decode_refresh.borrow();
+        let state = state_for_decode.borrow();
         update_rendered_pages(&state, &rendered_pages);
-        info!("[document_view] Refreshed rendered pages due to decode results");
     });
 
+    let state_for_doc = page_view_state.clone();
     let doc_container = dyn_stack(
         move || {
             let pages = rendered_pages.get();
-            info!("[dyn_stack] Rendering {} pages", pages.len());
-            for (i, page) in pages.iter().enumerate() {
-                info!("[dyn_stack] Page {}: has_image={}", page.page_index, page.image_data.is_some());
-            }
             pages
         },
-        |page| (page.page_index, page.image_data.is_some()), // Include image state in key
+        |page| format!("{}_{}", page.page_index, page.image_data.is_some()),
         move |page| {
             let img_arc = page.image_data.clone();
             let page_idx = page.page_index;
 
-            info!("[dyn_stack] Creating view for page {}, has_image={}", page_idx, img_arc.is_some());
+            debug!("[dyn_stack] Creating view for page {}, has_image={}", page_idx, img_arc.is_some());
 
             if let Some(dynamic_img) = img_arc {
                 info!("[dyn_stack] Creating image view for page {}", page_idx);
@@ -802,7 +808,6 @@ fn document_view(
                 let img_height = rgba.height();
                 let bytes = rgba.into_raw();
 
-                // 创建图像视图
                 create_image_view(bytes, img_width, img_height, page.width, page.height).into_any()
             } else {
                 info!("[dyn_stack] Creating loading view for page {}", page_idx);
@@ -825,7 +830,14 @@ fn document_view(
             }
         }
     )
-    .style(|s| s.flex_direction(floem::taffy::FlexDirection::Column));
+    .style(move |s| {
+        let _ = doc_info_trigger.get();
+        let state = state_for_doc.borrow();
+        info!("[Doc] total_height:{}", state.total_height);
+        s.flex_direction(floem::taffy::FlexDirection::Column)
+        .width(state.total_width as f64)
+        .height(state.total_height as f64)
+    });
 
     // 创建可滚动容器，并监听滚动事件
     let state_for_scroll = page_view_state.clone();
@@ -834,14 +846,11 @@ fn document_view(
             .style(|s| s.background(Color::WHITE).padding(20.0))
     )
     .on_scroll(move |rect| {
-        // rect 包含滚动容器的位置信息
-        // 滚动偏移量是负值（向下滚动时 y 为负）
         let offset_x = -rect.x0 as f32;
         let offset_y = -rect.y0 as f32;
 
         info!("[Scroll Event] offset: ({}, {})", offset_x, offset_y);
 
-        // 更新 PageViewState 的偏移量
         let mut state = state_for_scroll.borrow_mut();
         state.update_offset(offset_x, offset_y);
         state.update_visible_pages();
@@ -876,14 +885,12 @@ fn update_rendered_pages(
 ) {
     let mut pages = Vec::new();
 
-    info!("[update_rendered_pages] visible_pages: {:?}", state.visible_pages);
-
     for &idx in &state.visible_pages {
         if let Some(page) = state.pages.get(idx) {
             let key = generate_thumbnail_key(page);
             let image_data = state.cache.get_thumbnail(&key);
 
-            info!("[update_rendered_pages] Page {}: has_image={}", idx, image_data.is_some());
+            //info!("[update_rendered_pages] Page {}: has_image={}", idx, image_data.is_some());
 
             pages.push(RenderedPage {
                 page_index: idx,
@@ -900,6 +907,9 @@ fn update_rendered_pages(
     rendered_pages.set(pages);
 }
 
+use std::io::Cursor;
+use image::ImageFormat;
+
 fn create_image_view(
     bytes: Vec<u8>,
     img_width: u32,
@@ -907,8 +917,25 @@ fn create_image_view(
     display_width: f64,
     display_height: f64,
 ) -> impl IntoView {
-    // 使用 floem 的 img 函数来显示图像
-    floem::views::img(move || bytes.clone())
+    // 1. 包装为 RgbaImage，然后转为 RgbImage (JPEG 不支持 Alpha 通道)
+    let img_buffer = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(img_width, img_height, bytes)
+        .map(image::DynamicImage::ImageRgba8);
+
+    let mut encoded_data = Vec::new();
+    
+    if let Some(dynamic_img) = img_buffer {
+        // 2. 转换为 RGB (JPEG 需要)
+        let rgb_img = dynamic_img.to_rgb8();
+        let mut cursor = Cursor::new(&mut encoded_data);
+        
+        // 3. 使用 JPEG 编码，设置较快的质量参数
+        // 质量 80-90 之间速度和清晰度最平衡
+        let _ = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, 85)
+            .encode_image(&rgb_img);
+    }
+
+    // 4. 传给 floem 的 img 视图
+    floem::views::img(move || encoded_data.clone())
         .style(move |s| {
             s.width(display_width)
                 .height(display_height)
