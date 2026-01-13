@@ -917,25 +917,18 @@ fn create_image_view(
     display_width: f64,
     display_height: f64,
 ) -> impl IntoView {
-    // 1. 包装为 RgbaImage，然后转为 RgbImage (JPEG 不支持 Alpha 通道)
-    let img_buffer = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(img_width, img_height, bytes)
-        .map(image::DynamicImage::ImageRgba8);
-
-    let mut encoded_data = Vec::new();
+    let mut encoded_bmp = Vec::new();
     
-    if let Some(dynamic_img) = img_buffer {
-        // 2. 转换为 RGB (JPEG 需要)
-        let rgb_img = dynamic_img.to_rgb8();
-        let mut cursor = Cursor::new(&mut encoded_data);
+    // 包装为 RgbaImage
+    if let Some(img_buffer) = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(img_width, img_height, bytes) {
+        let dynamic_img = image::DynamicImage::ImageRgba8(img_buffer);
+        let mut cursor = Cursor::new(&mut encoded_bmp);
         
-        // 3. 使用 JPEG 编码，设置较快的质量参数
-        // 质量 80-90 之间速度和清晰度最平衡
-        let _ = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, 85)
-            .encode_image(&rgb_img);
+        // 使用 BMP 格式，它的编码器几乎只是在做内存拷贝，非常快
+        let _ = dynamic_img.write_to(&mut cursor, image::ImageFormat::Bmp);
     }
 
-    // 4. 传给 floem 的 img 视图
-    floem::views::img(move || encoded_data.clone())
+    floem::views::img(move || encoded_bmp.clone())
         .style(move |s| {
             s.width(display_width)
                 .height(display_height)
