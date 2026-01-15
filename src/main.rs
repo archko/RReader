@@ -19,6 +19,17 @@ use floem::reactive::create_effect;
 use floem::views::empty;
 use floem::prelude::scroll::scroll;
 use floem::action::{exec_after, TimerToken};
+
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use floem::floem_renderer;
+use floem::peniko;
+use floem::context::PaintCx;
+use floem::kurbo::Rect;
+use floem::views::{canvas};
+use floem::view::IntoView;
+use floem::peniko::{Blob, Color, ImageData, ImageAlphaType};
+
 use sea_orm::ActiveValue;
 use dirs;
 
@@ -757,6 +768,8 @@ fn create_card(
     }
 }
 
+// --- 修改后的 document_view 及相关辅助函数 ---
+
 fn document_view(
     page_view_state: Rc<RefCell<PageViewState>>,
     viewport_size: RwSignal<(f64, f64)>,
@@ -765,77 +778,80 @@ fn document_view(
     decode_refresh_trigger: RwSignal<u64>,
     doc_info_trigger: RwSignal<u64>,
 ) -> impl IntoView {
-    let rendered_pages = RwSignal::new(Vec::<RenderedPage>::new());
-
-    // 监听视口大小变化并更新渲染页面
-    let state_for_viewport = page_view_state.clone();
+    // 监听视口大小变化
+    let state_for_resize = page_view_state.clone();
     create_effect(move |_| {
         let (width, height) = viewport_size.get();
         if width > 0.0 && height > 0.0 {
-            let mut state = state_for_viewport.borrow_mut();
+            let mut state = state_for_resize.borrow_mut();
             let zoom = state.zoom;
             state.update_view_size(width as f32, height as f32, zoom, false);
             state.update_visible_pages();
             page_count.set(state.pages.len() as i32);
-            drop(state);
-
-            let state = state_for_viewport.borrow();
-            update_rendered_pages(&state, &rendered_pages);
         }
     });
 
-    // 监听解码刷新信号
-    let state_for_decode = page_view_state.clone();
-    create_effect(move |_| {
-        let _ = decode_refresh_trigger.get();
-        
-        let state = state_for_decode.borrow();
-        update_rendered_pages(&state, &rendered_pages);
-    });
-
+    // 核心：单画布绘制逻辑
+    let state_for_canvas = page_view_state.clone();
     let state_for_doc = page_view_state.clone();
-    let doc_container = dyn_stack(
-        move || {
-            let pages = rendered_pages.get();
-            pages
-        },
-        |page| format!("{}_{}", page.page_index, page.image_data.is_some()),
-        move |page| {
-            let img_arc = page.image_data.clone();
-            let page_idx = page.page_index;
+    let doc_canvas = canvas(move |cx, _bounds| {
+        // 订阅刷新信号，当解码完成时，此闭包会重新触发
+        let _ = decode_refresh_trigger.get();
+        let _ = doc_info_trigger.get();
 
-            debug!("[dyn_stack] Creating view for page {}, has_image={}", page_idx, img_arc.is_some());
+        let state = state_for_canvas.borrow();
+        
+        // 遍历所有可见页索引（KMP 算法计算的结果）
+        for &idx in &state.visible_pages {
+            if let Some(page) = state.pages.get(idx) {
+                let key = generate_thumbnail_key(page);
+                
+                // 尝试从缓存获取 DynamicImage
+                if let Some(dynamic_img) = state.cache.get_thumbnail(&key) {
+                    // 1. 构造渲染所需的 ImageBrush 和 Hash
+                    // 注意：为了性能，生产环境建议将 ImageBrush 存入缓存，避免此处每帧构建
+                    let rgba = dynamic_img.to_rgba8();
+                    let (w, h) = rgba.dimensions();
+                    let blob = Blob::new(Arc::new(rgba.into_raw()));
+                    
+                    let image_brush = peniko::ImageBrush::new(ImageData {
+                        data: blob,
+                        format: peniko::ImageFormat::Rgba8,
+                        alpha_type: ImageAlphaType::AlphaPremultiplied,
+                        width: w,
+                        height: h,
+                    });
 
-            if let Some(dynamic_img) = img_arc {
-                info!("[dyn_stack] Creating image view for page {}", page_idx);
-                // 将 DynamicImage 转换为 RGBA8 格式
-                let rgba = dynamic_img.to_rgba8();
-                let img_width = rgba.width();
-                let img_height = rgba.height();
-                let bytes = rgba.into_raw();
+                    // 使用 key 的哈希作为渲染标识
+                    let mut hasher = DefaultHasher::new();
+                    key.hash(&mut hasher);
+                    let hash_val = hasher.finish().to_le_bytes();
 
-                create_image_view(bytes, img_width, img_height, page.width, page.height).into_any()
-            } else {
-                info!("[dyn_stack] Creating loading view for page {}", page_idx);
-                container(
-                    label(move || format!("Loading page {}...", page_idx + 1))
-                        .style(|s|
-                            s.font_size(14.0)//.color(Color::rgb(0.5, 0.5, 0.5))
-                        )
-                )
-                .style(move |s| {
-                    s.width(page.width)
-                        .height(page.height)
-                        //.background(Color::rgb(0.95, 0.95, 0.95))
-                        .justify_content(Some(floem::taffy::JustifyContent::Center))
-                        .align_items(Some(floem::taffy::AlignItems::Center))
-                        .border(1.0)
-                        //.border_color(Color::rgb(0.8, 0.8, 0.8))
-                })
-                .into_any()
+                    // 2. 计算页面在总画布上的位置
+                    let rect = Rect::from_origin_size(
+                        (page.bounds.left as f64, page.bounds.top as f64),
+                        (page.width as f64, page.height as f64)
+                    );
+
+                    // 3. 执行绘制
+                    cx.draw_img(
+                        floem_renderer::Img {
+                            img: image_brush,
+                            hash: &hash_val,
+                        },
+                        rect,
+                    );
+                } else {
+                    // 绘制未加载时的占位符
+                    let rect = Rect::from_origin_size(
+                        (page.bounds.left as f64, page.bounds.top as f64),
+                        (page.width as f64, page.height as f64)
+                    );
+                    cx.fill(&rect, Color::from_rgb8(240, 240, 240), 0.0);
+                }
             }
         }
-    )
+    })
     .style(move |s| {
         let _ = doc_info_trigger.get();
         let state = state_for_doc.borrow();
@@ -845,85 +861,36 @@ fn document_view(
         .height(state.total_height as f64)
     });
 
-    // 创建可滚动容器，并监听滚动事件
+    // 滚动容器管理
     let state_for_scroll = page_view_state.clone();
-    let scroll_view = scroll(
-        container(doc_container)
-            .style(|s| s.background(Color::WHITE).padding(20.0))
+    scroll(
+        container(doc_canvas).style(|s| s.padding(20.0))
     )
     .on_scroll(move |rect| {
         let offset_x = -rect.x0 as f32;
         let offset_y = -rect.y0 as f32;
 
-        info!("[Scroll Event] offset: ({}, {})", offset_x, offset_y);
-
         let mut state = state_for_scroll.borrow_mut();
         state.update_offset(offset_x, offset_y);
         state.update_visible_pages();
 
-        // 更新当前页码
+        // 更新页码信号
         if let Some(first_visible) = state.get_first_visible_page() {
             current_page.set((first_visible + 1) as i32);
-            info!("[Scroll Event] First visible page: {}", first_visible + 1);
         }
-
-        // 更新渲染页面
-        update_rendered_pages(&state, &rendered_pages);
+        
+        // 重点：手动触发 Canvas 的重新绘制，而不经过 dyn_stack 的节点销毁
+        decode_refresh_trigger.update(|v| *v += 1);
     })
-    .style(|s| s.size(100.pct(), 100.pct()));
-
-    scroll_view
+    .style(|s| s.size(100.pct(), 100.pct()))
 }
 
-#[derive(Clone, Debug)]
-struct RenderedPage {
-    page_index: usize,
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-    image_data: Option<std::sync::Arc<image::DynamicImage>>,
-}
+// ----------------------------------------------------------------
+// 辅助函数及 create_image_view (现在已集成到 Canvas 内部逻辑)
+// ----------------------------------------------------------------
 
-fn update_rendered_pages(
-    state: &PageViewState,
-    rendered_pages: &RwSignal<Vec<RenderedPage>>,
-) {
-    let mut pages = Vec::new();
-
-    for &idx in &state.visible_pages {
-        if let Some(page) = state.pages.get(idx) {
-            let key = generate_thumbnail_key(page);
-            let image_data = state.cache.get_thumbnail(&key);
-
-            //info!("[update_rendered_pages] Page {}: has_image={}", idx, image_data.is_some());
-
-            pages.push(RenderedPage {
-                page_index: idx,
-                x: page.bounds.left as f64,
-                y: page.bounds.top as f64,
-                width: page.width as f64,
-                height: page.height as f64,
-                image_data,
-            });
-        }
-    }
-
-    info!("[update_rendered_pages] Total rendered pages: {}", pages.len());
-    rendered_pages.set(pages);
-}
-
-use std::io::Cursor;
-use image::ImageFormat;
-
-///以下代码能显示,但要修改floem/src/lib.rs,添加
-// pub use floem_renderer::Img as RendererImg;
-// 公开导出整个 floem_renderer 模块
-// pub use floem_renderer;
-
-use std::collections::hash_map::DefaultHasher;
+/*use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-
 use floem::floem_renderer;
 use floem::peniko;
 use floem::context::PaintCx;
@@ -932,6 +899,7 @@ use floem::views::{canvas};
 use floem::view::IntoView;
 use floem::peniko::{Blob, Color, ImageData, ImageAlphaType};
 
+// 如果你还需要单独的 create_image_view，可以使用这个精简版
 fn create_image_view(
     bytes: Vec<u8>,
     img_width: u32,
@@ -939,35 +907,32 @@ fn create_image_view(
     display_width: f64,
     display_height: f64,
 ) -> impl IntoView {
-    // 将 bytes 转换为 Arc<Vec<u8>> 并创建 Blob
     let data = Arc::new(bytes);
     let blob = Blob::new(data.clone());
     
-    // 创建 peniko::ImageBrush
     let image_brush = peniko::ImageBrush::new(ImageData {
         data: blob,
         format: peniko::ImageFormat::Rgba8,
         alpha_type: ImageAlphaType::AlphaPremultiplied,
         width: img_width,
         height: img_height,
-    })
-    .with_quality(peniko::ImageQuality::High);
+    });
 
-    // 使用数据的前几个字节作为 hash
-    let hash_bytes: Vec<u8> = data.iter().take(32).copied().collect();
+    let mut hasher = DefaultHasher::new();
+    data.len().hash(&mut hasher); // 简单的哈希示例
+    let hash_bytes = hasher.finish().to_le_bytes();
 
     canvas(move |cx, _bounds| {
         let rect = Rect::from_origin_size((0.0, 0.0), (display_width, display_height));
-        
-        let renderer_img = floem_renderer::Img {
-            img: image_brush.clone(),
-            hash: &hash_bytes,
-        };
-
-        cx.draw_img(renderer_img, rect);
+        cx.draw_img(
+            floem_renderer::Img {
+                img: image_brush.clone(),
+                hash: &hash_bytes,
+            },
+            rect,
+        );
     })
     .style(move |s| {
-        s.width(display_width)
-            .height(display_height)
+        s.width(display_width).height(display_height)
     })
-}
+}*/
