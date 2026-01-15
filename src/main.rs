@@ -179,8 +179,10 @@ fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryI
             let back_button = button("Back")
                 .style(|s| s.padding(8.0).min_width(70.0))
                 .on_click({
+                    let state = state.clone();
                     let document_opened = document_opened_inner.clone();
                     move |_| {
+                        state.borrow_mut().shutdown();
                         document_opened.set(false);
                         EventPropagation::Continue
                     }
