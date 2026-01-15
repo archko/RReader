@@ -20,6 +20,10 @@ use floem::views::empty;
 use floem::prelude::scroll::scroll;
 use floem::action::{exec_after, TimerToken};
 
+///以下代码能显示,但要修改floem/src/lib.rs,添加
+// pub use floem_renderer::Img as RendererImg;
+// 公开导出整个 floem_renderer 模块
+// pub use floem_renderer;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use floem::floem_renderer;
@@ -803,7 +807,6 @@ fn document_view(
         }
     });
 
-    // 核心：单画布绘制逻辑
     let state_for_canvas = page_view_state.clone();
     let state_for_doc = page_view_state.clone();
     let doc_canvas = canvas(move |cx, _bounds| {
@@ -813,12 +816,10 @@ fn document_view(
 
         let state = state_for_canvas.borrow();
         
-        // 遍历所有可见页索引（KMP 算法计算的结果）
         for &idx in &state.visible_pages {
             if let Some(page) = state.pages.get(idx) {
                 let key = generate_thumbnail_key(page);
                 
-                // 尝试从缓存获取 DynamicImage
                 if let Some(dynamic_img) = state.cache.get_thumbnail(&key) {
                     // 1. 构造渲染所需的 ImageBrush 和 Hash
                     // 注意：为了性能，生产环境建议将 ImageBrush 存入缓存，避免此处每帧构建
@@ -854,7 +855,6 @@ fn document_view(
                         rect,
                     );
                 } else {
-                    // 绘制未加载时的占位符
                     let rect = Rect::from_origin_size(
                         (page.bounds.left as f64, page.bounds.top as f64),
                         (page.width as f64, page.height as f64)
@@ -896,55 +896,3 @@ fn document_view(
     })
     .style(|s| s.size(100.pct(), 100.pct()))
 }
-
-// ----------------------------------------------------------------
-// 辅助函数及 create_image_view (现在已集成到 Canvas 内部逻辑)
-// ----------------------------------------------------------------
-
-/*use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-use floem::floem_renderer;
-use floem::peniko;
-use floem::context::PaintCx;
-use floem::kurbo::Rect;
-use floem::views::{canvas};
-use floem::view::IntoView;
-use floem::peniko::{Blob, Color, ImageData, ImageAlphaType};
-
-// 如果你还需要单独的 create_image_view，可以使用这个精简版
-fn create_image_view(
-    bytes: Vec<u8>,
-    img_width: u32,
-    img_height: u32,
-    display_width: f64,
-    display_height: f64,
-) -> impl IntoView {
-    let data = Arc::new(bytes);
-    let blob = Blob::new(data.clone());
-    
-    let image_brush = peniko::ImageBrush::new(ImageData {
-        data: blob,
-        format: peniko::ImageFormat::Rgba8,
-        alpha_type: ImageAlphaType::AlphaPremultiplied,
-        width: img_width,
-        height: img_height,
-    });
-
-    let mut hasher = DefaultHasher::new();
-    data.len().hash(&mut hasher); // 简单的哈希示例
-    let hash_bytes = hasher.finish().to_le_bytes();
-
-    canvas(move |cx, _bounds| {
-        let rect = Rect::from_origin_size((0.0, 0.0), (display_width, display_height));
-        cx.draw_img(
-            floem_renderer::Img {
-                img: image_brush.clone(),
-                hash: &hash_bytes,
-            },
-            rect,
-        );
-    })
-    .style(move |s| {
-        s.width(display_width).height(display_height)
-    })
-}*/
