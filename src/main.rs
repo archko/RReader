@@ -691,6 +691,16 @@ fn create_card(
                             match result {
                                 Ok(pages) => {
                                     state.borrow_mut().set_pages_from_info(pages);
+                                    let width = state.borrow_mut().view_size.0;
+                                    let height = state.borrow_mut().view_size.1;
+
+                                    state.borrow_mut().update_view_size(
+                                        width,
+                                        height,
+                                        1.0,
+                                        true
+                                    );
+
                                     page_count.set(state.borrow().pages.len() as i32);
                                     document_opened.set(true);
                                     file_path.set(path_str.clone());
