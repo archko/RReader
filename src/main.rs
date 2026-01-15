@@ -628,7 +628,13 @@ fn create_card(
             s.size(180.0, 240.0)
                 .padding(10.0)
                 //.background(Color::rgb(1.0, 1.0, 1.0))
-                .border_radius(6.0)
+                .border_radius(4.0)
+                .border(1.0)
+                .border_color(Color::from_rgb8(104, 104, 104))
+                //.cursor(CursorStyle::Pointer)
+                .hover(|s| {
+                    s.border_color(Color::from_rgb8(104, 104, 204))
+                })
         })
         .on_click(move |_| {
             let path = PathBuf::from(&item_path);
@@ -910,6 +916,22 @@ fn update_rendered_pages(
 use std::io::Cursor;
 use image::ImageFormat;
 
+///以下代码能显示,但要修改floem/src/lib.rs,添加
+// pub use floem_renderer::Img as RendererImg;
+// 公开导出整个 floem_renderer 模块
+// pub use floem_renderer;
+
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
+use floem::floem_renderer;
+use floem::peniko;
+use floem::context::PaintCx;
+use floem::kurbo::Rect;
+use floem::views::{canvas};
+use floem::view::IntoView;
+use floem::peniko::{Blob, Color, ImageData, ImageAlphaType};
+
 fn create_image_view(
     bytes: Vec<u8>,
     img_width: u32,
@@ -917,22 +939,35 @@ fn create_image_view(
     display_width: f64,
     display_height: f64,
 ) -> impl IntoView {
-    let mut encoded_bmp = Vec::new();
+    // 将 bytes 转换为 Arc<Vec<u8>> 并创建 Blob
+    let data = Arc::new(bytes);
+    let blob = Blob::new(data.clone());
     
-    // 包装为 RgbaImage
-    if let Some(img_buffer) = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(img_width, img_height, bytes) {
-        let dynamic_img = image::DynamicImage::ImageRgba8(img_buffer);
-        let mut cursor = Cursor::new(&mut encoded_bmp);
-        
-        // 使用 BMP 格式，它的编码器几乎只是在做内存拷贝，非常快
-        let _ = dynamic_img.write_to(&mut cursor, image::ImageFormat::Bmp);
-    }
+    // 创建 peniko::ImageBrush
+    let image_brush = peniko::ImageBrush::new(ImageData {
+        data: blob,
+        format: peniko::ImageFormat::Rgba8,
+        alpha_type: ImageAlphaType::AlphaPremultiplied,
+        width: img_width,
+        height: img_height,
+    })
+    .with_quality(peniko::ImageQuality::High);
 
-    floem::views::img(move || encoded_bmp.clone())
-        .style(move |s| {
-            s.width(display_width)
-                .height(display_height)
-                .border(1.0)
-                .border_color(Color::from_rgb8(204, 204, 204))
-        })
+    // 使用数据的前几个字节作为 hash
+    let hash_bytes: Vec<u8> = data.iter().take(32).copied().collect();
+
+    canvas(move |cx, _bounds| {
+        let rect = Rect::from_origin_size((0.0, 0.0), (display_width, display_height));
+        
+        let renderer_img = floem_renderer::Img {
+            img: image_brush.clone(),
+            hash: &hash_bytes,
+        };
+
+        cx.draw_img(renderer_img, rect);
+    })
+    .style(move |s| {
+        s.width(display_width)
+            .height(display_height)
+    })
 }
