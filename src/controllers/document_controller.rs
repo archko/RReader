@@ -18,12 +18,20 @@ pub struct DocumentController {
     page_view_state: Rc<RefCell<PageViewState>>,
     tts_service: Arc<Mutex<TtsService>>,
     load_timer: RefCell<Option<Timer>>,
+    /// 滚动节流定时器：连续滚动时合并刷新，避免每帧重建 VecModel
+    scroll_timer: Rc<RefCell<Option<Timer>>>,
 }
 
 impl DocumentController {
     pub fn new(viewmodel: Rc<RefCell<MainViewmodel>>, tts_service: Arc<Mutex<TtsService>>) -> Self {
         let page_view_state = Rc::new(RefCell::new(PageViewState::new(Orientation::Vertical, 0)));
-        Self { viewmodel, page_view_state, tts_service, load_timer: RefCell::new(None) }
+        Self {
+            viewmodel,
+            page_view_state,
+            tts_service,
+            load_timer: RefCell::new(None),
+            scroll_timer: Rc::new(RefCell::new(None)),
+        }
     }
 
     /// 初始化UI，将控制器连接到Slint窗口
@@ -113,17 +121,39 @@ impl DocumentController {
             });
         }
 
-        // 滚动变化回调
+        // 滚动变化回调（带 16ms 节流：连续滚动时合并刷新，停止滚动后才刷新）
         {
             let page_view_state = Rc::clone(&self.page_view_state);
             let weak_window = window.as_weak();
+            let scroll_timer = Rc::clone(&self.scroll_timer);
             window.on_scroll_changed(move |x, y| {
+                // 立即更新偏移量，保证滚动手感丝滑
+                let mut state = page_view_state.borrow_mut();
+                state.update_offset(x as f32, y as f32);
+                let old_visible = state.visible_pages.clone();
+                state.update_visible_pages();
+                let visible_changed = state.visible_pages != old_visible;
+                drop(state);
+
                 if let Some(window) = weak_window.upgrade() {
-                    debug!("on_scroll_changed");
-                    let mut state = page_view_state.borrow_mut();
-                    state.update_offset(x as f32, y as f32);
-                    state.update_visible_pages();
-                    Self::refresh_view(&window, &state);
+                    if visible_changed {
+                        // 可见页面集合变了 → 立即刷新（翻页/跳转场景，不能延迟）
+                        let state = page_view_state.borrow();
+                        Self::refresh_view(&window, &state);
+                    } else {
+                        // 可见页面没变（微调滚动）→ 延迟 16ms 合并刷新
+                        // 新的 scroll 事件会取消上一个 timer
+                        let clock = Rc::clone(&page_view_state);
+                        let ww = weak_window.clone();
+                        let timer = Timer::default();
+                        timer.start(TimerMode::SingleShot, std::time::Duration::from_millis(16), move || {
+                            if let Some(w) = ww.upgrade() {
+                                let state = clock.borrow();
+                                Self::refresh_view(&w, &state);
+                            }
+                        });
+                        *scroll_timer.borrow_mut() = Some(timer);
+                    }
                 }
             });
         }

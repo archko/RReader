@@ -161,6 +161,18 @@ impl PageViewState {
             Orientation::Vertical => self.layout_vertical(),
             Orientation::Horizontal => self.layout_horizontal(),
         }
+
+        // 页面位置已变，同步 page_bounds_map 供解码线程的可见性检查使用
+        self.sync_page_bounds_map();
+    }
+
+    /// 将当前所有页面的 bounds 同步到 page_bounds_map（供解码线程读取）
+    fn sync_page_bounds_map(&self) {
+        let mut bounds_map = self.page_bounds_map.lock().unwrap();
+        bounds_map.clear();
+        for page in &self.pages {
+            bounds_map.insert(page.info.index, page.bounds.clone());
+        }
     }
 
     /// 垂直布局
@@ -248,17 +260,8 @@ impl PageViewState {
             ),
         };
 
-        // 更新共享的可见区域
+        // 更新共享的可见区域（每次滚动都更新，让解码线程知道视口位置）
         *self.visible_rect.lock().unwrap() = visible_rect.clone();
-
-        // 更新页面bounds映射
-        {
-            let mut bounds_map = self.page_bounds_map.lock().unwrap();
-            bounds_map.clear();
-            for page in &self.pages {
-                bounds_map.insert(page.info.index, page.bounds.clone());
-            }
-        }
 
         // 使用二分查找优化
         let first = self.find_first_visible(&visible_rect);
