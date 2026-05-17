@@ -142,7 +142,6 @@ impl HistoryController for DefaultHistoryController {
         let weak_window = window.as_weak();
         let weak_window2 = window.as_weak();
         let weak_window3 = window.as_weak();
-        let history_controller = self as *const dyn HistoryController;
         let document_controller = Rc::clone(&self.document_controller);
 
         window.on_history_item_clicked(move |ui_recent| {
@@ -177,16 +176,22 @@ impl HistoryController for DefaultHistoryController {
             }
         });
 
+        // 注意：不再使用不安全原始指针。直接捕获 viewmodel 和 weak_window，
+        // 调用静态函数完成清空 + 刷新操作，消除 use-after-free 风险。
+        let viewmodel_for_clear = StdRc::clone(&self.viewmodel);
         window.on_clear_history(move || {
-            let controller = unsafe { &*history_controller };
-            if let Err(e) = controller.clear_history() {
+            // 1. 清空数据库
+            if let Err(e) = crate::dao::RecentDao::clear_all_sync() {
                 log::warn!("Failed to clear history: {}", e);
             }
-
+            // 2. 刷新内存缓存（从 DB 重新加载）
+            let _ = viewmodel_for_clear.borrow_mut().load_history(0);
+            // 3. 刷新 UI
             if let Some(window) = weak_window3.upgrade() {
-                if let Err(e) = unsafe { &*history_controller }.refresh_history_ui(&window) {
-                    log::error!("Failed to refresh history after clear: {}", e);
-                }
+                let vm_binding = viewmodel_for_clear.borrow();
+                let history_records = vm_binding.get_current_records();
+                let ui_history_items = convert_history_records_to_items(history_records);
+                set_history_to_ui(&window, ui_history_items);
             }
         });
     }

@@ -303,8 +303,8 @@ impl PageViewState {
                 let key = generate_thumbnail_key(page);
                 
                 if page.width > 0.0 && page.height > 0.0 {
-                    // 先检查缓存中是否已有该页面
-                    if self.cache.get_thumbnail(&key).is_none() {
+                    // 先检查全尺寸图片缓存中是否已有该页面
+                    if self.cache.get_page_image_by_key(&key).is_none() {
                         debug!("需要解码: page={}, key={}", page.info.index, key);
                         
                         render_pages.push(RenderPage {

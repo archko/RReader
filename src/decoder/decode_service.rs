@@ -435,8 +435,8 @@ impl DecodeService {
         self.load_result_receiver.lock().unwrap().try_recv().ok()
     }
 
-    /// 关闭服务
-    pub fn destroy(&mut self) {
+    /// 关闭服务（发送 Shutdown 信号给解码线程）
+    pub fn destroy(&self) {
         info!("Destroying decoder service");
         let _ = self.task_sender.send(DecodeTask::Shutdown);
     }

@@ -287,14 +287,12 @@ impl DocumentController {
             .iter()
             .filter_map(|&idx| state.pages.get(idx))
             .map(|page| {
-                // 尝试从缓存获取图像，如果不存在则使用默认图像
+                // 尝试从全尺寸图片缓存获取图像，如果不存在则使用默认图像
                 let key = crate::decoder::pdf::utils::generate_thumbnail_key(page);
                 let image = {
-                    if let Some(cached_image) = state.cache.get_thumbnail(&key) {
-                        //debug!("从缓存获取图像: key={}, page={}", key, page.info.index);
+                    if let Some(cached_image) = state.cache.get_page_image_by_key(&key) {
                         cached_image.as_ref().clone()
                     } else {
-                        //debug!("缓存中没有图像，显示页码: key={}, page={}", key, page.info.index);
                         slint::Image::default()
                     }
                 };

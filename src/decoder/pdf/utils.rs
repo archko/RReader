@@ -25,34 +25,49 @@ pub fn mupdf_to_pixels(pixmap: &Pixmap) -> (Vec<u8>, u32, u32) {
     let width = pixmap.width();
     let height = pixmap.height();
     let samples = pixmap.samples();
-    let n = pixmap.n() as usize; // 每个像素的组件数
+    let n = pixmap.n() as usize;
+    let total_pixels = (width * height) as usize;
+    let mut buffer = vec![0u8; total_pixels * 4];
 
-    let mut buffer = vec![0u8; (width * height * 4) as usize];
-
-    for y in 0..height {
-        for x in 0..width {
-            let src_idx = ((y * width + x) as usize) * n;
-            let dst_idx = ((y * width + x) as usize) * 4;
-
-            if src_idx + n <= samples.len() && dst_idx + 4 <= buffer.len() {
-                if n == 4 {
-                    // RGBA
-                    buffer[dst_idx] = samples[src_idx];
-                    buffer[dst_idx + 1] = samples[src_idx + 1];
-                    buffer[dst_idx + 2] = samples[src_idx + 2];
-                    buffer[dst_idx + 3] = samples[src_idx + 3];
-                } else if n == 3 {
-                    // RGB
-                    buffer[dst_idx] = samples[src_idx];
-                    buffer[dst_idx + 1] = samples[src_idx + 1];
-                    buffer[dst_idx + 2] = samples[src_idx + 2];
+    match n {
+        4 => {
+            // RGBA: 直接整块拷贝，避免逐像素循环
+            let copy_len = total_pixels * 4;
+            let valid_len = copy_len.min(samples.len());
+            buffer[..valid_len].copy_from_slice(&samples[..valid_len]);
+        }
+        3 => {
+            // RGB -> RGBA: 按行处理，每行连续拷贝
+            let w = width as usize;
+            for y in 0..height as usize {
+                let row_start = y * w;
+                let src_off = row_start * 3;
+                let dst_off = row_start * 4;
+                let src_row = &samples[src_off..src_off + w * 3];
+                let dst_row = &mut buffer[dst_off..dst_off + w * 4];
+                // 展开循环：3字节RGB + 1字节Alpha
+                for i in 0..w {
+                    let si = i * 3;
+                    let di = i * 4;
+                    dst_row[di]     = src_row[si];
+                    dst_row[di + 1] = src_row[si + 1];
+                    dst_row[di + 2] = src_row[si + 2];
+                    dst_row[di + 3] = 255;
+                }
+            }
+        }
+        _ => {
+            // 灰度或其他，广播到RGBA
+            let w = width as usize;
+            for y in 0..height as usize {
+                for x in 0..w {
+                    let src_idx = (y * w + x) * n;
+                    let dst_idx = (y * w + x) * 4;
+                    let gray = if src_idx < samples.len() { samples[src_idx] } else { 255 };
+                    buffer[dst_idx]     = gray;
+                    buffer[dst_idx + 1] = gray;
+                    buffer[dst_idx + 2] = gray;
                     buffer[dst_idx + 3] = 255;
-                } else {
-                    // 灰度或其他，复制到所有通道
-                    buffer[dst_idx] = if n > 0 { samples[src_idx] } else { 255 };
-                    buffer[dst_idx + 1] = buffer[dst_idx];
-                    buffer[dst_idx + 2] = buffer[dst_idx];
-                    buffer[dst_idx + 3] = if n > 1 { samples[src_idx + 1] } else { 255 };
                 }
             }
         }

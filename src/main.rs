@@ -143,8 +143,8 @@ async fn main() -> Result<()> {
                                 ),
                             );
 
-                            // 更新缓存
-                            state.cache.put_thumbnail(result.key.clone(), slint_image);
+                            // 更新缓存（存入全尺寸图片缓存，24个槽位）
+                            state.cache.put_page_image_by_key(result.key.clone(), slint_image);
                             info!("[Main] 已更新缓存: key={}", result.key);
 
                             // 更新链接

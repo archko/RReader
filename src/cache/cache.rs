@@ -1,62 +1,40 @@
+use lru::LruCache;
 use slint::Image;
-use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
+/// O(1) LRU 图片缓存，淘汰策略为最近最少使用
 pub struct ImageCache {
-    cache: Arc<Mutex<HashMap<String, CachedImage>>>,
-    max_size: usize,
-}
-
-#[derive(Clone)]
-pub struct CachedImage {
-    pub image: Arc<Image>,
-    pub timestamp: std::time::Instant,
-    pub access_count: u64,
+    cache: Arc<Mutex<LruCache<String, Arc<Image>>>>,
 }
 
 impl ImageCache {
     pub fn new(max_size: usize) -> Self {
         Self {
-            cache: Arc::new(Mutex::new(HashMap::new())),
-            max_size,
+            cache: Arc::new(Mutex::new(
+                LruCache::new(NonZeroUsize::new(max_size).unwrap_or(NonZeroUsize::new(1).unwrap())),
+            )),
         }
     }
 
+    /// 获取图片并标记为最近使用
     pub fn get(&self, key: &str) -> Option<Arc<Image>> {
         let mut cache = self.cache.lock().unwrap();
-
-        if let Some(cached) = cache.get_mut(key) {
-            cached.access_count += 1;
-            cached.timestamp = std::time::Instant::now();
-            return Some(cached.image.clone());
-        }
-
-        None
+        cache.get(key).cloned()
     }
 
+    /// 存入图片（自动淘汰最久未使用的项）
     pub fn put(&self, key: String, image: Image) -> Arc<Image> {
         let mut cache = self.cache.lock().unwrap();
-
-        // 如果缓存已满，清理最久未使用的项
-        if cache.len() >= self.max_size {
-            self.evict_lru(&mut cache);
-        }
-
-        let cached_image = CachedImage {
-            image: Arc::new(image),
-            timestamp: std::time::Instant::now(),
-            access_count: 1,
-        };
-
-        let image_ref = cached_image.image.clone();
-        cache.insert(key, cached_image);
-
-        image_ref
+        let arc = Arc::new(image);
+        let cloned = arc.clone();
+        cache.put(key, arc);
+        cloned
     }
 
     pub fn remove(&self, key: &str) -> bool {
         let mut cache = self.cache.lock().unwrap();
-        cache.remove(key).is_some()
+        cache.pop(key).is_some()
     }
 
     pub fn clear(&self) {
@@ -68,25 +46,9 @@ impl ImageCache {
         let cache = self.cache.lock().unwrap();
         cache.len()
     }
-
-    fn evict_lru(&self, cache: &mut HashMap<String, CachedImage>) {
-        // 找到最久未使用的项
-        let mut oldest_key = None;
-        let mut oldest_time = std::time::Instant::now();
-
-        for (key, cached) in cache.iter() {
-            if cached.timestamp < oldest_time {
-                oldest_time = cached.timestamp;
-                oldest_key = Some(key.clone());
-            }
-        }
-
-        if let Some(key) = oldest_key {
-            cache.remove(&key);
-        }
-    }
 }
 
+/// 双层缓存：全尺寸页面图片（24张）+ 缩略图（10张）
 pub struct PageCache {
     pub image_cache: ImageCache,
     pub thumbnail_cache: ImageCache,
@@ -100,20 +62,18 @@ impl PageCache {
         }
     }
 
-    pub fn get_page_image(&self, page_index: usize, zoom: f32) -> Option<Arc<Image>> {
-        let key = format!("page_{}_{:.2}", page_index, zoom);
-        self.image_cache.get(&key)
+    // ===== 全尺寸页面图片缓存 =====
+    // 使用字符串 key 直接操作，key 格式由调用方决定
+
+    pub fn get_page_image_by_key(&self, key: &str) -> Option<Arc<Image>> {
+        self.image_cache.get(key)
     }
 
-    pub fn put_page_image(
-        &self,
-        page_index: usize,
-        zoom: f32,
-        image: Image,
-    ) -> Arc<Image> {
-        let key = format!("page_{}_{:.2}", page_index, zoom);
+    pub fn put_page_image_by_key(&self, key: String, image: Image) -> Arc<Image> {
         self.image_cache.put(key, image)
     }
+
+    // ===== 缩略图缓存 =====
 
     pub fn get_thumbnail(&self, key: &str) -> Option<Arc<Image>> {
         self.thumbnail_cache.get(key)
@@ -126,12 +86,6 @@ impl PageCache {
     pub fn clear(&self) {
         self.image_cache.clear();
         self.thumbnail_cache.clear();
-    }
-}
-
-impl Default for ImageCache {
-    fn default() -> Self {
-        Self::new(10)
     }
 }
 
