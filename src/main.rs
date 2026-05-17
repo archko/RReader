@@ -145,7 +145,6 @@ async fn main() -> Result<()> {
                                 ),
                             );
 
-                            // 克隆一份用于增量更新（clone 开销很低，Image 内部是引用计数）
                             let img_for_ui = slint_image.clone();
 
                             // 更新缓存（存入全尺寸图片缓存，24个槽位）
@@ -156,7 +155,6 @@ async fn main() -> Result<()> {
                                 .borrow_mut()
                                 .insert(result.page_info.index, result.links);
 
-                            // 增量更新 UI：只更新这一页，不触发全量重建
                             DocumentController::apply_tile(
                                 &state,
                                 &result.key,

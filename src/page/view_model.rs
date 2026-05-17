@@ -16,9 +16,7 @@ pub struct SlotEntry {
 
 /// 稳定索引模型，支持全量同步和增量更新
 pub struct ViewModel {
-    /// Slots 索引，与 VecModel 严格对齐
     pub slots: RefCell<Vec<SlotEntry>>,
-    /// 当前活跃的 Slint 模型引用
     model: RefCell<Rc<VecModel<PageData>>>,
 }
 
@@ -31,7 +29,6 @@ impl ViewModel {
     }
 
     /// 全量重建：传入新的 slots 和 model，返回 model 的 Rc
-    /// 调用方应将返回的 Rc 设置到 window.set_document_pages()
     pub fn sync(&self, slots: Vec<SlotEntry>, datas: Vec<PageData>) -> Rc<VecModel<PageData>> {
         let model = Rc::new(VecModel::from(datas));
         *self.slots.borrow_mut() = slots;
@@ -75,14 +72,12 @@ impl ViewModel {
         }
     }
 
-    /// 清空模型
     pub fn clear(&self) {
         self.slots.borrow_mut().clear();
         let new_model = Rc::new(VecModel::default());
         *self.model.borrow_mut() = new_model;
     }
 
-    /// 获取当前 slot 数量
     pub fn slot_count(&self) -> usize {
         self.slots.borrow().len()
     }
