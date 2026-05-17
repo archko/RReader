@@ -109,21 +109,28 @@ async fn main() -> Result<()> {
     let decode_timer = {
         let weak_app = app.as_weak();
         let state_clone = Rc::clone(&app_handler.document_controller().borrow().page_view_state());
-        let timer = slint::Timer::default();
-        let timer_count = Rc::new(RefCell::new(0));
-        let timer_count_clone = Rc::clone(&timer_count);
 
+        let timer = slint::Timer::default();
         timer.start(
             slint::TimerMode::Repeated,
             std::time::Duration::from_millis(100),
             move || {
-                let mut count = timer_count_clone.borrow_mut();
-                *count += 1;
-                if *count % 10 == 0 {
-                    debug!("[Main] 定时器运行中... count={}", *count);
-                }
-
                 if let Some(app) = weak_app.upgrade() {
+                    // 检查解码器是否崩溃（MuPDF 内部 panic 等）
+                    if state_clone.borrow().decode_service.has_error() {
+                        log::error!("解码器崩溃，请重新打开文档");
+                        state_clone.borrow().decode_service.clear_error();
+                        state_clone.borrow().decode_service.clear_work_pending();
+                        app.set_error_message("文档渲染引擎异常，请重新打开文件".into());
+                        app.set_show_error_dialog(true);
+                        return;
+                    }
+
+                    // 快速判断：无解码任务待处理 → 直接跳过，避免 RefCell/Mutex 开销
+                    if !state_clone.borrow().decode_service.is_work_pending() {
+                        return;
+                    }
+
                     let mut had_results = false;
                     let mut result_count = 0;
                     {
@@ -131,10 +138,7 @@ async fn main() -> Result<()> {
                         while let Some(result) = state.decode_service.try_recv_result() {
                             had_results = true;
                             result_count += 1;
-                            debug!("[Main] 收到解码结果: page={}, key={}, size={}x{}",
-                                result.page_info.index, result.key, result.image_width, result.image_height);
 
-                            // 注意：mupdf_to_pixels 返回的 RGBA 数据中 alpha 值为未预乘，若 Slint 期望预乘则需后续处理
                             let slint_image = slint::Image::from_rgba8_premultiplied(
                                 slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
                                     &result.image_data,
@@ -145,7 +149,6 @@ async fn main() -> Result<()> {
 
                             // 更新缓存（存入全尺寸图片缓存，24个槽位）
                             state.cache.put_page_image_by_key(result.key.clone(), slint_image);
-                            info!("[Main] 已更新缓存: key={}", result.key);
 
                             // 更新链接
                             state.page_links
@@ -155,9 +158,11 @@ async fn main() -> Result<()> {
                     }
 
                     if had_results {
-                        debug!("[Main] 处理了 {} 个解码结果，刷新视图", result_count);
-                        use crate::controllers::DocumentController;
-                        DocumentController::refresh_view(&app, &state_clone.borrow());
+                        let state = state_clone.borrow();
+                        DocumentController::refresh_view(&app, &state);
+                    } else {
+                        // 没有结果但在 work_pending=true → 表明之前的任务已消费完
+                        state_clone.borrow().decode_service.clear_work_pending();
                     }
                 }
             },

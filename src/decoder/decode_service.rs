@@ -2,6 +2,7 @@ use anyhow::Result;
 use log::{debug, info};
 use std::path::{Path, PathBuf};
 use crossbeam_channel::{unbounded, Sender, Receiver};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
 use std::time::{ Instant, Duration};
@@ -111,6 +112,10 @@ pub struct DecodeService {
     load_result_sender: Sender<Result<Vec<PageInfo>>>,
     load_result_receiver: Mutex<Receiver<Result<Vec<PageInfo>>>>,
     decode_thread: Option<JoinHandle<()>>,
+    /// 是否有解码任务正在处理（用于主线程避免空轮询）
+    work_pending: AtomicBool,
+    /// 解码线程是否发生过 panic 崩溃（与线程共享）
+    error_occurred: Arc<AtomicBool>,
 }
 
 impl DecodeService {
@@ -157,11 +162,13 @@ impl DecodeService {
         let (task_tx, task_rx) = unbounded::<DecodeTask>();
         let (result_tx, result_rx) = unbounded::<DecodeResult>();
         let (load_result_tx, load_result_rx) = unbounded::<Result<Vec<PageInfo>>>();
+        let error_flag = Arc::new(AtomicBool::new(false));
+        let error_flag_clone = Arc::clone(&error_flag);
 
         // 启动解码线程
         let load_result_tx_for_thread = load_result_tx.clone();
         let decode_thread = thread::spawn(move || {
-            Self::decode_loop(task_rx, result_tx, load_result_tx_for_thread);
+            Self::decode_loop(task_rx, result_tx, load_result_tx_for_thread, error_flag_clone);
         });
 
         Self {
@@ -170,26 +177,28 @@ impl DecodeService {
             load_result_sender: load_result_tx,
             load_result_receiver: Mutex::new(load_result_rx),
             decode_thread: Some(decode_thread),
+            work_pending: AtomicBool::new(false),
+            error_occurred: error_flag,
         }
     }
 
-    /// 解码线程主循环
-    fn decode_loop(task_rx: Receiver<DecodeTask>, result_tx: Sender<DecodeResult>, load_result_tx: Sender<Result<Vec<PageInfo>>>) {
+    /// 解码线程主循环（带 panic 恢复）
+    fn decode_loop(task_rx: Receiver<DecodeTask>, result_tx: Sender<DecodeResult>, load_result_tx: Sender<Result<Vec<PageInfo>>>, error_flag: Arc<AtomicBool>) {
         let mut decoder: Option<Box<dyn Decoder>> = None;
         let mut task_queue: VecDeque<RenderPage> = VecDeque::new();
         let mut current_visible: HashSet<RenderPage> = HashSet::new();
 
         loop {
-            // 1. 先检查是否有新任务（非阻塞）
+            // 1. 先检查是否有新任务（非阻塞，用 safe 版本防止 panic 杀死线程）
             while let Ok(task) = task_rx.try_recv() {
-                if Self::handle_task(
+                if Self::safe_handle_task(
                     task,
                     &mut decoder,
                     &mut task_queue,
                     &mut current_visible,
                     &load_result_tx,
+                    &error_flag,
                 ) {
-                    // 收到 Shutdown 信号
                     return;
                 }
             }
@@ -200,68 +209,87 @@ impl DecodeService {
                 let is_visible = if let Some(ref checker) = render_page.visibility_checker {
                     checker(render_page.page_info.index)
                 } else {
-                    // 如果没有回调，回退到旧的检查方式
                     current_visible.contains(&render_page)
                 };
 
                 if !is_visible {
-                    info!("跳过不可见页: page={}, key={}", 
-                        render_page.page_info.index, render_page.key);
-                    // 继续处理下一个任务
+                    task_queue.clear();
                     continue;
                 }
 
-                // 执行解码
-                if let Some(ref dec) = decoder {
-                    let start_time = Instant::now();
-                    
-                    match dec.render_page(&render_page.page_info, render_page.crop != 0) {
-                        Ok((image_data, width, height)) => {
-                            //std::thread::sleep(std::time::Duration::from_secs(2));
-                            let links = dec.get_page_links(render_page.page_info.index)
-                                .unwrap_or_default();
-
-                            let duration = start_time.elapsed();
-                            info!(
-                                "页面 {} 解码完成，耗时: {:?}, links: {}",
-                                render_page.page_info.index, duration, links.len()
-                            );
-
-                            let result = DecodeResult {
-                                key: render_page.key.clone(),
-                                page_info: render_page.page_info.clone(),
-                                image_data,
-                                image_width: width,
-                                image_height: height,
-                                links,
-                            };
-
-                            if result_tx.send(result).is_err() {
-                                info!("Result channel closed");
-                                return;
+                // 执行解码并用 catch_unwind 保护，防止 MuPDF 内部崩溃杀死线程
+                let render_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if let Some(ref dec) = decoder {
+                        let start_time = Instant::now();
+                        match dec.render_page(&render_page.page_info, render_page.crop != 0) {
+                            Ok((image_data, width, height)) => {
+                                let links = dec.get_page_links(render_page.page_info.index)
+                                    .unwrap_or_default();
+                                let duration = start_time.elapsed();
+                                info!("页面 {} 解码完成，耗时: {:?}, links: {}",
+                                    render_page.page_info.index, duration, links.len());
+                                Some((render_page.key.clone(), render_page.page_info.clone(),
+                                      image_data, width, height, links))
+                            }
+                            Err(e) => {
+                                info!("页面 {} 解码失败: {}", render_page.page_info.index, e);
+                                None
                             }
                         }
-                        Err(e) => {
-                            info!("页面 {} 解码失败: {}", render_page.page_info.index, e);
+                    } else {
+                        None
+                    }
+                }));
+
+                match render_result {
+                    Ok(Some((key, page_info, image_data, width, height, links))) => {
+                        let result = DecodeResult {
+                            key,
+                            page_info,
+                            image_data,
+                            image_width: width,
+                            image_height: height,
+                            links,
+                        };
+                        if result_tx.send(result).is_err() {
+                            info!("Result channel closed");
+                            return;
                         }
                     }
+                    Ok(None) => {
+                        // 正常失败（如解码错误），继续处理下一个
+                    }
+                    Err(panic_info) => {
+                        // 解码线程 panic！无效化解码器防止重复崩溃
+                        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            "Unknown panic".to_string()
+                        };
+                        log::error!("解码器渲染时崩溃: {}. 已无效化解码器，请重新打开文档。", msg);
+                        error_flag.store(true, Ordering::Release);
+                        decoder = None;
+                        task_queue.clear();
+                        current_visible.clear();
+                    }
                 }
-                
-                // 解码完一个任务后，继续下一个循环（会先检查新任务）
+
                 continue;
             }
 
             // 3. 队列为空，阻塞等待新任务
             match task_rx.recv() {
                 Ok(task) => {
-                    if Self::handle_task(
+                    if Self::safe_handle_task(
                         task,
                         &mut decoder,
                         &mut task_queue,
                         &mut current_visible,
                         &load_result_tx,
+                        &error_flag,
                     ) {
-                        // 收到 Shutdown 信号
                         break;
                     }
                 }
@@ -269,6 +297,37 @@ impl DecodeService {
                     info!("Task channel closed");
                     break;
                 }
+            }
+        }
+    }
+
+    /// 安全版本的 handle_task，用 catch_unwind 防止 panic 杀死解码线程
+    fn safe_handle_task(
+        task: DecodeTask,
+        decoder: &mut Option<Box<dyn Decoder>>,
+        task_queue: &mut VecDeque<RenderPage>,
+        current_visible: &mut HashSet<RenderPage>,
+        load_result_tx: &Sender<Result<Vec<PageInfo>>>,
+        error_flag: &Arc<AtomicBool>,
+    ) -> bool {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            Self::handle_task(task, decoder, task_queue, current_visible, load_result_tx)
+        })) {
+            Ok(should_exit) => should_exit,
+            Err(panic_info) => {
+                let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "Unknown panic".to_string()
+                };
+                log::error!("解码器处理任务时崩溃: {}. 已无效化解码器，请重新打开文档。", msg);
+                error_flag.store(true, Ordering::Release);
+                *decoder = None;
+                task_queue.clear();
+                current_visible.clear();
+                false // 不退出线程，等待新的 LoadDocument 请求
             }
         }
     }
@@ -371,6 +430,8 @@ impl DecodeService {
 
     /// 加载PDF文档（异步）
     pub fn load_pdf<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        // 清除之前的错误标志，新文档从头开始
+        self.clear_error();
         self.task_sender
             .send(DecodeTask::LoadDocument {
                 path: path.as_ref().to_path_buf(),
@@ -420,8 +481,29 @@ impl DecodeService {
     /// 批量提交渲染任务（异步，不等待）
     pub fn render_pages(&self, pages: Vec<RenderPage>) {
         if !pages.is_empty() {
+            self.work_pending.store(true, Ordering::Release);
             let _ = self.task_sender.send(DecodeTask::RenderPages { pages });
         }
+    }
+
+    /// 是否有未处理完的解码任务
+    pub fn is_work_pending(&self) -> bool {
+        self.work_pending.load(Ordering::Acquire)
+    }
+
+    /// 标记解码任务已全部处理完毕
+    pub fn clear_work_pending(&self) {
+        self.work_pending.store(false, Ordering::Release);
+    }
+
+    /// 解码线程是否发生过 panic（如 MuPDF 内部崩溃）
+    pub fn has_error(&self) -> bool {
+        self.error_occurred.load(Ordering::Acquire)
+    }
+
+    /// 清除错误标志（重新打开文档前调用）
+    pub fn clear_error(&self) {
+        self.error_occurred.store(false, Ordering::Release);
     }
 
     /// 尝试接收解码结果（非阻塞）
