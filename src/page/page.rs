@@ -153,8 +153,8 @@ struct TileConfig {
 }
 
 impl TileConfig {
-    const MIN_BLOCK_SIZE: f32 = 256.0 * 3.0; // 约 768 像素
-    const MAX_BLOCK_SIZE: f32 = 256.0 * 4.0; // 约 1024 像素
+    const MIN_BLOCK_SIZE: f32 = 256.0 * 2.0; 
+    const MAX_BLOCK_SIZE: f32 = 256.0 * 3.0; 
 
     fn is_single_block(&self) -> bool {
         self.x_blocks == 1 && self.y_blocks == 1

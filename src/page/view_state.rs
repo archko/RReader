@@ -1,6 +1,7 @@
 use log::{debug, info};
 
 use super::Page;
+use super::ViewModel;
 use crate::cache::PageCache;
 use crate::decoder::decode_service::{Priority, RenderPage, VisibilityChecker};
 use crate::decoder::pdf::utils::{generate_thumbnail_key};
@@ -62,6 +63,9 @@ pub struct PageViewState {
 
     pub outline_items: Vec<OutlineItem>,
 
+    /// 视图模型（维护 Slint VecModel 稳定索引，支持增量更新）
+    pub view_model: Rc<ViewModel>,
+
     /// 可见区域（用于跨线程可见性检查）
     visible_rect: Arc<Mutex<Rect>>,
 
@@ -86,6 +90,7 @@ impl PageViewState {
             visible_pages: Vec::new(),
             page_links: Rc::new(RefCell::new(HashMap::new())),
             outline_items: Vec::new(),
+            view_model: Rc::new(ViewModel::new()),
             visible_rect: Arc::new(Mutex::new(Rect::new(0.0, 0.0, 0.0, 0.0))),
             page_bounds_map: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -117,6 +122,7 @@ impl PageViewState {
         self.cache.clear();
         self.page_links.borrow_mut().clear();
         self.outline_items.clear();
+        self.view_model = Rc::new(ViewModel::new());
     }
 
     /// 更新视图尺寸和缩放
@@ -486,5 +492,6 @@ impl PageViewState {
         self.page_links.borrow_mut().clear();
         self.outline_items.clear();
         self.cache.clear();
+        self.view_model = Rc::new(ViewModel::new());
     }
 }

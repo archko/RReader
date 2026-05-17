@@ -2,7 +2,8 @@ use slint::{SharedString, ModelRc, VecModel, Timer, TimerMode, ComponentHandle, 
 use crate::ui::MainViewmodel;
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::page::{PageViewState, Orientation};
+use crate::page::{PageViewState, Orientation, ViewModel};
+use crate::page::view_model::SlotEntry;
 use crate::decoder::{PageInfo};
 use crate::decoder::pdf::utils::{convert_to_slint_image, generate_thumbnail_key};
 use crate::tts::TtsService;
@@ -81,7 +82,7 @@ impl DocumentController {
                     if let Some(window) = weak_window.upgrade() {
                         window.set_total_width(state.total_width);
                         window.set_total_height(state.total_height);
-                        Self::refresh_view(&window, &state);
+                        Self::sync_view(&window, &state);
                     }
                 }
             });
@@ -116,7 +117,7 @@ impl DocumentController {
                     }
                     
                     state.update_visible_pages();
-                    Self::refresh_view(&window, &state);
+                    Self::sync_view(&window, &state);
                 }
             });
         }
@@ -139,7 +140,7 @@ impl DocumentController {
                     if visible_changed {
                         // 可见页面集合变了 → 立即刷新（翻页/跳转场景，不能延迟）
                         let state = page_view_state.borrow();
-                        Self::refresh_view(&window, &state);
+                        Self::sync_view(&window, &state);
                     } else {
                         // 可见页面没变（微调滚动）→ 延迟 16ms 合并刷新
                         // 新的 scroll 事件会取消上一个 timer
@@ -149,7 +150,7 @@ impl DocumentController {
                         timer.start(TimerMode::SingleShot, std::time::Duration::from_millis(16), move || {
                             if let Some(w) = ww.upgrade() {
                                 let state = clock.borrow();
-                                Self::refresh_view(&w, &state);
+                                Self::sync_view(&w, &state);
                             }
                         });
                         *scroll_timer.borrow_mut() = Some(timer);
@@ -169,7 +170,7 @@ impl DocumentController {
                     state.update_visible_pages();
 
                     if let Some(window) = weak_window.upgrade() {
-                        Self::refresh_view(&window, &state);
+                        Self::sync_view(&window, &state);
 
                         window.set_offset_x(state.view_offset.0);
                         window.set_offset_y(state.view_offset.1);
@@ -250,7 +251,7 @@ impl DocumentController {
                         let mut state = page_view_state.borrow_mut();
                         if state.jump_to_page(page_num).is_some() {
                             state.update_visible_pages();
-                            Self::refresh_view(&window, &state);
+                            Self::sync_view(&window, &state);
                             
                             window.set_scroll_events_enabled(false);
                             window.set_offset_x(state.view_offset.0);
@@ -304,46 +305,65 @@ impl DocumentController {
         }
     }
 
-    /// 刷新视图
-    pub(crate) fn refresh_view(window: &AppWindow, state: &PageViewState) {
+    /// 全量同步视图（翻页/缩放/resize 时调用）
+    pub(crate) fn sync_view(window: &AppWindow, state: &PageViewState) {
         if state.pages.is_empty() {
-            debug!("No pages to refresh");
+            debug!("No pages to sync");
             return;
         }
 
-        debug!("refresh_view: visible_pages={:?}", state.visible_pages);
+        debug!("sync_view: visible_pages={:?}", state.visible_pages);
 
-        let rendered_pages = state.visible_pages
-            .iter()
-            .filter_map(|&idx| state.pages.get(idx))
-            .map(|page| {
-                // 尝试从全尺寸图片缓存获取图像，如果不存在则使用默认图像
-                let key = crate::decoder::pdf::utils::generate_thumbnail_key(page);
-                let image = {
-                    if let Some(cached_image) = state.cache.get_page_image_by_key(&key) {
-                        cached_image.as_ref().clone()
-                    } else {
-                        slint::Image::default()
-                    }
-                };
+        let mut slots = Vec::with_capacity(state.visible_pages.len());
+        let mut datas = Vec::with_capacity(state.visible_pages.len());
 
-                crate::PageData {
+        for &idx in &state.visible_pages {
+            if let Some(page) = state.pages.get(idx) {
+                let key = generate_thumbnail_key(page);
+                let image = state.cache.get_page_image_by_key(&key)
+                    .map(|a| a.as_ref().clone())
+                    .unwrap_or_default();
+
+                slots.push(SlotEntry {
+                    cache_key: key,
+                    page_index: idx,
+                    x: page.bounds.left,
+                    y: page.bounds.top,
+                    width: page.width,
+                    height: page.height,
+                });
+
+                datas.push(PageData {
                     x: page.bounds.left,
                     y: page.bounds.top,
                     width: page.width,
                     height: page.height,
                     image,
-                    page_index: page.info.index as i32,
-                }
-            })
-            .collect::<Vec<_>>();
+                    page_index: idx as i32,
+                });
+            }
+        }
 
-        info!("refresh_view {} page_models", rendered_pages.len());
-        let model = Rc::new(VecModel::from(rendered_pages));
+        info!("sync_view: {} 个条目", datas.len());
+        let model = state.view_model.sync(slots, datas);
         window.set_document_pages(ModelRc::from(model));
 
         if let Some(first_visible) = state.get_first_visible_page() {
-            window.set_current_page((first_visible + 1) as i32);  // UI expects 1-based page numbers
+            window.set_current_page((first_visible + 1) as i32);
+        }
+    }
+
+    /// 增量更新单个解码完成的图片（解码线程返回结果时调用）
+    pub(crate) fn apply_tile(state: &PageViewState, key: &str, image: Image,
+        page_index: usize, image_width: u32, image_height: u32)
+    {
+        if let Some(page) = state.pages.get(page_index) {
+            state.view_model.apply_tile(
+                key, image,
+                page.bounds.left, page.bounds.top,
+                image_width as f32, image_height as f32,
+                page_index as i32,
+            );
         }
     }
 
@@ -453,7 +473,7 @@ impl DocumentController {
                 }
 
                 state.update_visible_pages();
-                Self::refresh_view(window, &state);
+                Self::sync_view(window, &state);
             }
             Err(err) => {
                 error!("Failed to open PDF: {err}");

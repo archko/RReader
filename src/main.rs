@@ -132,12 +132,10 @@ async fn main() -> Result<()> {
                     }
 
                     let mut had_results = false;
-                    let mut result_count = 0;
                     {
                         let mut state = state_clone.borrow_mut();
                         while let Some(result) = state.decode_service.try_recv_result() {
                             had_results = true;
-                            result_count += 1;
 
                             let slint_image = slint::Image::from_rgba8_premultiplied(
                                 slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
@@ -147,6 +145,9 @@ async fn main() -> Result<()> {
                                 ),
                             );
 
+                            // 克隆一份用于增量更新（clone 开销很低，Image 内部是引用计数）
+                            let img_for_ui = slint_image.clone();
+
                             // 更新缓存（存入全尺寸图片缓存，24个槽位）
                             state.cache.put_page_image_by_key(result.key.clone(), slint_image);
 
@@ -154,14 +155,21 @@ async fn main() -> Result<()> {
                             state.page_links
                                 .borrow_mut()
                                 .insert(result.page_info.index, result.links);
+
+                            // 增量更新 UI：只更新这一页，不触发全量重建
+                            DocumentController::apply_tile(
+                                &state,
+                                &result.key,
+                                img_for_ui,
+                                result.page_info.index,
+                                result.image_width,
+                                result.image_height,
+                            );
                         }
                     }
 
-                    if had_results {
-                        let state = state_clone.borrow();
-                        DocumentController::refresh_view(&app, &state);
-                    } else {
-                        // 没有结果但在 work_pending=true → 表明之前的任务已消费完
+                    if !had_results {
+                        // 没有新结果 → 表明之前的解码任务已全部消费完
                         state_clone.borrow().decode_service.clear_work_pending();
                     }
                 }
