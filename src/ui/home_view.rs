@@ -13,7 +13,7 @@ use vello::peniko::{ImageData, ImageFormat};
 use crate::dao::RecentDao;
 use crate::ui::utils::get_thumbnail_path;
 use crate::ui::main_viewmodel::PAGE_SIZE;
-use crate::page::PageRenderState;
+use crate::page::{PageRenderState, render_state::spawn_cache_consumer};
 use image::DynamicImage;
 
 /// 顶层应用状态，管理视图切换
@@ -61,7 +61,7 @@ impl AppState {
             return;
         }
 
-        // 后台线程轮询加载结果
+        // 后台线程：等待文档加载完成 → 设置页面 → 启动缓存消费者
         std::thread::spawn(move || {
             let mut attempts = 0;
             loop {
@@ -69,16 +69,15 @@ impl AppState {
                     match result {
                         Ok(pages_info) => {
                             debug!("Document loaded: {} pages", pages_info.len());
-                            // 为每个页面创建 Page 并设置
                             let pages: Vec<crate::page::Page> = pages_info
                                 .into_iter()
                                 .map(|info| crate::page::Page::new(info, 0.0, 0.0, 0.0, 0.0))
                                 .collect();
                             pv.set_pages(pages);
-                            // 触发初始布局
                             pv.update_view_size(800.0, 600.0, 1.0, true);
-                            // 触发初始可见页计算
                             pv.update_offset(0.0, 0.0);
+                            // 启动缓存消费线程（后台存 cache + 设 repaint_needed 标记）
+                            spawn_cache_consumer(Arc::clone(&pv));
                         }
                         Err(e) => {
                             error!("Failed to load document: {}", e);
@@ -100,6 +99,43 @@ impl AppState {
     pub fn back_to_home(&mut self) {
         self.page_render_state.close();
         self.view = ViewKind::Home;
+    }
+
+    /// 缩小
+    pub fn zoom_out(&mut self) {
+        let zoom = self.page_render_state.read().zoom;
+        self.page_render_state.update_zoom((zoom * 0.8).max(0.1));
+    }
+
+    /// 放大
+    pub fn zoom_in(&mut self) {
+        let zoom = self.page_render_state.read().zoom;
+        self.page_render_state.update_zoom((zoom * 1.25).min(10.0));
+    }
+
+    /// 切换横竖方向
+    pub fn toggle_orientation(&mut self) {
+        let new_ori = match self.page_render_state.read().orientation {
+            crate::page::Orientation::Vertical => crate::page::Orientation::Horizontal,
+            crate::page::Orientation::Horizontal => crate::page::Orientation::Vertical,
+        };
+        self.page_render_state.write().orientation = new_ori;
+        let (vw, vh, zoom) = {
+            let r = self.page_render_state.read();
+            (r.view_size.0, r.view_size.1, r.zoom)
+        };
+        self.page_render_state.update_view_size(vw, vh, zoom, true);
+    }
+
+    /// 切换切边
+    pub fn toggle_crop(&mut self) {
+        let (vw, vh, zoom, crop) = {
+            let r = self.page_render_state.read();
+            (r.view_size.0, r.view_size.1, r.zoom, r.crop)
+        };
+        let new_crop = if crop == 1 { 0 } else { 1 };
+        self.page_render_state.write().crop = new_crop;
+        self.page_render_state.update_view_size(vw, vh, zoom, true);
     }
 }
 

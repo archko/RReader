@@ -25,10 +25,10 @@ pub fn document_view(state: &mut AppState) -> Box<dyn WidgetView<AppState>> {
                 .color(palette::css::DIM_GRAY)
                 .padding((4.0, 0.0)),
             label("").flex(1.0),
-            text_button("方向", |_| log::debug!("切换方向"))
+            text_button("方向", |s: &mut AppState| s.toggle_orientation())
                 .background_color(palette::css::LIGHT_SLATE_GRAY)
                 .color(palette::css::WHITE),
-            text_button("切边", |_| log::debug!("切边"))
+            text_button("切边", |s: &mut AppState| s.toggle_crop())
                 .background_color(palette::css::LIGHT_SLATE_GRAY)
                 .color(palette::css::WHITE),
             text_button("AI", |_| log::debug!("AI"))
@@ -40,10 +40,10 @@ pub fn document_view(state: &mut AppState) -> Box<dyn WidgetView<AppState>> {
             text_button("书签", |_| log::debug!("书签"))
                 .background_color(palette::css::LIGHT_SLATE_GRAY)
                 .color(palette::css::WHITE),
-            text_button("🔍−", |_| log::debug!("缩小"))
+            text_button("🔍−", |s: &mut AppState| s.zoom_out())
                 .background_color(palette::css::LIGHT_SLATE_GRAY)
                 .color(palette::css::WHITE),
-            text_button("🔍+", |_| log::debug!("放大"))
+            text_button("🔍+", |s: &mut AppState| s.zoom_in())
                 .background_color(palette::css::LIGHT_SLATE_GRAY)
                 .color(palette::css::WHITE),
         ),

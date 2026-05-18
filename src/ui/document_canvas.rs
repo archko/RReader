@@ -1,8 +1,8 @@
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
-use log::debug;
-use vello::peniko::{Brush, ImageBrush, ImageData, ImageFormat, Color};
-use vello::kurbo::{Affine, Rect, Size};
+use vello::peniko::Color;
+use vello::kurbo::{Affine, Rect, Size, Vec2};
 use vello::Scene;
 use vello::Fill;
 
@@ -17,136 +17,149 @@ use xilem::core::{Pod, View, ViewCtx, ViewMarker, MessageContext, MessageResult}
 
 use crate::page::render_state::PageRenderState;
 
-// ─────────────────────────────────────────────
-// 1. 自定义 Masonry Widget
-// ─────────────────────────────────────────────
-
 pub struct DocumentCanvasWidget {
     state: Arc<PageRenderState>,
-    /// 标记是否需要重绘
-    needs_paint: bool,
+    /// 拖拽状态
+    is_dragging: bool,
+    start_offset: (f32, f32),
+    start_pos: (f64, f64),
 }
 
 impl DocumentCanvasWidget {
     pub fn new(state: Arc<PageRenderState>) -> Self {
         Self {
             state,
-            needs_paint: true,
+            is_dragging: false,
+            start_offset: (0.0, 0.0),
+            start_pos: (0.0, 0.0),
         }
+    }
+
+    /// 应用 scroll delta 到 offset（含钳位），返回 true 表示有实际变化
+    fn apply_scroll(&mut self, dx: f32, dy: f32) -> bool {
+        let (old_x, old_y, tw, th, vw, vh) = {
+            let r = self.state.read();
+            (
+                r.view_offset.0,
+                r.view_offset.1,
+                r.total_width,
+                r.total_height,
+                r.view_size.0,
+                r.view_size.1,
+            )
+        };
+        let new_x = (old_x + dx).clamp(-(tw - vw).max(0.0), 0.0);
+        let new_y = (old_y + dy).clamp(-(th - vh).max(0.0), 0.0);
+        if (new_x - old_x).abs() < 0.5 && (new_y - old_y).abs() < 0.5 {
+            return false;
+        }
+        self.state.update_offset(new_x, new_y);
+        true
     }
 }
 
 impl Widget for DocumentCanvasWidget {
     fn on_pointer_event(&mut self, event: &PointerEvent, ctx: &mut EventCtx) -> EventHandling {
         match event {
+            // ── 鼠标滚轮 ──
             PointerEvent::PointerScroll { delta, .. } => {
                 let x = delta.x as f32;
                 let y = delta.y as f32;
-
-                // 更新 offset（注意 scroll delta 相反方向）
-                let (old_x, old_y) = {
-                    let r = self.state.read();
-                    (r.view_offset.0, r.view_offset.1)
-                };
-                let new_x = old_x - x;
-                let new_y = old_y - y;
-
-                // 钳位
-                let (tw, th, vw, vh) = {
-                    let r = self.state.read();
-                    (r.total_width, r.total_height, r.view_size.0, r.view_size.1)
-                };
-                let clamped_x = new_x.clamp(-(tw - vw).max(0.0), 0.0);
-                let clamped_y = new_y.clamp(-(th - vh).max(0.0), 0.0);
-
-                self.state.update_offset(clamped_x, clamped_y);
-                ctx.request_paint();
+                if self.apply_scroll(-x, -y) {
+                    ctx.request_paint();
+                }
                 EventHandling::Handled
             }
+
+            // ── 拖拽平移 ──
+            PointerEvent::PointerDown { pos, button, .. } => {
+                if *button == masonry::event::PointerButton::Primary {
+                    let (ox, oy) = {
+                        let r = self.state.read();
+                        (r.view_offset.0, r.view_offset.1)
+                    };
+                    self.is_dragging = true;
+                    self.start_offset = (ox, oy);
+                    self.start_pos = (pos.x, pos.y);
+                    ctx.set_active(true);
+                }
+                EventHandling::Handled
+            }
+
+            PointerEvent::PointerMove { pos, .. } => {
+                if self.is_dragging {
+                    let dx = (pos.x - self.start_pos.0) as f32;
+                    let dy = (pos.y - self.start_pos.1) as f32;
+                    // 拖拽：offset 朝手指相反方向移动
+                    let new_x = self.start_offset.0 + dx;
+                    let new_y = self.start_offset.1 + dy;
+
+                    let (tw, th, vw, vh) = {
+                        let r = self.state.read();
+                        (r.total_width, r.total_height, r.view_size.0, r.view_size.1)
+                    };
+                    let clamped_x = new_x.clamp(-(tw - vw).max(0.0), 0.0);
+                    let clamped_y = new_y.clamp(-(th - vh).max(0.0), 0.0);
+
+                    self.state.update_offset(clamped_x, clamped_y);
+                    ctx.request_paint();
+                }
+                EventHandling::Handled
+            }
+
+            PointerEvent::PointerUp { .. } => {
+                self.is_dragging = false;
+                EventHandling::Handled
+            }
+
             _ => EventHandling::Handled,
         }
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx) {
-        // 1) 轮询解码结果
-        let _updated = self.state.poll_decode_results();
-        if _updated {
-            ctx.request_paint(); // 有新图像，继续重绘
+        // 检查后台缓存消费者是否存入了新图片
+        if self.state.repaint_needed.swap(false, Ordering::Acquire) {
+            ctx.request_paint();
         }
 
-        // 2) 绘制可见页面
         let inner = self.state.read();
         let scene: &mut Scene = &mut *ctx.scene;
-        let (off_x, off_y) = inner.view_offset;
-        let scroll = Affine::translate(off_x as f64, off_y as f64);
+        let scroll = Affine::translate(inner.view_offset.0 as f64, inner.view_offset.1 as f64);
 
         // 白色背景
-        let bg = Rect::new(0.0, 0.0, 100000.0, 100000.0);
-        scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            &Color::WHITE,
-            None,
-            &bg,
-        );
+        let bg = Rect::new(0.0, 0.0, 2000.0, 1200.0);
+        scene.fill(Fill::NonZero, Affine::IDENTITY, &Color::WHITE, None, &bg);
 
+        // 由每个 Page 自己绘制自己的 node
         for &page_idx in &inner.visible_pages {
             if let Some(page) = inner.pages.get(page_idx) {
-                for node in &page.nodes {
-                    let pixel_rect = node.to_pixel_rect(
-                        page.width,
-                        page.height,
-                        page.bounds.left,
-                        page.bounds.top,
-                    );
-
-                    // 解码器 Rect → kurbo Rect
-                    let draw_rect = Rect::new(
-                        pixel_rect.left as f64,
-                        pixel_rect.top as f64,
-                        pixel_rect.right as f64,
-                        pixel_rect.bottom as f64,
-                    );
-
-                    // 从缓存获取图像并绘制
-                    if let Some(img_arc) = self.state.cache.get_page_image_by_key(&node.cache_key) {
-                        let rgba = img_arc.to_rgba8();
-                        let (w, h) = rgba.dimensions();
-                        let data: Arc<[u8]> = rgba.into_raw().into();
-                        let image_data = ImageData {
-                            data,
-                            format: ImageFormat::Rgba8,
-                            width: w,
-                            height: h,
-                        };
-                        let brush: Brush = ImageBrush::new(image_data).into();
-                        scene.fill(Fill::NonZero, scroll, &brush, None, &draw_rect);
-                    }
-                }
+                page.draw(scene, scroll, &self.state.cache);
             }
         }
-
-        self.needs_paint = false;
     }
 
     fn layout(&mut self, _ctx: &mut LayoutCtx, bc: &BoxConstraints) -> Size {
-        let r = self.state.read();
-        let w = r.total_width.max(r.view_size.0);
-        let h = r.total_height.max(r.view_size.1);
-        bc.constrain(Size::new(w as f64, h as f64))
+        let (tw, th, vw, vh, zoom) = {
+            let r = self.state.read();
+            (r.total_width, r.total_height, r.view_size.0, r.view_size.1, r.zoom)
+        };
+        let desired = Size::new(tw.max(vw) as f64, th.max(vh) as f64);
+        let constrained = bc.constrain(desired);
+
+        // 将实际 viewport 尺寸写回 render_state（触发 layout 重算）
+        let new_vw = constrained.width.max(1.0) as f32;
+        let new_vh = constrained.height.max(1.0) as f32;
+        if (new_vw - vw).abs() > 0.5 || (new_vh - vh).abs() > 0.5 {
+            self.state.update_view_size(new_vw, new_vh, zoom, false);
+        }
+
+        constrained
     }
 
     fn on_status_change(&mut self, _ctx: &mut LifeCtx, _old: &masonry::Status, _new: &masonry::Status) {}
     fn lifecycle(&mut self, _ctx: &mut LifeCtx, _event: &LifeCycle) {}
     fn update(&mut self, _ctx: &mut UpdateCtx, _event: &UpdateEvent) {}
-    fn compute_max_intrinsic(
-        &mut self,
-        _axis: masonry::Axis,
-        _bc: &BoxConstraints,
-        _ctx: &mut LayoutCtx,
-    ) -> f64 {
-        0.0
-    }
+    fn compute_max_intrinsic(&mut self, _axis: masonry::Axis, _bc: &BoxConstraints, _ctx: &mut LayoutCtx) -> f64 { 0.0 }
 }
 
 // ─────────────────────────────────────────────
@@ -174,32 +187,11 @@ impl<AppState> View<AppState, (), ViewCtx> for DocumentCanvasView {
         (Pod::new(widget), ())
     }
 
-    fn rebuild(
-        &self,
-        _prev: &Self,
-        _vs: &mut Self::ViewState,
-        _ctx: &mut ViewCtx,
-        _element: &mut Self::Element,
-        _state: &mut AppState,
-    ) {
-        // DocumentCanvasWidget 通过 Arc<PageRenderState> 共享状态，无需额外更新
-    }
+    fn rebuild(&self, _prev: &Self, _vs: &mut Self::ViewState, _ctx: &mut ViewCtx, _element: &mut Self::Element, _state: &mut AppState) {}
 
-    fn teardown(
-        &self,
-        _vs: &mut Self::ViewState,
-        _ctx: &mut ViewCtx,
-        _element: &mut Self::Element,
-    ) {
-    }
+    fn teardown(&self, _vs: &mut Self::ViewState, _ctx: &mut ViewCtx, _element: &mut Self::Element) {}
 
-    fn message(
-        &self,
-        _vs: &mut Self::ViewState,
-        _ctx: &mut MessageContext,
-        _element: &mut Self::Element,
-        _state: &mut AppState,
-    ) -> MessageResult<()> {
+    fn message(&self, _vs: &mut Self::ViewState, _ctx: &mut MessageContext, _element: &mut Self::Element, _state: &mut AppState) -> MessageResult<()> {
         MessageResult::Nop
     }
 }

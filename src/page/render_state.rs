@@ -1,18 +1,19 @@
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock, atomic::{AtomicBool, Ordering}};
+use std::time::Duration;
 
 use log::debug;
 
 use super::{Orientation, Page};
 use crate::cache::PageCache;
-use crate::decoder::decode_service::{Priority, RenderPage, VisibilityChecker};
-use crate::decoder::pdf::utils::generate_thumbnail_key;
-use crate::decoder::{DecodeService, Rect};
-use std::sync::Arc;
+use crate::decoder::DecodeService;
+use crate::decoder::Rect;
 
 /// 文档渲染核心状态（线程安全，适用于 Xilem/Vello 侧）
 pub struct PageRenderState {
     pub decode_service: Arc<DecodeService>,
     pub cache: PageCache,
+    /// paint 时检查此标记，若为 true 则请求下一帧以显示新解码的图片
+    pub repaint_needed: AtomicBool,
     inner: RwLock<Inner>,
 }
 
@@ -34,6 +35,7 @@ impl PageRenderState {
         Self {
             decode_service: Arc::new(DecodeService::new()),
             cache: PageCache::new(24, 10),
+            repaint_needed: AtomicBool::new(false),
             inner: RwLock::new(Inner {
                 pages: Vec::new(),
                 view_offset: (0.0, 0.0),
@@ -65,7 +67,7 @@ impl PageRenderState {
         inner.pages = pages;
     }
 
-    /// 更新视图尺寸并重新布局
+    /// 更新视图尺寸并重新布局，同时重新计算可见页并提交解码
     pub fn update_view_size(&self, width: f32, height: f32, zoom: f32, force: bool) {
         let mut inner = self.inner.write().unwrap();
         let size_changed = inner.view_size.0 != width || inner.view_size.1 != height;
@@ -76,17 +78,15 @@ impl PageRenderState {
         inner.view_size = (width, height);
         inner.zoom = zoom;
         Self::recalculate_layout(&mut inner, &self.cache);
+        // 尺寸变化 → 重新计算可见 tile → 提交解码
+        submit_visible_decode_tasks(&self.cache, &self.decode_service, &mut inner);
     }
 
-    /// 更新偏移并重新计算可见页面
+    /// 更新偏移并重新计算可见页面（写路径：触发解码提交）
     pub fn update_offset(&self, x: f32, y: f32) {
         let mut inner = self.inner.write().unwrap();
         inner.view_offset = (x, y);
-        let pages_info = self.collect_visible_pages(&mut inner);
-        // 提交解码任务
-        if !pages_info.is_empty() {
-            self.decode_service.render_pages(pages_info);
-        }
+        submit_visible_decode_tasks(&self.cache, &self.decode_service, &mut inner);
     }
 
     /// 重新计算布局
@@ -98,67 +98,6 @@ impl PageRenderState {
             Orientation::Vertical => layout_vertical(inner),
             Orientation::Horizontal => layout_horizontal(inner),
         }
-    }
-
-    /// 计算可见页面列表并返回 RenderPage 列表
-    fn collect_visible_pages(&self, inner: &mut Inner) -> Vec<RenderPage> {
-        inner.visible_pages.clear();
-        let (off_x, off_y) = inner.view_offset;
-        let (vw, vh) = inner.view_size;
-        let preload = match inner.orientation {
-            Orientation::Vertical => vh * inner.preload_screens,
-            Orientation::Horizontal => vw * inner.preload_screens,
-        };
-
-        let visible_rect = match inner.orientation {
-            Orientation::Vertical => Rect::new(-off_x, -off_y, -off_x + vw, -off_y + vh + preload),
-            Orientation::Horizontal => Rect::new(-off_x, -off_y, -off_x + vw + preload, -off_y + vh),
-        };
-
-        let first = find_first_visible(&inner.pages, &visible_rect, inner.orientation);
-        let last = find_last_visible(&inner.pages, &visible_rect, inner.orientation);
-
-        let mut render_tasks = Vec::new();
-        if first <= last && first < inner.pages.len() {
-            for i in first..=last.min(inner.pages.len() - 1) {
-                inner.visible_pages.push(i);
-                let page = &inner.pages[i];
-                if page.width > 0.0 && page.height > 0.0 {
-                    let key = generate_thumbnail_key(page);
-                    if self.cache.get_page_image_by_key(&key).is_none() {
-                        render_tasks.push(RenderPage {
-                            key,
-                            page_info: page.info.clone(),
-                            crop: inner.crop,
-                            priority: Priority::Thumbnail,
-                            visibility_checker: None,
-                        });
-                    }
-                }
-            }
-        }
-        debug!(
-            "visible_pages: {:?}, tasks: {}",
-            inner.visible_pages, render_tasks.len()
-        );
-        render_tasks
-    }
-
-    /// 处理解码结果（返回 true 表示有新的图像数据）
-    pub fn poll_decode_results(&self) -> bool {
-        let mut updated = false;
-        while let Some(result) = self.decode_service.try_recv_result() {
-            if let Some(img) = image::RgbaImage::from_raw(
-                result.image_width,
-                result.image_height,
-                result.image_data,
-            ) {
-                self.cache
-                    .put_page_image_by_key(result.key, image::DynamicImage::ImageRgba8(img));
-                updated = true;
-            }
-        }
-        updated
     }
 
     /// 跳转到指定页面
@@ -173,10 +112,16 @@ impl PageRenderState {
             Orientation::Horizontal => (-page.bounds.left, inner.view_offset.1),
         };
         inner.view_offset = new_offset;
-        let tasks = self.collect_visible_pages(&mut inner);
-        if !tasks.is_empty() {
-            self.decode_service.render_pages(tasks);
-        }
+        submit_visible_decode_tasks(&self.cache, &self.decode_service, &mut inner);
+    }
+
+    /// 调整缩放（工具按钮用）
+    pub fn update_zoom(&self, new_zoom: f32) {
+        let (vw, vh) = {
+            let r = self.read();
+            (r.view_size.0, r.view_size.1)
+        };
+        self.update_view_size(vw, vh, new_zoom, true);
     }
 
     pub fn close(&self) {
@@ -195,7 +140,7 @@ impl Default for PageRenderState {
     }
 }
 
-// ===== 布局算法（与 PageViewState 相同） =====
+// ===== 布局算法 =====
 
 fn layout_vertical(inner: &mut Inner) {
     let view_width = inner.view_size.0;
@@ -252,6 +197,87 @@ fn find_first_visible(pages: &[Page], visible_rect: &Rect, orientation: Orientat
         }
     }
     result
+}
+
+/// 根据当前 offset / view_size 计算可见页面及其可见 tile。
+/// 对每个可见页调用 Page::update_visible_nodes() 来确定哪些 tile 在视口内，
+/// 并对缺缓存的 tile 提交解码。
+/// 将旧可见集中已移出视口的 page 回收可见性资源。
+fn submit_visible_decode_tasks(
+    cache: &PageCache,
+    decode_service: &DecodeService,
+    inner: &mut Inner,
+) {
+    // 1) 记住旧的可见集
+    let old_visible = std::mem::take(&mut inner.visible_pages);
+
+    // 2) 计算新可见范围
+    let (off_x, off_y) = inner.view_offset;
+    let (vw, vh) = inner.view_size;
+    let preload = match inner.orientation {
+        Orientation::Vertical => vh * inner.preload_screens,
+        Orientation::Horizontal => vw * inner.preload_screens,
+    };
+    let visible_rect = match inner.orientation {
+        Orientation::Vertical => Rect::new(-off_x, -off_y, -off_x + vw, -off_y + vh + preload),
+        Orientation::Horizontal => Rect::new(-off_x, -off_y, -off_x + vw + preload, -off_y + vh),
+    };
+
+    let first = find_first_visible(&inner.pages, &visible_rect, inner.orientation);
+    let last = find_last_visible(&inner.pages, &visible_rect, inner.orientation);
+
+    // 3) 回收移出视口的 page
+    for &old_idx in &old_visible {
+        if old_idx < first || old_idx > last {
+            if let Some(page) = inner.pages.get_mut(old_idx) {
+                page.recycle();
+            }
+        }
+    }
+
+    // 4) 对新可见页更新 tile 可见性 + 提交解码
+    let mut total_tasks = 0;
+    if first <= last && first < inner.pages.len() {
+        for i in first..=last.min(inner.pages.len() - 1) {
+            inner.visible_pages.push(i);
+            let page = &mut inner.pages[i];
+            if page.width > 0.0 && page.height > 0.0 {
+                let tasks = page.update_visible_nodes(&visible_rect, cache, inner.crop);
+                total_tasks += tasks.len();
+                if !tasks.is_empty() {
+                    decode_service.render_pages(tasks);
+                }
+            }
+        }
+    }
+    debug!("visible_pages: {:?}, tasks: {}", inner.visible_pages, total_tasks);
+}
+
+/// 启动后台缓存消费线程。
+/// 将解码完成的全页图片写入 LRU 缓存，并扩散到该页每个 node 的 cache_key 下。
+/// paint 时每个 node 用自己的 key 查缓存，有就画，没有就跳过。
+pub fn spawn_cache_consumer(state: Arc<PageRenderState>) {
+    std::thread::spawn(move || {
+        loop {
+            match state.decode_service.try_recv_result() {
+                Some(result) => {
+                    if let Some(img) = image::RgbaImage::from_raw(
+                        result.image_width,
+                        result.image_height,
+                        result.image_data,
+                    ) {
+                        let dyn_img = image::DynamicImage::ImageRgba8(img);
+                        // 以 result.key（node 级 key）存储
+                        state.cache.put_page_image_by_key(result.key, dyn_img);
+                        state.repaint_needed.store(true, Ordering::Release);
+                    }
+                }
+                None => {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+        }
+    });
 }
 
 fn find_last_visible(pages: &[Page], visible_rect: &Rect, orientation: Orientation) -> usize {

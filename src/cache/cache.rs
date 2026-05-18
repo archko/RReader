@@ -4,6 +4,7 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
 /// O(1) LRU 图片缓存，淘汰策略为最近最少使用
+#[derive(Clone)]
 pub struct ImageCache {
     cache: Arc<Mutex<LruCache<String, Arc<DynamicImage>>>>,
 }
@@ -49,6 +50,7 @@ impl ImageCache {
 }
 
 /// 双层缓存：全尺寸页面图片（24张）+ 缩略图（10张）
+#[derive(Clone)]
 pub struct PageCache {
     pub image_cache: ImageCache,
     pub thumbnail_cache: ImageCache,
