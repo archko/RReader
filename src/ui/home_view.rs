@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::path::Path;
 use log::{error, debug};
 
 use xilem::view::{
@@ -12,6 +13,8 @@ use vello::peniko::{ImageData, ImageFormat};
 use crate::dao::RecentDao;
 use crate::ui::utils::get_thumbnail_path;
 use crate::ui::main_viewmodel::PAGE_SIZE;
+use crate::page::PageRenderState;
+use image::DynamicImage;
 
 /// 顶层应用状态，管理视图切换
 pub enum ViewKind {
@@ -22,6 +25,7 @@ pub enum ViewKind {
 pub struct AppState {
     pub home: HomeViewState,
     pub view: ViewKind,
+    pub page_render_state: Arc<PageRenderState>,
 }
 
 impl AppState {
@@ -29,21 +33,72 @@ impl AppState {
         Self {
             home: HomeViewState::new(),
             view: ViewKind::Home,
+            page_render_state: Arc::new(PageRenderState::new()),
         }
     }
 
     /// 打开指定索引的历史记录文档
     pub fn open_document(&mut self, idx: usize) {
         if let Some(item) = self.home.records.get(idx) {
-            self.view = ViewKind::Document {
-                path: item.path.clone(),
-                title: item.title.clone(),
-            };
+            let path = item.path.clone();
+            let title = item.title.clone();
+
+            // 启动文档加载
+            self.start_loading_document(&path);
+
+            self.view = ViewKind::Document { path, title };
         }
+    }
+
+    /// 启动后台加载文档
+    fn start_loading_document(&self, path: &str) {
+        let pv = Arc::clone(&self.page_render_state);
+        let path_owned = path.to_string();
+
+        // 发送加载命令给解码线程
+        if let Err(e) = pv.decode_service.load_pdf(&path_owned) {
+            error!("Failed to start document load: {}", e);
+            return;
+        }
+
+        // 后台线程轮询加载结果
+        std::thread::spawn(move || {
+            let mut attempts = 0;
+            loop {
+                if let Some(result) = pv.decode_service.try_recv_load_result() {
+                    match result {
+                        Ok(pages_info) => {
+                            debug!("Document loaded: {} pages", pages_info.len());
+                            // 为每个页面创建 Page 并设置
+                            let pages: Vec<crate::page::Page> = pages_info
+                                .into_iter()
+                                .map(|info| crate::page::Page::new(info, 0.0, 0.0, 0.0, 0.0))
+                                .collect();
+                            pv.set_pages(pages);
+                            // 触发初始布局
+                            pv.update_view_size(800.0, 600.0, 1.0, true);
+                            // 触发初始可见页计算
+                            pv.update_offset(0.0, 0.0);
+                        }
+                        Err(e) => {
+                            error!("Failed to load document: {}", e);
+                        }
+                    }
+                    break;
+                }
+                attempts += 1;
+                if attempts >= 300 {
+                    error!("Document load timed out");
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        });
     }
 
     /// 返回历史记录首页
     pub fn back_to_home(&mut self) {
+        self.page_render_state.close();
         self.view = ViewKind::Home;
     }
 }

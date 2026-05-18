@@ -2,6 +2,7 @@ use xilem::view::{Axis, flex, label, text_button, FlexExt, WidgetView};
 use xilem::palette;
 
 use super::home_view::AppState;
+use super::document_canvas::DocumentCanvasView;
 
 /// 文档视图
 pub fn document_view(state: &mut AppState) -> Box<dyn WidgetView<AppState>> {
@@ -10,9 +11,10 @@ pub fn document_view(state: &mut AppState) -> Box<dyn WidgetView<AppState>> {
         _ => ("".to_string(), "".to_string()),
     };
 
+    // 创建自定义 Canvas View
+    let canvas = DocumentCanvasView::new(state.page_render_state.clone());
+
     // ---- 顶部工具栏 ----
-    // 左侧：返回按钮 + 路径
-    // 右侧（左→右）：方向 · 切边 · AI · 大纲 · 书签 · 缩小 · 放大
     let toolbar = flex(
         Axis::Horizontal,
         (
@@ -22,9 +24,7 @@ pub fn document_view(state: &mut AppState) -> Box<dyn WidgetView<AppState>> {
             label(format!("📂 {}", path))
                 .color(palette::css::DIM_GRAY)
                 .padding((4.0, 0.0)),
-            // 弹性空间，将右侧按钮组推到最右
             label("").flex(1.0),
-            // 右侧按钮组（从左到右）
             text_button("方向", |_| log::debug!("切换方向"))
                 .background_color(palette::css::LIGHT_SLATE_GRAY)
                 .color(palette::css::WHITE),
@@ -51,12 +51,6 @@ pub fn document_view(state: &mut AppState) -> Box<dyn WidgetView<AppState>> {
     .padding(8.0)
     .background_color(palette::css::LIGHT_STEEL_BLUE);
 
-    // ---- 文档渲染区域（占位） ----
-    let content_area = flex(Axis::Vertical, (
-        label("文档渲染区域").color(palette::css::GRAY).flex(1.0),
-    ))
-    .flex(1.0);
-
-    // ---- 根布局 ----
-    flex(Axis::Vertical, (toolbar, content_area)).boxed()
+    // ---- 根布局：工具栏 + 自定义画布 ----
+    flex(Axis::Vertical, (toolbar, canvas.flex(1.0))).boxed()
 }
