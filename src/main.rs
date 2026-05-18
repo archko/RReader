@@ -126,17 +126,9 @@ async fn main() -> Result<()> {
                         return;
                     }
 
-                    // 快速判断：无解码任务待处理 → 直接跳过，避免 RefCell/Mutex 开销
-                    if !state_clone.borrow().decode_service.is_work_pending() {
-                        return;
-                    }
-
-                    let mut had_results = false;
                     {
                         let mut state = state_clone.borrow_mut();
                         while let Some(result) = state.decode_service.try_recv_result() {
-                            had_results = true;
-
                             let slint_image = slint::Image::from_rgba8_premultiplied(
                                 slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
                                     &result.image_data,
@@ -164,11 +156,6 @@ async fn main() -> Result<()> {
                                 result.image_height,
                             );
                         }
-                    }
-
-                    if !had_results {
-                        // 没有新结果 → 表明之前的解码任务已全部消费完
-                        state_clone.borrow().decode_service.clear_work_pending();
                     }
                 }
             },

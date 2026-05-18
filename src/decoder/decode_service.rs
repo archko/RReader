@@ -213,7 +213,6 @@ impl DecodeService {
                 };
 
                 if !is_visible {
-                    task_queue.clear();
                     continue;
                 }
 
