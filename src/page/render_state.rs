@@ -3,10 +3,18 @@ use std::time::Duration;
 
 use log::debug;
 
-use super::{Orientation, Page};
+use super::Page;
 use crate::cache::PageCache;
 use crate::decoder::DecodeService;
 use crate::decoder::Rect;
+use crate::entity::OutlineItem;
+
+/// 滚动方向
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Orientation {
+    Vertical,
+    Horizontal,
+}
 
 /// 文档渲染核心状态（线程安全，适用于 Xilem/Vello 侧）
 pub struct PageRenderState {
@@ -28,6 +36,7 @@ struct Inner {
     pub orientation: Orientation,
     pub crop: i32,
     pub preload_screens: f32,
+    pub outline_items: Vec<OutlineItem>,
 }
 
 impl PageRenderState {
@@ -47,6 +56,7 @@ impl PageRenderState {
                 orientation: Orientation::Vertical,
                 crop: 0,
                 preload_screens: 1.0,
+                outline_items: Vec::new(),
             }),
         }
     }

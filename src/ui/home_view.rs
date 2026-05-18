@@ -26,6 +26,8 @@ pub struct AppState {
     pub home: HomeViewState,
     pub view: ViewKind,
     pub page_render_state: Arc<PageRenderState>,
+    /// 文档视图专用 UI 状态（仅在 Document view 下有意义）
+    pub document_ui: crate::ui::document_view::DocumentUiState,
 }
 
 impl AppState {
@@ -34,6 +36,7 @@ impl AppState {
             home: HomeViewState::new(),
             view: ViewKind::Home,
             page_render_state: Arc::new(PageRenderState::new()),
+            document_ui: crate::ui::document_view::DocumentUiState::default(),
         }
     }
 
@@ -76,6 +79,10 @@ impl AppState {
                             pv.set_pages(pages);
                             pv.update_view_size(800.0, 600.0, 1.0, true);
                             pv.update_offset(0.0, 0.0);
+                            // 加载大纲
+                            if let Ok(outline) = pv.decode_service.get_outline() {
+                                pv.write().outline_items = outline;
+                            }
                             // 启动缓存消费线程（后台存 cache + 设 repaint_needed 标记）
                             spawn_cache_consumer(Arc::clone(&pv));
                         }
@@ -101,42 +108,6 @@ impl AppState {
         self.view = ViewKind::Home;
     }
 
-    /// 缩小
-    pub fn zoom_out(&mut self) {
-        let zoom = self.page_render_state.read().zoom;
-        self.page_render_state.update_zoom((zoom * 0.8).max(0.1));
-    }
-
-    /// 放大
-    pub fn zoom_in(&mut self) {
-        let zoom = self.page_render_state.read().zoom;
-        self.page_render_state.update_zoom((zoom * 1.25).min(10.0));
-    }
-
-    /// 切换横竖方向
-    pub fn toggle_orientation(&mut self) {
-        let new_ori = match self.page_render_state.read().orientation {
-            crate::page::Orientation::Vertical => crate::page::Orientation::Horizontal,
-            crate::page::Orientation::Horizontal => crate::page::Orientation::Vertical,
-        };
-        self.page_render_state.write().orientation = new_ori;
-        let (vw, vh, zoom) = {
-            let r = self.page_render_state.read();
-            (r.view_size.0, r.view_size.1, r.zoom)
-        };
-        self.page_render_state.update_view_size(vw, vh, zoom, true);
-    }
-
-    /// 切换切边
-    pub fn toggle_crop(&mut self) {
-        let (vw, vh, zoom, crop) = {
-            let r = self.page_render_state.read();
-            (r.view_size.0, r.view_size.1, r.zoom, r.crop)
-        };
-        let new_crop = if crop == 1 { 0 } else { 1 };
-        self.page_render_state.write().crop = new_crop;
-        self.page_render_state.update_view_size(vw, vh, zoom, true);
-    }
 }
 
 impl Default for AppState {
