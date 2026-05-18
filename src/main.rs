@@ -2,17 +2,10 @@
 #![allow(dead_code)]
 #![allow(non_snake_case)]
 
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::Arc;
-
-use env_logger::Env;
 use log::info;
 use winit::error::EventLoopError;
 
-mod app_handler;
 mod cache;
-mod controllers;
 mod dao;
 mod decoder;
 mod entity;
@@ -20,10 +13,11 @@ mod page;
 mod tts;
 mod ui;
 
+use xilem::view::WidgetView;
 use xilem::{EventLoop, WindowOptions, Xilem};
-use ui::{HomeViewState, home_view};
+use ui::{AppState, ViewKind, home_view, document_view};
 
-/// 打开文件对话框（由 Xilem 回调触发）
+/// 打开文件对话框
 fn pick_file() -> Option<String> {
     let file_path = rfd::FileDialog::new()
         .add_filter("支持的文件", &[
@@ -32,6 +26,14 @@ fn pick_file() -> Option<String> {
         .set_title("选择文档")
         .pick_file();
     file_path.map(|p| p.to_string_lossy().to_string())
+}
+
+/// 根视图：根据当前状态切换 Home / Document
+fn app_logic(state: &mut AppState) -> Box<dyn WidgetView<AppState>> {
+    match state.view {
+        ViewKind::Home => home_view(state),
+        ViewKind::Document { .. } => document_view(state),
+    }
 }
 
 #[tokio::main]
@@ -59,10 +61,10 @@ async fn main() -> Result<(), EventLoopError> {
     crate::dao::RecentDao::init_sync().unwrap();
 
     // 启动 Xilem UI
-    let state = HomeViewState::default();
+    let state = AppState::default();
     let app = Xilem::new_simple(
         state,
-        home_view,
+        app_logic,
         WindowOptions::new("RReader - 文档阅读").with_min_inner_size(winit::dpi::LogicalSize::new(
             900.0,
             700.0,

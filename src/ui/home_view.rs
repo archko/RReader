@@ -13,6 +13,49 @@ use crate::dao::RecentDao;
 use crate::ui::utils::get_thumbnail_path;
 use crate::ui::main_viewmodel::PAGE_SIZE;
 
+/// 顶层应用状态，管理视图切换
+pub enum ViewKind {
+    Home,
+    Document { path: String, title: String },
+}
+
+pub struct AppState {
+    pub home: HomeViewState,
+    pub view: ViewKind,
+}
+
+impl AppState {
+    pub fn new() -> Self {
+        Self {
+            home: HomeViewState::new(),
+            view: ViewKind::Home,
+        }
+    }
+
+    /// 打开指定索引的历史记录文档
+    pub fn open_document(&mut self, idx: usize) {
+        if let Some(item) = self.home.records.get(idx) {
+            self.view = ViewKind::Document {
+                path: item.path.clone(),
+                title: item.title.clone(),
+            };
+        }
+    }
+
+    /// 返回历史记录首页
+    pub fn back_to_home(&mut self) {
+        self.view = ViewKind::Home;
+    }
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        let mut s = Self::new();
+        s.home.load_history();
+        s
+    }
+}
+
 /// 缩略图像素数据
 struct ThumbData {
     rgba: Arc<[u8]>,
@@ -20,17 +63,12 @@ struct ThumbData {
     height: u32,
 }
 
-/// 主页视图状态（Xilem 响应式状态）
+/// 主页视图状态
 pub struct HomeViewState {
-    /// 当前页的历史记录
     pub records: Vec<UIHistoryItem>,
-    /// 当前页码（从0开始）
     pub page_index: usize,
-    /// 总页数
     pub total_pages: usize,
-    /// 总记录数
     pub total_records: usize,
-    /// 缩略图缓存（与 records 一一对应）
     thumbnails: Vec<Option<ThumbData>>,
 }
 
@@ -57,7 +95,6 @@ impl HomeViewState {
         }
     }
 
-    /// 从数据库刷新当前页数据
     pub fn load_history(&mut self) {
         match RecentDao::find_all_ordered_by_update_at_desc_sync() {
             Ok(all) => {
@@ -163,87 +200,41 @@ impl HomeViewState {
     }
 }
 
-impl Default for HomeViewState {
-    fn default() -> Self {
-        let mut s = Self::new();
-        s.load_history();
-        s
-    }
-}
-
 const GRID_COLS: i32 = 4;
 
-/// 构建单个历史卡片
-fn history_card(
-    state: &HomeViewState,
-    idx: usize,
-) -> impl WidgetView<HomeViewState> {
-    let item = &state.records[idx];
-    let title = item.title.clone();
-    let page_text = format!("第 {} 页", item.page);
-
-    if let Some(thumb) = state.thumbnails.get(idx).and_then(|t| t.as_ref()) {
-        let img_data = ImageData {
-            data: Arc::clone(&thumb.rgba),
-            format: ImageFormat::Rgba8,
-            width: thumb.width,
-            height: thumb.height,
-        };
-        flex(Axis::Vertical, (
-            sized_box(image(img_data).fit(ObjectFit::ScaleDown), 100.0, 140.0)
-                .border(palette::css::LIGHT_GRAY, 1.0),
-            label(title).padding(4.0),
-            label(page_text).padding(4.0).color(palette::css::GRAY),
-        ))
-        .background_color(palette::css::WHITE)
-    } else {
-        flex(Axis::Vertical, (
-            sized_box(
-                label("").background_color(palette::css::GAINSBORO),
-                100.0,
-                140.0,
-            )
-            .border(palette::css::LIGHT_GRAY, 1.0),
-            label(title).padding(4.0),
-            label(page_text).padding(4.0).color(palette::css::GRAY),
-        ))
-        .background_color(palette::css::WHITE)
-    }
-}
-
-/// 主页视图（入口）
-pub fn home_view(state: &mut HomeViewState) -> Box<dyn WidgetView<HomeViewState>> {
-    // ---- 顶部工具栏 ----
+/// 主页视图
+pub fn home_view(state: &mut AppState) -> Box<dyn WidgetView<AppState>> {
+    // ---- 工具栏 ----
     let toolbar = flex(
         Axis::Horizontal,
         (
-            text_button("打开文档", |_: &mut HomeViewState| {
+            text_button("打开文档", |_: &mut AppState| {
                 debug!("打开文档 - 待集成文件对话框");
             })
             .background_color(palette::css::DODGER_BLUE)
             .color(palette::css::WHITE),
-            text_button("清除历史", |s: &mut HomeViewState| {
-                s.clear_history();
+            text_button("清除历史", |s: &mut AppState| {
+                s.home.clear_history();
             })
             .background_color(palette::css::INDIAN_RED)
             .color(palette::css::WHITE),
-            label(format!("共 {} 条", state.total_records))
+            label(format!("共 {} 条", state.home.total_records))
                 .color(palette::css::DIM_GRAY)
                 .flex(1.0),
-            text_button("◀ 上一页", |s: &mut HomeViewState| s.prev_page()),
+            text_button("◀ 上一页", |s: &mut AppState| s.home.prev_page()),
             label(format!(
                 "{}/{}",
-                state.page_index + 1,
-                state.total_pages.max(1)
+                state.home.page_index + 1,
+                state.home.total_pages.max(1)
             )),
-            text_button("下一页 ▶", |s: &mut HomeViewState| s.next_page()),
+            text_button("下一页 ▶", |s: &mut AppState| s.home.next_page()),
         ),
     )
     .padding(8.0)
     .background_color(palette::css::WHITE_SMOKE);
 
     // ---- 历史网格 ----
-    let num_records = state.records.len();
+    let num_records = state.home.records.len();
     let grid_rows = if num_records == 0 {
         1
     } else {
@@ -255,23 +246,65 @@ pub fn home_view(state: &mut HomeViewState) -> Box<dyn WidgetView<HomeViewState>
             .map(|i| {
                 let col = (i as i32) % GRID_COLS;
                 let row = (i as i32) / GRID_COLS;
-                history_card(state, i).grid_pos(col, row)
+                let item = &state.home.records[i];
+                let title = item.title.clone();
+                let page_text = format!("第 {} 页", item.page);
+
+                let card = if let Some(thumb) =
+                    state.home.thumbnails.get(i).and_then(|t| t.as_ref())
+                {
+                    let img_data = ImageData {
+                        data: Arc::clone(&thumb.rgba),
+                        format: ImageFormat::Rgba8,
+                        width: thumb.width,
+                        height: thumb.height,
+                    };
+                    flex(Axis::Vertical, (
+                        sized_box(
+                            image(img_data).fit(ObjectFit::ScaleDown),
+                            100.0,
+                            140.0,
+                        )
+                        .border(palette::css::LIGHT_GRAY, 1.0),
+                        label(title).padding(4.0),
+                        label(page_text).padding(4.0).color(palette::css::GRAY),
+                        text_button("打开", move |s: &mut AppState| s.open_document(i))
+                            .background_color(palette::css::DODGER_BLUE)
+                            .color(palette::css::WHITE)
+                            .padding((6.0, 2.0)),
+                    ))
+                    .background_color(palette::css::WHITE)
+                    .border(palette::css::LIGHT_GRAY, 1.0)
+                    .hovered_border_color(palette::css::DODGER_BLUE)
+                } else {
+                    flex(Axis::Vertical, (
+                        sized_box(
+                            label("").background_color(palette::css::GAINSBORO),
+                            100.0,
+                            140.0,
+                        )
+                        .border(palette::css::LIGHT_GRAY, 1.0),
+                        label(title).padding(4.0),
+                        label(page_text).padding(4.0).color(palette::css::GRAY),
+                        text_button("打开", move |s: &mut AppState| s.open_document(i))
+                            .background_color(palette::css::DODGER_BLUE)
+                            .color(palette::css::WHITE)
+                            .padding((6.0, 2.0)),
+                    ))
+                    .background_color(palette::css::WHITE)
+                    .border(palette::css::LIGHT_GRAY, 1.0)
+                    .hovered_border_color(palette::css::DODGER_BLUE)
+                };
+
+                card.grid_pos(col, row)
             })
             .collect()
     } else {
-        vec![
-            label("暂无阅读记录，点击「打开文档」开始阅读")
-                .grid_pos(0, 0),
-        ]
+        vec![label("暂无阅读记录，点击「打开文档」开始阅读").grid_pos(0, 0)]
     };
 
     let grid_widget = grid(grid_items, GRID_COLS, grid_rows).spacing(8.0);
 
     // ---- 根布局 ----
-    let root = flex(
-        Axis::Vertical,
-        (toolbar, portal(grid_widget).flex(1.0)),
-    );
-
-    root.boxed()
+    flex(Axis::Vertical, (toolbar, portal(grid_widget).flex(1.0))).boxed()
 }
