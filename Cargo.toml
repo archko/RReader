@@ -23,6 +23,7 @@ lazy_static = "1.5.0"
 regex = "1.12.2"
 dirs = "6.0.0"
 lru = "0.13"
+vello = "0.6"
 
 [profile.dev]
 incremental = true          # 保留增量编译（核心提速点）
