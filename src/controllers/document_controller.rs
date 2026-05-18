@@ -2,6 +2,7 @@ use slint::{SharedString, ModelRc, VecModel, Timer, TimerMode, ComponentHandle, 
 use crate::ui::MainViewmodel;
 use std::cell::RefCell;
 use std::rc::Rc;
+use crate::ViewModel;
 use crate::page::{PageViewState, Orientation, ViewModel};
 use crate::page::view_model::SlotEntry;
 use crate::decoder::{PageInfo};

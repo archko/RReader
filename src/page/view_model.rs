@@ -1,4 +1,4 @@
-use slint::{Image, VecModel};
+use slint::{Image, Model, VecModel };
 use std::cell::RefCell;
 use std::rc::Rc;
 use crate::PageData;
@@ -55,7 +55,7 @@ impl ViewModel {
 
         if let Some(idx) = slot_idx {
             let model = self.model.borrow();
-            model.set(
+            model.set_row_data(
                 idx,
                 PageData {
                     x,
