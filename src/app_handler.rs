@@ -1,13 +1,10 @@
 use std::sync::{Arc, Mutex};
-use slint::ComponentHandle;
 use crate::controllers::{HistoryControllerPointer, DocumentController};
 use crate::controllers::history_controller::DefaultHistoryController;
 use crate::ui::MainViewmodel;
 use crate::tts::TtsService;
 use std::cell::RefCell;
 use std::rc::Rc;
-
-use crate::AppWindow;
 
 pub struct AppHandler {
     history_controller: HistoryControllerPointer,
@@ -22,16 +19,6 @@ impl AppHandler {
         Self {
             history_controller,
             document_controller,
-        }
-    }
-
-    pub fn initialize_ui(&mut self, window: &AppWindow) {
-        self.history_controller.setup_history_callbacks(window);
-
-        self.document_controller.borrow().initialize_ui(window);
-
-        if let Err(e) = self.history_controller.refresh_history_ui(window) {
-            log::error!("Failed to refresh history UI: {}", e);
         }
     }
 

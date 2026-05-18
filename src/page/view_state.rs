@@ -63,7 +63,7 @@ pub struct PageViewState {
 
     pub outline_items: Vec<OutlineItem>,
 
-    /// 视图模型（维护 Slint VecModel 稳定索引，支持增量更新）
+    /// 视图模型（维护稳定索引，支持增量更新）
     pub view_model: Rc<ViewModel>,
 
     /// 可见区域（用于跨线程可见性检查）

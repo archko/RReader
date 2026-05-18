@@ -10,6 +10,3 @@ pub mod entity;
 pub mod page;
 pub mod tts;
 pub mod ui;
-
-// 导出Slint生成的类型
-slint::include_modules!();

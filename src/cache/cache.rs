@@ -1,11 +1,11 @@
+use image::DynamicImage;
 use lru::LruCache;
-use slint::Image;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
 /// O(1) LRU 图片缓存，淘汰策略为最近最少使用
 pub struct ImageCache {
-    cache: Arc<Mutex<LruCache<String, Arc<Image>>>>,
+    cache: Arc<Mutex<LruCache<String, Arc<DynamicImage>>>>,
 }
 
 impl ImageCache {
@@ -18,13 +18,13 @@ impl ImageCache {
     }
 
     /// 获取图片并标记为最近使用
-    pub fn get(&self, key: &str) -> Option<Arc<Image>> {
+    pub fn get(&self, key: &str) -> Option<Arc<DynamicImage>> {
         let mut cache = self.cache.lock().unwrap();
         cache.get(key).cloned()
     }
 
     /// 存入图片（自动淘汰最久未使用的项）
-    pub fn put(&self, key: String, image: Image) -> Arc<Image> {
+    pub fn put(&self, key: String, image: DynamicImage) -> Arc<DynamicImage> {
         let mut cache = self.cache.lock().unwrap();
         let arc = Arc::new(image);
         let cloned = arc.clone();
@@ -63,23 +63,22 @@ impl PageCache {
     }
 
     // ===== 全尺寸页面图片缓存 =====
-    // 使用字符串 key 直接操作，key 格式由调用方决定
 
-    pub fn get_page_image_by_key(&self, key: &str) -> Option<Arc<Image>> {
+    pub fn get_page_image_by_key(&self, key: &str) -> Option<Arc<DynamicImage>> {
         self.image_cache.get(key)
     }
 
-    pub fn put_page_image_by_key(&self, key: String, image: Image) -> Arc<Image> {
+    pub fn put_page_image_by_key(&self, key: String, image: DynamicImage) -> Arc<DynamicImage> {
         self.image_cache.put(key, image)
     }
 
     // ===== 缩略图缓存 =====
 
-    pub fn get_thumbnail(&self, key: &str) -> Option<Arc<Image>> {
+    pub fn get_thumbnail(&self, key: &str) -> Option<Arc<DynamicImage>> {
         self.thumbnail_cache.get(key)
     }
 
-    pub fn put_thumbnail(&self, key: String, image: Image) -> Arc<Image> {
+    pub fn put_thumbnail(&self, key: String, image: DynamicImage) -> Arc<DynamicImage> {
         self.thumbnail_cache.put(key, image)
     }
 
