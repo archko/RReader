@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use vello::peniko::Color;
-use vello::kurbo::{Affine, Rect, Size, Vec2};
+use vello::kurbo::{Affine, Rect, Size};
 use vello::Scene;
 use vello::Fill;
 
@@ -15,14 +15,15 @@ use masonry::{
 
 use xilem::core::{Pod, View, ViewCtx, ViewMarker, MessageContext, MessageResult};
 
-use crate::page::render_state::{PageRenderState, process_visible_nodes};
+use crate::page::render_state::{PageRenderState, process_visible_nodes, consume_decode_result};
 
 pub struct DocumentCanvasWidget {
     state: Arc<PageRenderState>,
-    /// 拖拽状态
     is_dragging: bool,
     start_offset: (f32, f32),
     start_pos: (f64, f64),
+    pointer_down_pos: (f64, f64),
+    pointer_down_time: std::time::Instant,
 }
 
 impl DocumentCanvasWidget {
@@ -32,10 +33,11 @@ impl DocumentCanvasWidget {
             is_dragging: false,
             start_offset: (0.0, 0.0),
             start_pos: (0.0, 0.0),
+            pointer_down_pos: (0.0, 0.0),
+            pointer_down_time: std::time::Instant::now(),
         }
     }
 
-    /// 应用 scroll delta 到 offset（含钳位），返回 true 表示有实际变化
     fn apply_scroll(&mut self, dx: f32, dy: f32) -> bool {
         let (old_x, old_y, tw, th, vw, vh) = {
             let r = self.state.read();
@@ -57,12 +59,29 @@ impl DocumentCanvasWidget {
         process_visible_nodes(&self.state);
         true
     }
+
+    fn handle_click(&self, pos: (f64, f64)) {
+        let inner = self.state.read();
+        let doc_x = pos.0 as f32 - inner.view_offset.0;
+        let doc_y = pos.1 as f32 - inner.view_offset.1;
+
+        for &page_idx in &inner.visible_pages {
+            if let Some(page) = inner.pages.get(page_idx) {
+                if let Some(link) = page.find_link_at(doc_x, doc_y) {
+                    if let Some(target_page) = link.page {
+                        drop(inner);
+                        self.state.jump_to_page(target_page);
+                        return;
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl Widget for DocumentCanvasWidget {
     fn on_pointer_event(&mut self, event: &PointerEvent, ctx: &mut EventCtx) -> EventHandling {
         match event {
-            // ── 鼠标滚轮 ──
             PointerEvent::PointerScroll { delta, .. } => {
                 let x = delta.x as f32;
                 let y = delta.y as f32;
@@ -72,7 +91,6 @@ impl Widget for DocumentCanvasWidget {
                 EventHandling::Handled
             }
 
-            // ── 拖拽平移 ──
             PointerEvent::PointerDown { pos, button, .. } => {
                 if *button == masonry::event::PointerButton::Primary {
                     let (ox, oy) = {
@@ -82,6 +100,8 @@ impl Widget for DocumentCanvasWidget {
                     self.is_dragging = true;
                     self.start_offset = (ox, oy);
                     self.start_pos = (pos.x, pos.y);
+                    self.pointer_down_pos = (pos.x, pos.y);
+                    self.pointer_down_time = std::time::Instant::now();
                     ctx.set_active(true);
                 }
                 EventHandling::Handled
@@ -91,7 +111,6 @@ impl Widget for DocumentCanvasWidget {
                 if self.is_dragging {
                     let dx = (pos.x - self.start_pos.0) as f32;
                     let dy = (pos.y - self.start_pos.1) as f32;
-                    // 拖拽：offset 朝手指相反方向移动
                     let new_x = self.start_offset.0 + dx;
                     let new_y = self.start_offset.1 + dy;
 
@@ -109,8 +128,21 @@ impl Widget for DocumentCanvasWidget {
                 EventHandling::Handled
             }
 
-            PointerEvent::PointerUp { .. } => {
+            PointerEvent::PointerUp { pos, .. } => {
+                let was_dragging = self.is_dragging;
                 self.is_dragging = false;
+
+                if was_dragging {
+                    let dist = ((pos.x - self.pointer_down_pos.x).powi(2)
+                        + (pos.y - self.pointer_down_pos.y).powi(2))
+                    .sqrt();
+                    let elapsed = self.pointer_down_time.elapsed();
+
+                    if dist < 10.0 && elapsed < std::time::Duration::from_millis(500) {
+                        self.handle_click(*pos);
+                        ctx.request_paint();
+                    }
+                }
                 EventHandling::Handled
             }
 
@@ -119,22 +151,27 @@ impl Widget for DocumentCanvasWidget {
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx) {
-        // 检查后台缓存消费者是否存入了新图片
+        // repaint_needed is set by consume_decode_result when no cascade is active
         if self.state.repaint_needed.swap(false, Ordering::Acquire) {
+            ctx.request_paint();
+        }
+
+        while let Some(result) = self.state.decode_service.try_recv_result() {
+            consume_decode_result(&self.state, result);
             ctx.request_paint();
         }
 
         let inner = self.state.read();
         let scene: &mut Scene = &mut *ctx.scene;
         let scroll = Affine::translate(inner.view_offset.0 as f64, inner.view_offset.1 as f64);
+        let current_zoom = inner.zoom;
 
-        // 白色背景
         let bg = Rect::new(0.0, 0.0, 2000.0, 1200.0);
         scene.fill(Fill::NonZero, Affine::IDENTITY, &Color::WHITE, None, &bg);
 
         for &page_idx in &inner.visible_pages {
             if let Some(page) = inner.pages.get(page_idx) {
-                page.draw(scene, scroll, &self.state.cache);
+                page.draw(scene, scroll, &self.state.cache, current_zoom);
             }
         }
     }
@@ -147,7 +184,6 @@ impl Widget for DocumentCanvasWidget {
         let desired = Size::new(tw.max(vw) as f64, th.max(vh) as f64);
         let constrained = bc.constrain(desired);
 
-        // 将实际 viewport 尺寸写回 render_state（触发 layout 重算）
         let new_vw = constrained.width.max(1.0) as f32;
         let new_vh = constrained.height.max(1.0) as f32;
         if (new_vw - vw).abs() > 0.5 || (new_vh - vh).abs() > 0.5 {
@@ -163,10 +199,6 @@ impl Widget for DocumentCanvasWidget {
     fn update(&mut self, _ctx: &mut UpdateCtx, _event: &UpdateEvent) {}
     fn compute_max_intrinsic(&mut self, _axis: masonry::Axis, _bc: &BoxConstraints, _ctx: &mut LayoutCtx) -> f64 { 0.0 }
 }
-
-// ─────────────────────────────────────────────
-// 2. Xilem View 包装
-// ─────────────────────────────────────────────
 
 pub struct DocumentCanvasView {
     state: Arc<PageRenderState>,

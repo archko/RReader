@@ -1,8 +1,6 @@
 use super::PageNode;
 use crate::decoder::Rect;
 
-/// PageNode 对象池，避免高频创建/销毁导致的内存抖动
-/// 设计文档：大小限制 32 个，使用 acquire/release 管理
 pub struct PageNodePool {
     pool: std::collections::VecDeque<PageNode>,
     max_size: usize,
@@ -25,13 +23,13 @@ impl PageNodePool {
         }
     }
 
-    pub fn acquire(&mut self, page_index: usize, bounds: Rect) -> PageNode {
+    pub fn acquire(&mut self, page_index: usize, bounds: Rect, zoom: f32, orientation: i32, crop: i32) -> PageNode {
         if let Some(mut node) = self.pool.pop_front() {
             node.recycle();
-            node.update(page_index, bounds);
+            node.update(page_index, bounds, zoom, orientation, crop);
             node
         } else {
-            PageNode::new(page_index, bounds)
+            PageNode::new(page_index, bounds, zoom, orientation, crop)
         }
     }
 
@@ -64,14 +62,11 @@ mod tests {
     #[test]
     fn test_pool_acquire_release() {
         let mut pool = PageNodePool::with_max_size(2);
-
-        let node1 = pool.acquire(0, Rect::new(0.0, 0.0, 0.5, 0.5));
+        let node1 = pool.acquire(0, Rect::new(0.0, 0.0, 0.5, 0.5), 1.0, 0, 0);
         assert_eq!(node1.page_index, 0);
-        
         pool.release(node1);
         assert_eq!(pool.size(), 1);
-        
-        let node2 = pool.acquire(1, Rect::new(0.5, 0.0, 1.0, 0.5));
+        let node2 = pool.acquire(1, Rect::new(0.5, 0.0, 1.0, 0.5), 1.0, 0, 0);
         assert_eq!(pool.size(), 0);
         assert_eq!(node2.page_index, 1);
     }
@@ -79,16 +74,12 @@ mod tests {
     #[test]
     fn test_pool_overflow() {
         let mut pool = PageNodePool::with_max_size(2);
-        
-        let node1 = pool.acquire(0, Rect::new(0.0, 0.0, 0.5, 0.5));
-        let node2 = pool.acquire(1, Rect::new(0.0, 0.5, 0.5, 1.0));
-        let node3 = pool.acquire(2, Rect::new(0.5, 0.0, 1.0, 0.5));
-        
+        let node1 = pool.acquire(0, Rect::new(0.0, 0.0, 0.5, 0.5), 1.0, 0, 0);
+        let node2 = pool.acquire(1, Rect::new(0.0, 0.5, 0.5, 1.0), 1.0, 0, 0);
+        let node3 = pool.acquire(2, Rect::new(0.5, 0.0, 1.0, 0.5), 1.0, 0, 0);
         pool.release(node1);
         pool.release(node2);
         assert_eq!(pool.size(), 2);
-        
-        // 池已满，node3 被丢弃
         pool.release(node3);
         assert_eq!(pool.size(), 2);
     }

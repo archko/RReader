@@ -13,7 +13,7 @@ use vello::peniko::{ImageData, ImageFormat};
 use crate::dao::RecentDao;
 use crate::ui::utils::get_thumbnail_path;
 use crate::ui::main_viewmodel::PAGE_SIZE;
-use crate::page::{PageRenderState, render_state::{spawn_cache_consumer, process_visible_nodes}};
+use crate::page::{PageRenderState, render_state::process_visible_nodes};
 use image::DynamicImage;
 
 /// 顶层应用状态，管理视图切换
@@ -74,7 +74,7 @@ impl AppState {
                             debug!("Document loaded: {} pages", pages_info.len());
                             let pages: Vec<crate::page::Page> = pages_info
                                 .into_iter()
-                                .map(|info| crate::page::Page::new(info, 0.0, 0.0, 0.0, 0.0))
+                                .map(|info| crate::page::Page::new(info, 0.0, 0.0, 0.0, 0.0, 1.0))
                                 .collect();
                             pv.set_pages(pages);
                             pv.update_view_size(800.0, 600.0, 1.0, true);
@@ -84,8 +84,6 @@ impl AppState {
                             if let Ok(outline) = pv.decode_service.get_outline() {
                                 pv.write().outline_items = outline;
                             }
-                            // 启动缓存消费线程（后台存 cache + 设 repaint_needed 标记）
-                            spawn_cache_consumer(Arc::clone(&pv));
                         }
                         Err(e) => {
                             error!("Failed to load document: {}", e);

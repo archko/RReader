@@ -6,40 +6,37 @@ use vello::Fill;
 use vello::kurbo::Affine;
 use std::sync::Arc;
 
-use super::{PageNode, PageNodePool};
+use super::{PageNode, PageNodePool, Orientation};
 use crate::cache::PageCache;
 use crate::decoder::{Link, PageInfo, Rect};
+use crate::decoder::decode_service::DecodeService;
 
 pub struct Page {
     pub info: PageInfo,
     /// 页面在文档坐标中的位置
     pub bounds: Rect,
-    /// 当前可见的 tile node（不预创建，按需生成），key = row * x_blocks + col
+    /// 当前可见的 tile node, key = row * x_blocks + col
     pub visible_nodes: HashMap<usize, PageNode>,
     pub links: Vec<Link>,
     pub width: f32,
     pub height: f32,
     pub is_decoding: bool,
 
-    // ── 设计文档对齐字段 ──
-    /// 低分辨率缩略图，保证快速首屏显示
+    /// 低分辨率缩略图
     pub thumb_bitmap: Option<Arc<image::DynamicImage>>,
     pub is_thumb_loading: bool,
-    /// 页面在文档中的偏移（design doc 中的 xOffset / yOffset）
     pub x_offset: f32,
     pub y_offset: f32,
-    /// 整体缩放比例 totalScale = width / info.width
     pub total_scale: f32,
-    /// 链接是否已加载（懒加载）
+    /// 上次 layout 时的 zoom 值（用于 scaleRatio 修正）
+    pub base_zoom: f32,
     pub links_loaded: bool,
-    /// 瓦片分块配置，由 invalidate_nodes() 计算
     pub tile_config: TileConfig,
-    /// PageNode 对象池（避免高频 GC）
     node_pool: PageNodePool,
 }
 
 impl Page {
-    pub fn new(info: PageInfo, width: f32, height: f32, x_offset: f32, y_offset: f32) -> Self {
+    pub fn new(info: PageInfo, width: f32, height: f32, x_offset: f32, y_offset: f32, base_zoom: f32) -> Self {
         let bounds = Rect::new(x_offset, y_offset, x_offset + width, y_offset + height);
         let tile_config = TileConfig::from_size(width, height);
         let total_scale = if width > 0.0 { width / info.width } else { 1.0 };
@@ -56,23 +53,25 @@ impl Page {
             x_offset,
             y_offset,
             total_scale,
+            base_zoom,
             links_loaded: false,
             tile_config,
             node_pool: PageNodePool::new(),
         }
     }
 
-    pub fn update(&mut self, width: f32, height: f32, bounds: Rect) {
+    pub fn update(&mut self, width: f32, height: f32, bounds: Rect, base_zoom: f32) {
         self.width = width;
         self.height = height;
         self.bounds = bounds;
         self.x_offset = bounds.left;
         self.y_offset = bounds.top;
         self.total_scale = width / self.info.width;
+        self.base_zoom = base_zoom;
         self.invalidate_nodes();
     }
 
-    /// 重新计算瓦片分块配置（design doc 中的 invalidateNodes）
+    /// 重新计算瓦片分块配置
     pub fn invalidate_nodes(&mut self) {
         self.tile_config = TileConfig::from_size(self.width, self.height);
     }
@@ -80,9 +79,18 @@ impl Page {
     pub fn x_offset(&self) -> f32 { self.bounds.left }
     pub fn y_offset(&self) -> f32 { self.bounds.top }
 
-    /// 绘制当前所有可见 node（缩略图作为底层，高清瓦片覆盖其上）
-    pub fn draw(&self, scene: &mut Scene, scroll: Affine, cache: &PageCache) {
-        // 1) 尝试从缓存获取缩略图，低分辨率优先显示
+    /// 绘制页面，含 scaleRatio 修正
+    pub fn draw(&self, scene: &mut Scene, scroll: Affine, cache: &PageCache, current_zoom: f32) {
+        let scale_ratio = if self.base_zoom > 0.0 { current_zoom / self.base_zoom } else { 1.0 };
+
+        let adj_left = self.bounds.left * scale_ratio;
+        let adj_top = self.bounds.top * scale_ratio;
+        let adj_right = self.bounds.right * scale_ratio;
+        let adj_bottom = self.bounds.bottom * scale_ratio;
+
+        let adj_width = self.width * scale_ratio;
+        let adj_height = self.height * scale_ratio;
+
         let thumb_key = format!("thumb-{}", self.info.index);
         let thumb_img = self.thumb_bitmap.clone()
             .or_else(|| cache.get_thumbnail(&thumb_key));
@@ -93,60 +101,39 @@ impl Page {
             let image_data = ImageData { data, format: ImageFormat::Rgba8, width: w, height: h };
             let brush: Brush = ImageBrush::new(image_data).into();
             let draw_rect = KurboRect::new(
-                self.bounds.left as f64, self.bounds.top as f64,
-                self.bounds.right as f64, self.bounds.bottom as f64,
+                adj_left as f64, adj_top as f64,
+                adj_right as f64, adj_bottom as f64,
             );
             scene.fill(Fill::NonZero, scroll, &brush, None, &draw_rect);
         }
 
-        // 2) 高清瓦片
+        // 瓦片
         for node in self.visible_nodes.values() {
-            // 注意：这里需要可变引用来更新缓存，但 draw 签名是 &self
-            // 实际使用时，像素矩形缓存是性能优化，不缓存也可以正常工作
-            let pixel_rect = Rect::new(
-                node.bounds.left * self.width + self.bounds.left,
-                node.bounds.top * self.height + self.bounds.top,
-                node.bounds.right * self.width + self.bounds.left,
-                node.bounds.bottom * self.height + self.bounds.top,
-            );
-            let draw_rect = KurboRect::new(
-                pixel_rect.left as f64, pixel_rect.top as f64,
-                pixel_rect.right as f64, pixel_rect.bottom as f64,
-            );
-            if let Some(img_arc) = cache.get_page_image_by_key(&node.cache_key) {
-                let rgba = img_arc.to_rgba8();
-                let (w, h) = rgba.dimensions();
-                let data: Arc<[u8]> = rgba.into_raw().into();
-                let image_data = ImageData { data, format: ImageFormat::Rgba8, width: w, height: h };
-                let brush: Brush = ImageBrush::new(image_data).into();
-                scene.fill(Fill::NonZero, scroll, &brush, None, &draw_rect);
-            }
+            node.draw(scene, scroll, adj_width, adj_height, adj_left, adj_top, cache);
         }
     }
 
-    /// 绘制链接高亮区域（设计文档 drawLinks）
-    pub fn draw_links(&self, scene: &mut Scene, scroll: Affine) {
+    /// 绘制链接高亮区域
+    pub fn draw_links(&self, scene: &mut Scene, scroll: Affine, scale_ratio: f32) {
         if self.links.is_empty() {
             return;
         }
+        let adj_left = self.bounds.left * scale_ratio;
+        let adj_top = self.bounds.top * scale_ratio;
+        let adj_width = self.width * scale_ratio;
+        let adj_height = self.height * scale_ratio;
 
-        // 链接区域高亮颜色：半透明蓝色边框
         let link_color = Color::rgba(0.0, 0.5, 1.0, 0.3);
         let border_color = Color::rgba(0.0, 0.5, 1.0, 0.8);
 
         for link in &self.links {
-            // 将链接边界从页面对齐坐标转换为文档坐标
             let link_rect = KurboRect::new(
-                (self.bounds.left + link.bounds.left * self.width) as f64,
-                (self.bounds.top + link.bounds.top * self.height) as f64,
-                (self.bounds.left + link.bounds.right * self.width) as f64,
-                (self.bounds.top + link.bounds.bottom * self.height) as f64,
+                (adj_left + link.bounds.left * adj_width / self.info.width) as f64,
+                (adj_top + link.bounds.top * adj_height / self.info.height) as f64,
+                (adj_left + link.bounds.right * adj_width / self.info.width) as f64,
+                (adj_top + link.bounds.bottom * adj_height / self.info.height) as f64,
             );
-
-            // 填充半透明背景
             scene.fill(Fill::NonZero, scroll, &link_color, None, &link_rect);
-            
-            // 绘制边框（使用 stroke 需要引入 Stroke 类，这里用细矩形模拟）
             let stroke_width = 1.0;
             let stroke_rect = KurboRect::new(
                 link_rect.x0 - stroke_width / 2.0,
@@ -158,10 +145,41 @@ impl Page {
         }
     }
 
-    /// 仅管理瓦片 node 的创建/回收，返回需要解码的 node key 列表。
-    /// 不访问 cache，不下发 decode 任务（纯 node 生命周期管理）。
-    pub fn update_visible_nodes(&mut self, viewport: &Rect) -> Vec<usize> {
+    /// 管理瓦片 node 的创建/回收 + 触发解码
+    pub fn update_visible_nodes(
+        &mut self,
+        viewport: &Rect,
+        decode_service: &DecodeService,
+        cache: &PageCache,
+        crop: i32,
+        zoom: f32,
+        orientation: Orientation,
+    ) {
         let config = &self.tile_config;
+        let ori = match orientation {
+            Orientation::Vertical => 0,
+            Orientation::Horizontal => 1,
+        };
+
+        // 单块优化
+        if config.is_single_block() {
+            let old_keys: Vec<usize> = self.visible_nodes.keys().copied().collect();
+            for k in &old_keys {
+                if let Some(n) = self.visible_nodes.remove(k) {
+                    self.node_pool.release(n);
+                }
+            }
+            let bounds = Rect::new(0.0, 0.0, 1.0, 1.0);
+            let node = self.node_pool.acquire(self.info.index, bounds, zoom, ori, crop);
+            self.visible_nodes.insert(0, node);
+            if let Some(n) = self.visible_nodes.get_mut(&0) {
+                if n.needs_decoding() && cache.get_page_image_by_key(&n.cache_key).is_none() {
+                    n.decode(self.width, self.height, &self.info, crop, decode_service);
+                }
+            }
+            return;
+        }
+
         let (col_range, row_range) = self.visible_tile_ranges(config, viewport);
 
         let mut needed: Vec<usize> = Vec::new();
@@ -171,48 +189,38 @@ impl Page {
             }
         }
 
-        // 移除不再需要的 node
         self.visible_nodes.retain(|k, _| needed.contains(k));
 
-        // 按需从池中获取或创建 node
-        let mut decode_needed = Vec::new();
         for &key in &needed {
             if !self.visible_nodes.contains_key(&key) {
                 let col = key % config.x_blocks;
                 let row = key / config.x_blocks;
                 let bounds = Self::tile_logical_bounds(col, row, config);
-                let node = self.node_pool.acquire(self.info.index, bounds);
+                let node = self.node_pool.acquire(self.info.index, bounds, zoom, ori, crop);
                 self.visible_nodes.insert(key, node);
             }
-            if let Some(n) = self.visible_nodes.get(&key) {
-                if n.needs_decoding() {
-                    decode_needed.push(key);
+            if let Some(n) = self.visible_nodes.get_mut(&key) {
+                if n.needs_decoding() && cache.get_page_image_by_key(&n.cache_key).is_none() {
+                    n.decode(self.width, self.height, &self.info, crop, decode_service);
                 }
             }
         }
-
-        decode_needed
     }
 
-    /// 计算视口覆盖的 tile 行列范围 [col_start..col_end, row_start..row_end)
     fn visible_tile_ranges(&self, config: &TileConfig, viewport: &Rect) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
         let tile_w = self.width / config.x_blocks as f32;
         let tile_h = self.height / config.y_blocks as f32;
-
         let left = ((viewport.left - self.bounds.left) / tile_w).floor() as isize;
         let right = ((viewport.right - self.bounds.left) / tile_w).ceil() as isize;
         let top = ((viewport.top - self.bounds.top) / tile_h).floor() as isize;
         let bottom = ((viewport.bottom - self.bounds.top) / tile_h).ceil() as isize;
-
         let col_start = left.max(0) as usize;
         let col_end = (right as usize).min(config.x_blocks);
         let row_start = top.max(0) as usize;
         let row_end = (bottom as usize).min(config.y_blocks);
-
         (col_start..col_end, row_start..row_end)
     }
 
-    /// 根据行列计算 tile 的逻辑边界 [0,1]
     fn tile_logical_bounds(col: usize, row: usize, config: &TileConfig) -> Rect {
         let x_blocks = config.x_blocks as f32;
         let y_blocks = config.y_blocks as f32;
@@ -224,33 +232,43 @@ impl Page {
         )
     }
 
-    // ── 懒加载链接 ──
-
     pub fn load_links(&mut self) {
         if !self.links_loaded {
             self.links_loaded = true;
-            // 链接数据已在解码结果中返回，只需标记加载
         }
     }
 
-    pub fn find_link_at(&self, x: f32, y: f32) -> Option<&Link> {
-        let page_x = x - self.bounds.left;
-        let page_y = y - self.bounds.top;
+    /// 点击检测链接
+    pub fn find_link_at(&self, doc_x: f32, doc_y: f32) -> Option<&Link> {
+        let page_x = doc_x - self.bounds.left;
+        let page_y = doc_y - self.bounds.top;
+        if page_x < 0.0 || page_y < 0.0 || page_x > self.width || page_y > self.height {
+            return None;
+        }
+        let rel_x = page_x * self.info.width / self.width;
+        let rel_y = page_y * self.info.height / self.height;
         self.links.iter().find(|link| {
-            page_x >= link.bounds.left && page_x <= link.bounds.right
-                && page_y >= link.bounds.top && page_y <= link.bounds.bottom
+            rel_x >= link.bounds.left && rel_x <= link.bounds.right
+                && rel_y >= link.bounds.top && rel_y <= link.bounds.bottom
         })
     }
 
     pub fn needs_decoding(&self) -> bool { !self.is_decoding }
 
-    /// 回收所有 node 到对象池（保留 thumb_bitmap 以快速恢复显示）
     pub fn recycle(&mut self) {
         for (_, node) in self.visible_nodes.drain() {
             self.node_pool.release(node);
         }
         self.is_decoding = false;
     }
+
+    pub fn clear_thumb(&mut self) {
+        self.thumb_bitmap = None;
+        self.is_thumb_loading = false;
+    }
+
+    pub fn node_pool(&self) -> &PageNodePool { &self.node_pool }
+    pub fn node_pool_mut(&mut self) -> &mut PageNodePool { &mut self.node_pool }
 }
 
 pub fn rects_intersect(a: &Rect, b: &Rect) -> bool {
