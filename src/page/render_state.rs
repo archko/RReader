@@ -6,7 +6,7 @@ use super::Page;
 use super::Orientation;
 use crate::cache::PageCache;
 use crate::decoder::DecodeService;
-use crate::decoder::decode_service::{RenderPage, TaskType};
+use crate::decoder::decode_service::{RenderPage, TaskType, VisibilityChecker};
 use crate::decoder::Rect;
 use crate::entity::OutlineItem;
 
@@ -192,7 +192,15 @@ fn calculate_thumbnail_scale(page_width: f32, page_height: f32) -> f32 {
 
 // ===== 可见页节点管理 + 解码提交（委托给 Page） =====
 
-pub fn process_visible_nodes(state: &PageRenderState) {
+pub fn process_visible_nodes(state: &Arc<PageRenderState>) {
+    // 先创建 checker，避免与下面的 write 锁形成死锁
+    let checker: VisibilityChecker = Arc::new({
+        let state_arc = Arc::clone(state);
+        move |page_idx: usize| -> bool {
+            state_arc.read().visible_pages.contains(&page_idx)
+        }
+    });
+
     let mut inner = state.inner.write().unwrap();
     let visible_rect = compute_visible_rect(
         inner.view_offset, inner.view_size, inner.orientation, inner.preload_screens,
@@ -210,6 +218,7 @@ pub fn process_visible_nodes(state: &PageRenderState) {
                 crop,
                 zoom,
                 orientation,
+                Arc::clone(state),
             );
 
             let thumb_key = thumbnail_cache_key(page.info.index, crop);
@@ -226,7 +235,7 @@ pub fn process_visible_nodes(state: &PageRenderState) {
                         page_info: thumb_info,
                         crop,
                         task_type: TaskType::Page,
-                        visibility_checker: None,
+                        visibility_checker: Some(checker.clone()),
                     }]);
                 }
             }

@@ -6,10 +6,10 @@ use vello::Fill;
 use vello::kurbo::Affine;
 use std::sync::Arc;
 
-use super::{PageNode, PageNodePool, Orientation};
+use super::{PageNode, PageNodePool, Orientation, PageRenderState};
 use crate::cache::PageCache;
 use crate::decoder::{Link, PageInfo, Rect};
-use crate::decoder::decode_service::DecodeService;
+use crate::decoder::decode_service::{DecodeService, VisibilityChecker};
 
 pub struct Page {
     pub info: PageInfo,
@@ -146,7 +146,6 @@ impl Page {
         }
     }
 
-    /// 管理瓦片 node 的创建/回收 + 触发解码
     pub fn update_visible_nodes(
         &mut self,
         viewport: &Rect,
@@ -155,6 +154,7 @@ impl Page {
         crop: i32,
         zoom: f32,
         orientation: Orientation,
+        state_arc: Arc<PageRenderState>,
     ) {
         let config = &self.tile_config;
         let ori = match orientation {
@@ -175,7 +175,11 @@ impl Page {
             self.visible_nodes.insert(0, node);
             if let Some(n) = self.visible_nodes.get_mut(&0) {
                 if n.needs_decoding() && cache.get_page_image_by_key(&n.cache_key).is_none() {
-                    n.decode(self.width, self.height, &self.info, crop, decode_service);
+                    let checker: Option<VisibilityChecker> = Some(Arc::new({
+                        let sa = Arc::clone(&state_arc);
+                        move |page_idx| sa.read().visible_pages.contains(&page_idx)
+                    }));
+                    n.decode(self.width, self.height, &self.info, crop, decode_service, checker);
                 }
             }
             return;
@@ -184,7 +188,7 @@ impl Page {
         let (col_range, row_range) = self.visible_tile_ranges(config, viewport);
 
         let mut needed: Vec<usize> = Vec::new();
-        for row in row_range.clone() {
+        for row in row_range {
             for col in col_range.clone() {
                 needed.push(row * config.x_blocks + col);
             }
@@ -202,7 +206,16 @@ impl Page {
             }
             if let Some(n) = self.visible_nodes.get_mut(&key) {
                 if n.needs_decoding() && cache.get_page_image_by_key(&n.cache_key).is_none() {
-                    n.decode(self.width, self.height, &self.info, crop, decode_service);
+                    let tile_key = n.cache_key.clone();
+                    let checker: Option<VisibilityChecker> = Some(Arc::new({
+                        let sa = Arc::clone(&state_arc);
+                        move |page_idx| {
+                            sa.read().pages.get(page_idx)
+                                .map(|p| p.visible_nodes.values().any(|n| n.cache_key == tile_key))
+                                .unwrap_or(false)
+                        }
+                    }));
+                    n.decode(self.width, self.height, &self.info, crop, decode_service, checker);
                 }
             }
         }

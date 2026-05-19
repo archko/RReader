@@ -6,7 +6,7 @@ use vello::kurbo::Affine;
 use std::sync::Arc;
 
 use crate::decoder::{Rect, PageInfo};
-use crate::decoder::decode_service::{DecodeService, RenderPage, TaskType};
+use crate::decoder::decode_service::{DecodeService, RenderPage, TaskType, VisibilityChecker};
 use crate::cache::PageCache;
 
 pub struct PageNode {
@@ -113,7 +113,9 @@ impl PageNode {
         }
     }
 
-    pub fn decode(&mut self, page_width: f32, page_height: f32, page_info: &PageInfo, crop: i32, decode_service: &DecodeService) {
+    pub fn decode(&mut self, _page_width: f32, _page_height: f32, page_info: &PageInfo,
+                  crop: i32, decode_service: &DecodeService,
+                  visibility_checker: Option<VisibilityChecker>) {
         if self.is_decoding || self.bitmap.is_some() {
             return;
         }
@@ -122,7 +124,7 @@ impl PageNode {
             page_info: page_info.clone(),
             crop,
             task_type: TaskType::Node,
-            visibility_checker: None,
+            visibility_checker,
         }]);
         self.is_decoding = true;
     }
