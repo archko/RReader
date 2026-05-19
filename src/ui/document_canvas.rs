@@ -132,7 +132,6 @@ impl Widget for DocumentCanvasWidget {
         let bg = Rect::new(0.0, 0.0, 2000.0, 1200.0);
         scene.fill(Fill::NonZero, Affine::IDENTITY, &Color::WHITE, None, &bg);
 
-        // 由每个 Page 自己绘制自己的 node
         for &page_idx in &inner.visible_pages {
             if let Some(page) = inner.pages.get(page_idx) {
                 page.draw(scene, scroll, &self.state.cache);

@@ -5,15 +5,22 @@ use crossbeam_channel::{unbounded, Sender, Receiver};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
-use std::time::{ Instant, Duration};
-use std::hash::{Hash, Hasher};
-use std::collections::{hash_map::DefaultHasher, VecDeque, HashSet};
+use std::time::{Instant, Duration};
+use std::collections::{VecDeque, HashSet};
 use std::fs;
 
 use crate::decoder::pdf::PdfDecoder;
 use crate::decoder::{Decoder, Link, PageInfo, Rect};
 use crate::ui::utils::generate_thumbnail_hash;
 use std::sync::Arc;
+
+/// 任务类型（用于三队列优先级调度）
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskType {
+    Page = 0,  // 最高优先级（缩略图）
+    Node = 1,  // 中优先级（瓦片）
+    Crop = 2,  // 低优先级（裁剪检测）
+}
 
 /// 可见性检查回调类型：传入页面索引，返回是否可见
 pub type VisibilityChecker = Arc<dyn Fn(usize) -> bool + Send + Sync>;
@@ -24,8 +31,8 @@ pub struct RenderPage {
     pub key: String,
     pub page_info: PageInfo,
     pub crop: i32,
-    pub priority: Priority,
-    /// 可见性检查回调：传入页面bounds，返回是否可见
+    pub task_type: TaskType,
+    /// 可见性检查回调：执行前检查页面是否仍需要渲染
     pub visibility_checker: Option<VisibilityChecker>,
 }
 
@@ -35,38 +42,19 @@ impl std::fmt::Debug for RenderPage {
             .field("key", &self.key)
             .field("page_info", &self.page_info)
             .field("crop", &self.crop)
-            .field("priority", &self.priority)
+            .field("task_type", &self.task_type)
             .field("has_visibility_checker", &self.visibility_checker.is_some())
             .finish()
     }
 }
 
-impl Hash for RenderPage {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.key.hash(state);
-    }
-}
-
-impl PartialEq for RenderPage {
-    fn eq(&self, other: &Self) -> bool {
-        self.key == other.key
-            && self.page_info.index == other.page_info.index
-            && (self.page_info.width - other.page_info.width).abs() < 0.1
-            && (self.page_info.height - other.page_info.height).abs() < 0.1
-            && (self.page_info.scale - other.page_info.scale).abs() < 0.001
-            && self.crop == other.crop
-    }
-}
-
-impl Eq for RenderPage {}
-
-/// 解码任务
-pub enum DecodeTask {
+/// 解码任务（管理员任务通过 channel 传递）
+enum DecodeTask {
     /// 加载文档
     LoadDocument {
         path: PathBuf,
     },
-    /// 批量渲染页面
+    /// 批量渲染任务（内部分发到三队列）
     RenderPages {
         pages: Vec<RenderPage>,
     },
@@ -79,7 +67,7 @@ pub enum DecodeTask {
         page_index: usize,
         response_tx: Sender<Result<String>>,
     },
-    /// 解析reflow数据（从指定页面开始的后续页面）
+    /// 解析reflow数据
     ExtractReflowData {
         start_page: usize,
         response_tx: Sender<Result<Vec<crate::entity::ReflowEntry>>>,
@@ -88,7 +76,7 @@ pub enum DecodeTask {
     Shutdown,
 }
 
-/// 解码结果（原始数据，可以跨线程传递）
+/// 解码结果
 pub struct DecodeResult {
     pub key: String,
     pub page_info: PageInfo,
@@ -98,28 +86,23 @@ pub struct DecodeResult {
     pub links: Vec<Link>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Priority {
-    Thumbnail = 0, // 最高优先级
-    FullImage = 1, // 中优先级
-    Cropped = 2,   // 低优先级
-}
-
-/// 解码服务 - 单线程解码，通过channel通信
+/// 解码服务 - 三队列优先级调度，单线程解码
+///
+/// 优先级顺序：Page(缩略图) > Node(瓦片) > Crop(裁剪检测)
+/// 内部维护三个独立队列，每次 selectNextTask 按优先级 poll。
 pub struct DecodeService {
     task_sender: Sender<DecodeTask>,
     result_receiver: Mutex<Receiver<DecodeResult>>,
     load_result_sender: Sender<Result<Vec<PageInfo>>>,
     load_result_receiver: Mutex<Receiver<Result<Vec<PageInfo>>>>,
     decode_thread: Option<JoinHandle<()>>,
-    /// 是否有解码任务正在处理（用于主线程避免空轮询）
+    /// 是否有解码任务正在处理
     work_pending: AtomicBool,
-    /// 解码线程是否发生过 panic 崩溃（与线程共享）
+    /// 解码线程是否发生过 panic
     error_occurred: Arc<AtomicBool>,
 }
 
 impl DecodeService {
-    /// 保存封面缩略图
     fn save_cover_thumbnail(path: &Path, dec: &Box<dyn Decoder>, first_page: &PageInfo) {
         let path_str = path.to_string_lossy();
         let hash = generate_thumbnail_hash(&path_str);
@@ -130,14 +113,13 @@ impl DecodeService {
                 info!("Cover thumbnail already exists: {:?}", cache_path);
                 return;
             }
-            // 计算缩放到最大 300 像素的 scale
             let max_original = first_page.width.max(first_page.height);
             let effective_scale = 300.0 / max_original;
             let new_page_info = PageInfo {
                 index: first_page.index,
                 width: first_page.width,
                 height: first_page.height,
-                scale: effective_scale / 2.0, // 因为内部会乘以 2.0 (DPI scale)
+                scale: effective_scale / 2.0,
                 crop_bounds: first_page.crop_bounds,
             };
             match dec.render_page(&new_page_info, false) {
@@ -165,7 +147,6 @@ impl DecodeService {
         let error_flag = Arc::new(AtomicBool::new(false));
         let error_flag_clone = Arc::clone(&error_flag);
 
-        // 启动解码线程
         let load_result_tx_for_thread = load_result_tx.clone();
         let decode_thread = thread::spawn(move || {
             Self::decode_loop(task_rx, result_tx, load_result_tx_for_thread, error_flag_clone);
@@ -182,41 +163,57 @@ impl DecodeService {
         }
     }
 
-    /// 解码线程主循环（带 panic 恢复）
-    fn decode_loop(task_rx: Receiver<DecodeTask>, result_tx: Sender<DecodeResult>, load_result_tx: Sender<Result<Vec<PageInfo>>>, error_flag: Arc<AtomicBool>) {
+    fn decode_loop(
+        task_rx: Receiver<DecodeTask>,
+        result_tx: Sender<DecodeResult>,
+        load_result_tx: Sender<Result<Vec<PageInfo>>>,
+        error_flag: Arc<AtomicBool>,
+    ) {
         let mut decoder: Option<Box<dyn Decoder>> = None;
-        let mut task_queue: VecDeque<RenderPage> = VecDeque::new();
-        let mut current_visible: HashSet<RenderPage> = HashSet::new();
+        // 三优先级队列
+        let mut page_queue: VecDeque<RenderPage> = VecDeque::new();
+        let mut node_queue: VecDeque<RenderPage> = VecDeque::new();
+        let mut crop_queue: VecDeque<RenderPage> = VecDeque::new();
+        // 已提交任务的 key 去重
+        let mut pending_keys: HashSet<String> = HashSet::new();
 
         loop {
-            // 1. 先检查是否有新任务（非阻塞，用 safe 版本防止 panic 杀死线程）
+            // 1. 接收管理员任务（非阻塞）
             while let Ok(task) = task_rx.try_recv() {
-                if Self::safe_handle_task(
+                match Self::safe_handle_task(
                     task,
                     &mut decoder,
-                    &mut task_queue,
-                    &mut current_visible,
+                    &mut page_queue,
+                    &mut node_queue,
+                    &mut crop_queue,
+                    &mut pending_keys,
                     &load_result_tx,
                     &error_flag,
                 ) {
-                    return;
+                    TaskHandled::Exit => return,
+                    TaskHandled::Continue => {}
                 }
             }
 
-            // 2. 处理队列中的一个任务
-            if let Some(render_page) = task_queue.pop_front() {
-                // 使用回调验证页面是否可见
+            // 2. 按优先级选择下一个任务
+            let task = page_queue.pop_front()
+                .or_else(|| node_queue.pop_front())
+                .or_else(|| crop_queue.pop_front());
+
+            if let Some(render_page) = task {
+                // 可见性检查
                 let is_visible = if let Some(ref checker) = render_page.visibility_checker {
                     checker(render_page.page_info.index)
                 } else {
-                    current_visible.contains(&render_page)
+                    pending_keys.contains(&render_page.key)
                 };
 
                 if !is_visible {
+                    pending_keys.remove(&render_page.key);
                     continue;
                 }
 
-                // 执行解码并用 catch_unwind 保护，防止 MuPDF 内部崩溃杀死线程
+                // 执行解码
                 let render_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     if let Some(ref dec) = decoder {
                         let start_time = Instant::now();
@@ -240,6 +237,8 @@ impl DecodeService {
                     }
                 }));
 
+                pending_keys.remove(&render_page.key);
+
                 match render_result {
                     Ok(Some((key, page_info, image_data, width, height, links))) => {
                         let result = DecodeResult {
@@ -255,11 +254,8 @@ impl DecodeService {
                             return;
                         }
                     }
-                    Ok(None) => {
-                        // 正常失败（如解码错误），继续处理下一个
-                    }
+                    Ok(None) => {}
                     Err(panic_info) => {
-                        // 解码线程 panic！无效化解码器防止重复崩溃
                         let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
                             s.to_string()
                         } else if let Some(s) = panic_info.downcast_ref::<String>() {
@@ -270,49 +266,60 @@ impl DecodeService {
                         log::error!("解码器渲染时崩溃: {}. 已无效化解码器，请重新打开文档。", msg);
                         error_flag.store(true, Ordering::Release);
                         decoder = None;
-                        task_queue.clear();
-                        current_visible.clear();
+                        page_queue.clear();
+                        node_queue.clear();
+                        crop_queue.clear();
+                        pending_keys.clear();
                     }
                 }
-
-                continue;
-            }
-
-            // 3. 队列为空，阻塞等待新任务
-            match task_rx.recv() {
-                Ok(task) => {
-                    if Self::safe_handle_task(
-                        task,
-                        &mut decoder,
-                        &mut task_queue,
-                        &mut current_visible,
-                        &load_result_tx,
-                        &error_flag,
-                    ) {
+            } else {
+                // 3. 队列全空，阻塞等待新任务
+                match task_rx.recv() {
+                    Ok(task) => {
+                        match Self::safe_handle_task(
+                            task,
+                            &mut decoder,
+                            &mut page_queue,
+                            &mut node_queue,
+                            &mut crop_queue,
+                            &mut pending_keys,
+                            &load_result_tx,
+                            &error_flag,
+                        ) {
+                            TaskHandled::Exit => break,
+                            TaskHandled::Continue => {}
+                        }
+                    }
+                    Err(_) => {
+                        info!("Task channel closed");
                         break;
                     }
-                }
-                Err(_) => {
-                    info!("Task channel closed");
-                    break;
                 }
             }
         }
     }
 
-    /// 安全版本的 handle_task，用 catch_unwind 防止 panic 杀死解码线程
+    enum TaskHandled {
+        Exit,
+        Continue,
+    }
+
     fn safe_handle_task(
         task: DecodeTask,
         decoder: &mut Option<Box<dyn Decoder>>,
-        task_queue: &mut VecDeque<RenderPage>,
-        current_visible: &mut HashSet<RenderPage>,
+        page_queue: &mut VecDeque<RenderPage>,
+        node_queue: &mut VecDeque<RenderPage>,
+        crop_queue: &mut VecDeque<RenderPage>,
+        pending_keys: &mut HashSet<String>,
         load_result_tx: &Sender<Result<Vec<PageInfo>>>,
         error_flag: &Arc<AtomicBool>,
-    ) -> bool {
+    ) -> TaskHandled {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            Self::handle_task(task, decoder, task_queue, current_visible, load_result_tx)
+            Self::handle_task(task, decoder, page_queue, node_queue, crop_queue, pending_keys, load_result_tx)
         })) {
-            Ok(should_exit) => should_exit,
+            Ok(should_exit) => {
+                if should_exit { TaskHandled::Exit } else { TaskHandled::Continue }
+            }
             Err(panic_info) => {
                 let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
                     s.to_string()
@@ -324,19 +331,22 @@ impl DecodeService {
                 log::error!("解码器处理任务时崩溃: {}. 已无效化解码器，请重新打开文档。", msg);
                 error_flag.store(true, Ordering::Release);
                 *decoder = None;
-                task_queue.clear();
-                current_visible.clear();
-                false // 不退出线程，等待新的 LoadDocument 请求
+                page_queue.clear();
+                node_queue.clear();
+                crop_queue.clear();
+                pending_keys.clear();
+                TaskHandled::Continue
             }
         }
     }
 
-    /// 处理单个任务，返回 true 表示应该退出循环
     fn handle_task(
         task: DecodeTask,
         decoder: &mut Option<Box<dyn Decoder>>,
-        task_queue: &mut VecDeque<RenderPage>,
-        current_visible: &mut HashSet<RenderPage>,
+        page_queue: &mut VecDeque<RenderPage>,
+        node_queue: &mut VecDeque<RenderPage>,
+        crop_queue: &mut VecDeque<RenderPage>,
+        pending_keys: &mut HashSet<String>,
         load_result_tx: &Sender<Result<Vec<PageInfo>>>,
     ) -> bool {
         match task {
@@ -344,16 +354,11 @@ impl DecodeService {
                 info!("Loading document: {:?}", path);
                 match PdfDecoder::open(&path) {
                     Ok(pdf_decoder) => {
-                        info!("PdfDecoder::open 成功");
                         let boxed_decoder = Box::new(pdf_decoder);
                         let pages_result = boxed_decoder.get_all_pages();
                         *decoder = Some(boxed_decoder);
                         let first_page = if let Ok(ref pages) = pages_result {
-                            if !pages.is_empty() {
-                                Some(pages[0].clone())
-                            } else {
-                                None
-                            }
+                            if !pages.is_empty() { Some(pages[0].clone()) } else { None }
                         } else {
                             None
                         };
@@ -365,7 +370,6 @@ impl DecodeService {
                         }
                     }
                     Err(e) => {
-                        info!("PdfDecoder::open 失败: {}", e);
                         let _ = load_result_tx.send(Err(e));
                     }
                 }
@@ -373,24 +377,28 @@ impl DecodeService {
             }
             DecodeTask::RenderPages { pages } => {
                 debug!("收到批量渲染任务: {} 页", pages.len());
-                
-                // 1. 更新当前可见页集合（用于后续验证）
-                current_visible.clear();
-                current_visible.extend(pages.iter().cloned());
-
-                // 2. 将新任务加入队列（去重：检查队列中是否已存在相同key的任务）
                 for page in pages {
-                    let already_queued = task_queue.iter().any(|p| p.key == page.key);
-                    if !already_queued {
-                        debug!("加入队列: page={}, key={}", page.page_info.index, page.key);
-                        task_queue.push_back(page);
-                    } else {
-                        info!("跳过重复任务: page={}, key={}", page.page_info.index, page.key);
+                    if pending_keys.contains(&page.key) {
+                        debug!("跳过重复任务: key={}", page.key);
+                        continue;
+                    }
+                    pending_keys.insert(page.key.clone());
+                    match page.task_type {
+                        TaskType::Page => {
+                            debug!("加入Page队列: key={}", page.key);
+                            page_queue.push_back(page);
+                        }
+                        TaskType::Node => {
+                            debug!("加入Node队列: key={}", page.key);
+                            node_queue.push_back(page);
+                        }
+                        TaskType::Crop => {
+                            crop_queue.push_back(page);
+                        }
                     }
                 }
-                
-                info!("当前队列长度: {}, 可见页数: {}", 
-                    task_queue.len(), current_visible.len());
+                debug!("队列状态 - Page: {}, Node: {}, Crop: {}, pending: {}",
+                    page_queue.len(), node_queue.len(), crop_queue.len(), pending_keys.len());
                 false
             }
             DecodeTask::GetOutline { response_tx } => {
@@ -427,9 +435,9 @@ impl DecodeService {
         }
     }
 
-    /// 加载PDF文档（异步）
+    // ===== 公开 API =====
+
     pub fn load_pdf<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        // 清除之前的错误标志，新文档从头开始
         self.clear_error();
         self.task_sender
             .send(DecodeTask::LoadDocument {
@@ -438,46 +446,37 @@ impl DecodeService {
             .map_err(|e| anyhow::anyhow!("Failed to send load task: {}", e))
     }
 
-    /// 获取大纲（同步等待）
     pub fn get_outline(&self) -> Result<Vec<crate::entity::OutlineItem>> {
         let (response_tx, response_rx) = unbounded();
         self.task_sender
             .send(DecodeTask::GetOutline { response_tx })
             .map_err(|e| anyhow::anyhow!("Failed to send outline task: {}", e))?;
-
         response_rx
             .recv()
             .map_err(|e| anyhow::anyhow!("Failed to receive outline response: {}", e))?
     }
 
-    /// 获取页面文本（同步等待）
     pub fn get_page_text(&self, page_index: usize) -> Result<String> {
         let (response_tx, response_rx) = unbounded();
         self.task_sender
             .send(DecodeTask::GetPageText { page_index, response_tx })
             .map_err(|e| anyhow::anyhow!("Failed to send page text task: {}", e))?;
-
         response_rx
             .recv()
             .map_err(|e| anyhow::anyhow!("Failed to receive page text response: {}", e))?
     }
 
-    /// 从指定页面开始获取后续页面的reflow数据
     pub fn get_reflow_from_page(&self, start_page: usize) -> Result<Vec<crate::entity::ReflowEntry>> {
         let (response_tx, response_rx) = unbounded();
         self.task_sender
-            .send(DecodeTask::ExtractReflowData {
-                start_page,
-                response_tx
-            })
+            .send(DecodeTask::ExtractReflowData { start_page, response_tx })
             .map_err(|e| anyhow::anyhow!("Failed to send reflow task: {}", e))?;
-
         response_rx
             .recv()
             .map_err(|e| anyhow::anyhow!("Failed to receive reflow response: {}", e))?
     }
 
-    /// 批量提交渲染任务（异步，不等待）
+    /// 批量提交渲染任务（内部分发到对应优先级队列）
     pub fn render_pages(&self, pages: Vec<RenderPage>) {
         if !pages.is_empty() {
             self.work_pending.store(true, Ordering::Release);
@@ -485,38 +484,30 @@ impl DecodeService {
         }
     }
 
-    /// 是否有未处理完的解码任务
     pub fn is_work_pending(&self) -> bool {
         self.work_pending.load(Ordering::Acquire)
     }
 
-    /// 标记解码任务已全部处理完毕
     pub fn clear_work_pending(&self) {
         self.work_pending.store(false, Ordering::Release);
     }
 
-    /// 解码线程是否发生过 panic（如 MuPDF 内部崩溃）
     pub fn has_error(&self) -> bool {
         self.error_occurred.load(Ordering::Acquire)
     }
 
-    /// 清除错误标志（重新打开文档前调用）
     pub fn clear_error(&self) {
         self.error_occurred.store(false, Ordering::Release);
     }
 
-    /// 尝试接收解码结果（非阻塞）
     pub fn try_recv_result(&self) -> Option<DecodeResult> {
         self.result_receiver.lock().unwrap().try_recv().ok()
     }
 
-    /// 尝试接收加载结果（非阻塞）
     pub fn try_recv_load_result(&self) -> Option<Result<Vec<PageInfo>>> {
-        //info!("try_recv_load_result");
         self.load_result_receiver.lock().unwrap().try_recv().ok()
     }
 
-    /// 关闭服务（发送 Shutdown 信号给解码线程）
     pub fn destroy(&self) {
         info!("Destroying decoder service");
         let _ = self.task_sender.send(DecodeTask::Shutdown);

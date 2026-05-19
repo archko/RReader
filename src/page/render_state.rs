@@ -6,7 +6,7 @@ use log::debug;
 use super::Page;
 use crate::cache::PageCache;
 use crate::decoder::DecodeService;
-use crate::decoder::decode_service::{RenderPage, Priority};
+use crate::decoder::decode_service::{RenderPage, TaskType};
 use crate::decoder::Rect;
 use crate::entity::OutlineItem;
 
@@ -213,7 +213,7 @@ pub fn process_visible_nodes(state: &PageRenderState) {
                         key: node.cache_key.clone(),
                         page_info: page.info.clone(),
                         crop,
-                        priority: Priority::FullImage,
+                        task_type: TaskType::Node,
                         visibility_checker: None,
                     });
                 }
@@ -234,7 +234,7 @@ pub fn process_visible_nodes(state: &PageRenderState) {
                         key: thumb_key,
                         page_info: thumb_info,
                         crop: 0,
-                        priority: Priority::Thumbnail,
+                        task_type: TaskType::Page,
                         visibility_checker: None,
                     });
                 }

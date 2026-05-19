@@ -6,9 +6,8 @@ use vello::Fill;
 use vello::kurbo::Affine;
 use std::sync::Arc;
 
-use super::PageNode;
+use super::{PageNode, PageNodePool};
 use crate::cache::PageCache;
-use crate::decoder::decode_service::{RenderPage, Priority};
 use crate::decoder::{Link, PageInfo, Rect};
 
 pub struct Page {
@@ -35,6 +34,8 @@ pub struct Page {
     pub links_loaded: bool,
     /// 瓦片分块配置，由 invalidate_nodes() 计算
     pub tile_config: TileConfig,
+    /// PageNode 对象池（避免高频 GC）
+    node_pool: PageNodePool,
 }
 
 impl Page {
@@ -57,6 +58,7 @@ impl Page {
             total_scale,
             links_loaded: false,
             tile_config,
+            node_pool: PageNodePool::new(),
         }
     }
 
@@ -99,8 +101,13 @@ impl Page {
 
         // 2) 高清瓦片
         for node in self.visible_nodes.values() {
-            let pixel_rect = node.to_pixel_rect(
-                self.width, self.height, self.bounds.left, self.bounds.top,
+            // 注意：这里需要可变引用来更新缓存，但 draw 签名是 &self
+            // 实际使用时，像素矩形缓存是性能优化，不缓存也可以正常工作
+            let pixel_rect = Rect::new(
+                node.bounds.left * self.width + self.bounds.left,
+                node.bounds.top * self.height + self.bounds.top,
+                node.bounds.right * self.width + self.bounds.left,
+                node.bounds.bottom * self.height + self.bounds.top,
             );
             let draw_rect = KurboRect::new(
                 pixel_rect.left as f64, pixel_rect.top as f64,
@@ -114,6 +121,40 @@ impl Page {
                 let brush: Brush = ImageBrush::new(image_data).into();
                 scene.fill(Fill::NonZero, scroll, &brush, None, &draw_rect);
             }
+        }
+    }
+
+    /// 绘制链接高亮区域（设计文档 drawLinks）
+    pub fn draw_links(&self, scene: &mut Scene, scroll: Affine) {
+        if self.links.is_empty() {
+            return;
+        }
+
+        // 链接区域高亮颜色：半透明蓝色边框
+        let link_color = Color::rgba(0.0, 0.5, 1.0, 0.3);
+        let border_color = Color::rgba(0.0, 0.5, 1.0, 0.8);
+
+        for link in &self.links {
+            // 将链接边界从页面对齐坐标转换为文档坐标
+            let link_rect = KurboRect::new(
+                (self.bounds.left + link.bounds.left * self.width) as f64,
+                (self.bounds.top + link.bounds.top * self.height) as f64,
+                (self.bounds.left + link.bounds.right * self.width) as f64,
+                (self.bounds.top + link.bounds.bottom * self.height) as f64,
+            );
+
+            // 填充半透明背景
+            scene.fill(Fill::NonZero, scroll, &link_color, None, &link_rect);
+            
+            // 绘制边框（使用 stroke 需要引入 Stroke 类，这里用细矩形模拟）
+            let stroke_width = 1.0;
+            let stroke_rect = KurboRect::new(
+                link_rect.x0 - stroke_width / 2.0,
+                link_rect.y0 - stroke_width / 2.0,
+                link_rect.x1 + stroke_width / 2.0,
+                link_rect.y1 + stroke_width / 2.0,
+            );
+            scene.fill(Fill::NonZero, scroll, &border_color, None, &stroke_rect);
         }
     }
 
@@ -133,17 +174,16 @@ impl Page {
         // 移除不再需要的 node
         self.visible_nodes.retain(|k, _| needed.contains(k));
 
-        // 按需创建 node
+        // 按需从池中获取或创建 node
         let mut decode_needed = Vec::new();
         for &key in &needed {
             if !self.visible_nodes.contains_key(&key) {
                 let col = key % config.x_blocks;
                 let row = key / config.x_blocks;
                 let bounds = Self::tile_logical_bounds(col, row, config);
-                let node = PageNode::new(self.info.index, bounds);
+                let node = self.node_pool.acquire(self.info.index, bounds);
                 self.visible_nodes.insert(key, node);
             }
-            // 返回 bitmap 缺失且不在解码中的 node
             if let Some(n) = self.visible_nodes.get(&key) {
                 if n.needs_decoding() {
                     decode_needed.push(key);
@@ -204,12 +244,11 @@ impl Page {
 
     pub fn needs_decoding(&self) -> bool { !self.is_decoding }
 
-    /// 回收所有 node 资源（保留 thumb_bitmap 以快速恢复显示）
+    /// 回收所有 node 到对象池（保留 thumb_bitmap 以快速恢复显示）
     pub fn recycle(&mut self) {
-        for node in self.visible_nodes.values_mut() {
-            node.recycle();
+        for (_, node) in self.visible_nodes.drain() {
+            self.node_pool.release(node);
         }
-        self.visible_nodes.clear();
         self.is_decoding = false;
     }
 }
