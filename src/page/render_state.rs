@@ -58,6 +58,7 @@ impl DecodeCallback for PageCallback {
 
     fn on_completed(&self, result: DecodeResult) {
         if result.key != self.cache_key { return; }
+
         if let Some(img) = image::RgbaImage::from_raw(
             result.image_width, result.image_height, result.image_data,
         ) {
@@ -83,6 +84,10 @@ impl DecodeCallback for PageCallback {
                         if page.is_thumb_loading {
                             page.thumb_bitmap = self.state.cache.get_thumbnail(&self.cache_key);
                             page.is_thumb_loading = false;
+                        }
+                        if !result.links.is_empty() {
+                            page.links = result.links;
+                            page.links_loaded = true;
                         }
                     }
                 }

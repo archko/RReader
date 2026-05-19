@@ -236,12 +236,6 @@ impl Page {
         )
     }
 
-    pub fn load_links(&mut self) {
-        if !self.links_loaded {
-            self.links_loaded = true;
-        }
-    }
-
     pub fn find_link_at(&self, doc_x: f32, doc_y: f32) -> Option<&Link> {
         let page_x = doc_x - self.bounds.left;
         let page_y = doc_y - self.bounds.top;
