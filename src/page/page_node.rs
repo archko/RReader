@@ -1,7 +1,7 @@
 use vello::Scene;
 use vello::peniko::{Brush, ImageBrush, ImageData, ImageFormat};
 use vello::kurbo::Rect as KurboRect;
-use vello::Fill;
+use vello::peniko::Fill;
 use vello::kurbo::Affine;
 use std::sync::Arc;
 

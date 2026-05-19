@@ -4,12 +4,12 @@ use std::sync::atomic::Ordering;
 use vello::peniko::Color;
 use vello::kurbo::{Affine, Rect, Size};
 use vello::Scene;
-use vello::Fill;
+use vello::peniko::Fill;
 
-use masonry::widget::Widget;
-use masonry::event::PointerEvent;
-use masonry::paint::PaintCtx;
-use masonry::{
+use xilem::masonry::widget::Widget;
+use xilem::masonry::event::PointerEvent;
+use xilem::masonry::paint::PaintCtx;
+use xilem::masonry::{
     BoxConstraints, EventCtx, EventHandling, LayoutCtx, LifeCtx, UpdateCtx, LifeCycle, UpdateEvent,
 };
 
