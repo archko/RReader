@@ -79,8 +79,9 @@ impl Page {
     pub fn x_offset(&self) -> f32 { self.bounds.left }
     pub fn y_offset(&self) -> f32 { self.bounds.top }
 
-    /// 绘制页面，含 scaleRatio 修正
-    pub fn draw(&self, scene: &mut Scene, scroll: Affine, cache: &PageCache, current_zoom: f32) {
+    pub fn draw(&self, scene: &mut Scene, scroll: Affine, cache: &PageCache,
+                current_zoom: f32, crop: i32,
+                vis_left: f32, vis_top: f32, vis_right: f32, vis_bottom: f32) {
         let scale_ratio = if self.base_zoom > 0.0 { current_zoom / self.base_zoom } else { 1.0 };
 
         let adj_left = self.bounds.left * scale_ratio;
@@ -91,7 +92,7 @@ impl Page {
         let adj_width = self.width * scale_ratio;
         let adj_height = self.height * scale_ratio;
 
-        let thumb_key = format!("thumb-{}", self.info.index);
+        let thumb_key = format!("thumb-{}-{}", self.info.index, crop);
         let thumb_img = self.thumb_bitmap.clone()
             .or_else(|| cache.get_thumbnail(&thumb_key));
         if let Some(ref img) = thumb_img {
@@ -107,9 +108,9 @@ impl Page {
             scene.fill(Fill::NonZero, scroll, &brush, None, &draw_rect);
         }
 
-        // 瓦片
         for node in self.visible_nodes.values() {
-            node.draw(scene, scroll, adj_width, adj_height, adj_left, adj_top, cache);
+            node.draw(scene, scroll, adj_width, adj_height, adj_left, adj_top, cache,
+                      vis_left, vis_top, vis_right, vis_bottom);
         }
     }
 

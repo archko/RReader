@@ -1,5 +1,4 @@
 use std::sync::{Arc, RwLock, atomic::{AtomicBool, Ordering}};
-use std::time::Duration;
 
 use log::debug;
 
@@ -104,7 +103,6 @@ impl PageRenderState {
         }
     }
 
-    /// 可见页计算 —— scaleRatio 修正（支持 zoom 变化后不重算 layout 的场景）
     fn recalculate_visible_pages(inner: &mut Inner) {
         let old_visible = std::mem::take(&mut inner.visible_pages);
 
@@ -112,7 +110,8 @@ impl PageRenderState {
             inner.view_offset, inner.view_size, inner.orientation, inner.preload_screens,
         );
 
-        let scale_ratio = 1.0;
+        // 后续若支持 layout 与 visible 使用不同 zoom，传实际值即可
+        let scale_ratio = if inner.zoom > 0.0 { inner.zoom / inner.zoom } else { 1.0 };
         let first = find_first_visible(&inner.pages, &visible_rect, inner.orientation, scale_ratio);
         let last = find_last_visible(&inner.pages, &visible_rect, inner.orientation, scale_ratio);
 
@@ -177,6 +176,20 @@ impl Default for PageRenderState {
     }
 }
 
+fn thumbnail_cache_key(page_index: usize, crop: i32) -> String {
+    format!("thumb-{}-{}", page_index, crop)
+}
+
+fn calculate_thumbnail_scale(page_width: f32, page_height: f32) -> f32 {
+    let max_dim = page_width.max(page_height);
+    let base_size = if max_dim > 100_000.0 { 60.0 }
+        else if max_dim > 30_000.0 { 80.0 }
+        else if max_dim > 20_000.0 { 120.0 }
+        else if max_dim > 10_000.0 { 180.0 }
+        else { 360.0 };
+    base_size / max_dim
+}
+
 // ===== 可见页节点管理 + 解码提交（委托给 Page） =====
 
 pub fn process_visible_nodes(state: &PageRenderState) {
@@ -199,20 +212,19 @@ pub fn process_visible_nodes(state: &PageRenderState) {
                 orientation,
             );
 
-            let thumb_key = format!("thumb-{}", page.info.index);
+            let thumb_key = thumbnail_cache_key(page.info.index, crop);
             if page.thumb_bitmap.is_none() && !page.is_thumb_loading {
                 if let Some(img) = state.cache.get_thumbnail(&thumb_key) {
                     page.thumb_bitmap = Some(img);
                 } else {
                     page.is_thumb_loading = true;
-                    let max_original = page.info.width.max(page.info.height);
-                    let thumb_scale = 300.0 / max_original;
+                    let thumb_scale = calculate_thumbnail_scale(page.info.width, page.info.height);
                     let mut thumb_info = page.info.clone();
                     thumb_info.scale = thumb_scale;
                     state.decode_service.render_pages(vec![RenderPage {
                         key: thumb_key,
                         page_info: thumb_info,
-                        crop: 0,
+                        crop,
                         task_type: TaskType::Page,
                         visibility_checker: None,
                     }]);
@@ -246,6 +258,11 @@ pub fn consume_decode_result(state: &PageRenderState, result: crate::decoder::de
     let mut inner = state.inner.write().unwrap();
     if is_thumb {
         if let Some(page) = inner.pages.get_mut(result.page_info.index) {
+            // 仅当 key 与当前 crop 状态匹配时才更新（crop 变化后旧缩略图不应用）
+            let expected = thumbnail_cache_key(result.page_info.index, inner.crop);
+            if key != expected {
+                return;
+            }
             if page.is_thumb_loading {
                 page.is_thumb_loading = false;
                 if let Some(img) = state.cache.get_thumbnail(&key) {

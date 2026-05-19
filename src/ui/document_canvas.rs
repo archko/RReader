@@ -165,13 +165,20 @@ impl Widget for DocumentCanvasWidget {
         let scene: &mut Scene = &mut *ctx.scene;
         let scroll = Affine::translate(inner.view_offset.0 as f64, inner.view_offset.1 as f64);
         let current_zoom = inner.zoom;
+        let crop = inner.crop;
+
+        let vis_left = -inner.view_offset.0;
+        let vis_top = -inner.view_offset.1;
+        let vis_right = inner.view_size.0 - inner.view_offset.0;
+        let vis_bottom = inner.view_size.1 - inner.view_offset.1;
 
         let bg = Rect::new(0.0, 0.0, 2000.0, 1200.0);
         scene.fill(Fill::NonZero, Affine::IDENTITY, &Color::WHITE, None, &bg);
 
         for &page_idx in &inner.visible_pages {
             if let Some(page) = inner.pages.get(page_idx) {
-                page.draw(scene, scroll, &self.state.cache, current_zoom);
+                page.draw(scene, scroll, &self.state.cache, current_zoom, crop,
+                          vis_left, vis_top, vis_right, vis_bottom);
             }
         }
     }

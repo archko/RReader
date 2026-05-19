@@ -87,8 +87,17 @@ impl PageNode {
         )
     }
 
-    pub fn draw(&self, scene: &mut Scene, scroll: Affine, page_width: f32, page_height: f32, x_offset: f32, y_offset: f32, cache: &PageCache) {
+    pub fn draw(&self, scene: &mut Scene, scroll: Affine,
+                page_width: f32, page_height: f32, x_offset: f32, y_offset: f32,
+                cache: &PageCache,
+                vis_left: f32, vis_top: f32, vis_right: f32, vis_bottom: f32) {
         let pixel_rect = self.get_pixel_rect(page_width, page_height, x_offset, y_offset);
+
+        if pixel_rect.left > vis_right || pixel_rect.right < vis_left
+            || pixel_rect.top > vis_bottom || pixel_rect.bottom < vis_top {
+            return;
+        }
+
         let draw_rect = KurboRect::new(
             pixel_rect.left as f64, pixel_rect.top as f64,
             pixel_rect.right as f64, pixel_rect.bottom as f64,
