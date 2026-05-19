@@ -13,7 +13,7 @@ use vello::peniko::{ImageData, ImageFormat};
 use crate::dao::RecentDao;
 use crate::ui::utils::get_thumbnail_path;
 use crate::ui::main_viewmodel::PAGE_SIZE;
-use crate::page::{PageRenderState, render_state::spawn_cache_consumer};
+use crate::page::{PageRenderState, render_state::{spawn_cache_consumer, process_visible_nodes}};
 use image::DynamicImage;
 
 /// 顶层应用状态，管理视图切换
@@ -79,6 +79,7 @@ impl AppState {
                             pv.set_pages(pages);
                             pv.update_view_size(800.0, 600.0, 1.0, true);
                             pv.update_offset(0.0, 0.0);
+                            process_visible_nodes(&pv);
                             // 加载大纲
                             if let Ok(outline) = pv.decode_service.get_outline() {
                                 pv.write().outline_items = outline;

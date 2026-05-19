@@ -15,7 +15,7 @@ use masonry::{
 
 use xilem::core::{Pod, View, ViewCtx, ViewMarker, MessageContext, MessageResult};
 
-use crate::page::render_state::PageRenderState;
+use crate::page::render_state::{PageRenderState, process_visible_nodes};
 
 pub struct DocumentCanvasWidget {
     state: Arc<PageRenderState>,
@@ -54,6 +54,7 @@ impl DocumentCanvasWidget {
             return false;
         }
         self.state.update_offset(new_x, new_y);
+        process_visible_nodes(&self.state);
         true
     }
 }
@@ -102,6 +103,7 @@ impl Widget for DocumentCanvasWidget {
                     let clamped_y = new_y.clamp(-(th - vh).max(0.0), 0.0);
 
                     self.state.update_offset(clamped_x, clamped_y);
+                    process_visible_nodes(&self.state);
                     ctx.request_paint();
                 }
                 EventHandling::Handled
@@ -151,6 +153,7 @@ impl Widget for DocumentCanvasWidget {
         let new_vh = constrained.height.max(1.0) as f32;
         if (new_vw - vw).abs() > 0.5 || (new_vh - vh).abs() > 0.5 {
             self.state.update_view_size(new_vw, new_vh, zoom, false);
+            process_visible_nodes(&self.state);
         }
 
         constrained

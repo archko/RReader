@@ -21,11 +21,27 @@ pub struct Page {
     pub width: f32,
     pub height: f32,
     pub is_decoding: bool,
+
+    // ── 设计文档对齐字段 ──
+    /// 低分辨率缩略图，保证快速首屏显示
+    pub thumb_bitmap: Option<Arc<image::DynamicImage>>,
+    pub is_thumb_loading: bool,
+    /// 页面在文档中的偏移（design doc 中的 xOffset / yOffset）
+    pub x_offset: f32,
+    pub y_offset: f32,
+    /// 整体缩放比例 totalScale = width / info.width
+    pub total_scale: f32,
+    /// 链接是否已加载（懒加载）
+    pub links_loaded: bool,
+    /// 瓦片分块配置，由 invalidate_nodes() 计算
+    pub tile_config: TileConfig,
 }
 
 impl Page {
     pub fn new(info: PageInfo, width: f32, height: f32, x_offset: f32, y_offset: f32) -> Self {
         let bounds = Rect::new(x_offset, y_offset, x_offset + width, y_offset + height);
+        let tile_config = TileConfig::from_size(width, height);
+        let total_scale = if width > 0.0 { width / info.width } else { 1.0 };
         Self {
             info,
             bounds,
@@ -34,6 +50,13 @@ impl Page {
             width,
             height,
             is_decoding: false,
+            thumb_bitmap: None,
+            is_thumb_loading: false,
+            x_offset,
+            y_offset,
+            total_scale,
+            links_loaded: false,
+            tile_config,
         }
     }
 
@@ -41,13 +64,40 @@ impl Page {
         self.width = width;
         self.height = height;
         self.bounds = bounds;
+        self.x_offset = bounds.left;
+        self.y_offset = bounds.top;
+        self.total_scale = width / self.info.width;
+        self.invalidate_nodes();
+    }
+
+    /// 重新计算瓦片分块配置（design doc 中的 invalidateNodes）
+    pub fn invalidate_nodes(&mut self) {
+        self.tile_config = TileConfig::from_size(self.width, self.height);
     }
 
     pub fn x_offset(&self) -> f32 { self.bounds.left }
     pub fn y_offset(&self) -> f32 { self.bounds.top }
 
-    /// 绘制当前所有可见 node
+    /// 绘制当前所有可见 node（缩略图作为底层，高清瓦片覆盖其上）
     pub fn draw(&self, scene: &mut Scene, scroll: Affine, cache: &PageCache) {
+        // 1) 尝试从缓存获取缩略图，低分辨率优先显示
+        let thumb_key = format!("thumb-{}", self.info.index);
+        let thumb_img = self.thumb_bitmap.clone()
+            .or_else(|| cache.get_thumbnail(&thumb_key));
+        if let Some(ref img) = thumb_img {
+            let rgba = img.to_rgba8();
+            let (w, h) = rgba.dimensions();
+            let data: Arc<[u8]> = rgba.into_raw().into();
+            let image_data = ImageData { data, format: ImageFormat::Rgba8, width: w, height: h };
+            let brush: Brush = ImageBrush::new(image_data).into();
+            let draw_rect = KurboRect::new(
+                self.bounds.left as f64, self.bounds.top as f64,
+                self.bounds.right as f64, self.bounds.bottom as f64,
+            );
+            scene.fill(Fill::NonZero, scroll, &brush, None, &draw_rect);
+        }
+
+        // 2) 高清瓦片
         for node in self.visible_nodes.values() {
             let pixel_rect = node.to_pixel_rect(
                 self.width, self.height, self.bounds.left, self.bounds.top,
@@ -67,18 +117,12 @@ impl Page {
         }
     }
 
-    /// 根据文档坐标系的视口，计算当前哪些 tile 应可见。
-    /// - 已存在 node 保留；
-    /// - 新可见的创建 node，缺图则提交解码；
-    /// - 移出视口的 node 移除。
-    pub fn update_visible_nodes(&mut self, viewport: &Rect, cache: &PageCache, crop: i32) -> Vec<RenderPage> {
-        let config = TileConfig::from_size(self.width, self.height);
-        let mut tasks = Vec::new();
+    /// 仅管理瓦片 node 的创建/回收，返回需要解码的 node key 列表。
+    /// 不访问 cache，不下发 decode 任务（纯 node 生命周期管理）。
+    pub fn update_visible_nodes(&mut self, viewport: &Rect) -> Vec<usize> {
+        let config = &self.tile_config;
+        let (col_range, row_range) = self.visible_tile_ranges(config, viewport);
 
-        // 1) 计算视口覆盖的 tile 行列范围
-        let (col_range, row_range) = self.visible_tile_ranges(&config, viewport);
-
-        // 2) 收集应在可见集内的 key 集合
         let mut needed: Vec<usize> = Vec::new();
         for row in row_range.clone() {
             for col in col_range.clone() {
@@ -86,43 +130,35 @@ impl Page {
             }
         }
 
-        // 3) 移除不在 needed 中的过时 node
+        // 移除不再需要的 node
         self.visible_nodes.retain(|k, _| needed.contains(k));
 
-        // 4) 为所需但缺失的 tile 创建 node
+        // 按需创建 node
+        let mut decode_needed = Vec::new();
         for &key in &needed {
             if !self.visible_nodes.contains_key(&key) {
                 let col = key % config.x_blocks;
                 let row = key / config.x_blocks;
-                let bounds = Self::tile_logical_bounds(col, row, &config);
+                let bounds = Self::tile_logical_bounds(col, row, config);
                 let node = PageNode::new(self.info.index, bounds);
                 self.visible_nodes.insert(key, node);
-
-                // 缺图 → 提交解码
-                if let Some(n) = self.visible_nodes.get(&key) {
-                    if cache.get_page_image_by_key(&n.cache_key).is_none() {
-                        tasks.push(RenderPage {
-                            key: n.cache_key.clone(),
-                            page_info: self.info.clone(),
-                            crop,
-                            priority: Priority::Thumbnail,
-                            visibility_checker: None,
-                        });
-                    }
+            }
+            // 返回 bitmap 缺失且不在解码中的 node
+            if let Some(n) = self.visible_nodes.get(&key) {
+                if n.needs_decoding() {
+                    decode_needed.push(key);
                 }
             }
         }
 
-        tasks
+        decode_needed
     }
 
     /// 计算视口覆盖的 tile 行列范围 [col_start..col_end, row_start..row_end)
     fn visible_tile_ranges(&self, config: &TileConfig, viewport: &Rect) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
-        // tile 在文档坐标中的像素尺寸
         let tile_w = self.width / config.x_blocks as f32;
         let tile_h = self.height / config.y_blocks as f32;
 
-        // 将视口边界从文档坐标转为 tile 索引
         let left = ((viewport.left - self.bounds.left) / tile_w).floor() as isize;
         let right = ((viewport.right - self.bounds.left) / tile_w).ceil() as isize;
         let top = ((viewport.top - self.bounds.top) / tile_h).floor() as isize;
@@ -140,22 +176,22 @@ impl Page {
     fn tile_logical_bounds(col: usize, row: usize, config: &TileConfig) -> Rect {
         let x_blocks = config.x_blocks as f32;
         let y_blocks = config.y_blocks as f32;
-        let overlap = 0.001_f32;
-
-        let base_left = col as f32 / x_blocks;
-        let base_top = row as f32 / y_blocks;
-        let base_right = (col + 1) as f32 / x_blocks;
-        let base_bottom = (row + 1) as f32 / y_blocks;
-
         Rect::new(
-            if col == 0 { base_left } else { base_left - overlap },
-            if row == 0 { base_top } else { base_top - overlap },
-            if col == config.x_blocks - 1 { base_right } else { base_right + overlap },
-            if row == config.y_blocks - 1 { base_bottom } else { base_bottom + overlap },
+            col as f32 / x_blocks,
+            row as f32 / y_blocks,
+            (col + 1) as f32 / x_blocks,
+            (row + 1) as f32 / y_blocks,
         )
     }
 
-    // ── 链接查找 ──────────────────────────────
+    // ── 懒加载链接 ──
+
+    pub fn load_links(&mut self) {
+        if !self.links_loaded {
+            self.links_loaded = true;
+            // 链接数据已在解码结果中返回，只需标记加载
+        }
+    }
 
     pub fn find_link_at(&self, x: f32, y: f32) -> Option<&Link> {
         let page_x = x - self.bounds.left;
@@ -168,7 +204,7 @@ impl Page {
 
     pub fn needs_decoding(&self) -> bool { !self.is_decoding }
 
-    /// 回收所有 node 资源
+    /// 回收所有 node 资源（保留 thumb_bitmap 以快速恢复显示）
     pub fn recycle(&mut self) {
         for node in self.visible_nodes.values_mut() {
             node.recycle();
@@ -178,7 +214,6 @@ impl Page {
     }
 }
 
-/// 两个 Rect 是否相交
 pub fn rects_intersect(a: &Rect, b: &Rect) -> bool {
     a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
 }
@@ -191,24 +226,29 @@ pub struct TileConfig {
 }
 
 impl TileConfig {
-    const MIN_BLOCK_SIZE: f32 = 256.0 * 2.0;
-    const MAX_BLOCK_SIZE: f32 = 256.0 * 3.0;
+    const MIN_BLOCK: f32 = 256.0;
+    const MAX_BLOCK: f32 = 512.0;
 
     pub fn from_size(width: f32, height: f32) -> Self {
-        if width <= Self::MAX_BLOCK_SIZE && height <= Self::MAX_BLOCK_SIZE {
+        if width <= Self::MAX_BLOCK && height <= Self::MAX_BLOCK {
             return Self { x_blocks: 1, y_blocks: 1 };
         }
         Self {
-            x_blocks: Self::calc_block_count(width),
-            y_blocks: Self::calc_block_count(height),
+            x_blocks: Self::calc_axis_blocks(width),
+            y_blocks: Self::calc_axis_blocks(height),
         }
     }
 
-    fn is_single_block(&self) -> bool { self.x_blocks == 1 && self.y_blocks == 1 }
-    fn calc_block_count(length: f32) -> usize {
-        if length <= Self::MIN_BLOCK_SIZE { return 1; }
-        let mut bc = (length / Self::MAX_BLOCK_SIZE).ceil() as usize;
-        if bc == 0 { bc = 1; }
-        bc
+    pub fn is_single_block(&self) -> bool { self.x_blocks == 1 && self.y_blocks == 1 }
+
+    fn calc_axis_blocks(length: f32) -> usize {
+        if length <= 0.0 { return 1; }
+        if length <= Self::MAX_BLOCK { return 1; }
+        let mut blocks = (length / Self::MAX_BLOCK).ceil() as usize;
+        let actual_block_size = length / blocks as f32;
+        if actual_block_size < Self::MIN_BLOCK {
+            blocks = (length / Self::MIN_BLOCK).ceil() as usize;
+        }
+        blocks
     }
 }

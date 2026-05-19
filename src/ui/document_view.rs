@@ -3,6 +3,7 @@ use xilem::palette;
 
 use super::home_view::{AppState, ViewKind};
 use super::document_canvas::DocumentCanvasView;
+use crate::page::render_state::process_visible_nodes;
 
 /// 文档视图专属的 UI 状态
 pub struct DocumentUiState {
@@ -19,11 +20,13 @@ impl AppState {
     pub fn zoom_out(&mut self) {
         let zoom = self.page_render_state.read().zoom;
         self.page_render_state.update_zoom((zoom * 0.8).max(0.1));
+        process_visible_nodes(&self.page_render_state);
     }
 
     pub fn zoom_in(&mut self) {
         let zoom = self.page_render_state.read().zoom;
         self.page_render_state.update_zoom((zoom * 1.25).min(10.0));
+        process_visible_nodes(&self.page_render_state);
     }
 
     pub fn toggle_orientation(&mut self) {
@@ -38,6 +41,7 @@ impl AppState {
             (r.view_size.0, r.view_size.1, r.zoom)
         };
         self.page_render_state.update_view_size(vw, vh, zoom, true);
+        process_visible_nodes(&self.page_render_state);
     }
 
     pub fn toggle_crop(&mut self) {
@@ -48,6 +52,7 @@ impl AppState {
         let new_crop = if crop == 1 { 0 } else { 1 };
         self.page_render_state.write().crop = new_crop;
         self.page_render_state.update_view_size(vw, vh, zoom, true);
+        process_visible_nodes(&self.page_render_state);
     }
 }
 
