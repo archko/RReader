@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
 use std::time::{Instant, Duration};
-use std::collections::{VecDeque, HashSet};
+use std::collections::VecDeque;
 use std::fs;
 
 use crate::decoder::pdf::PdfDecoder;
@@ -170,15 +170,11 @@ impl DecodeService {
         error_flag: Arc<AtomicBool>,
     ) {
         let mut decoder: Option<Box<dyn Decoder>> = None;
-        // 三优先级队列
         let mut page_queue: VecDeque<RenderPage> = VecDeque::new();
         let mut node_queue: VecDeque<RenderPage> = VecDeque::new();
         let mut crop_queue: VecDeque<RenderPage> = VecDeque::new();
-        // 已提交任务的 key 去重
-        let mut pending_keys: HashSet<String> = HashSet::new();
 
         loop {
-            // 1. 接收管理员任务（非阻塞）
             while let Ok(task) = task_rx.try_recv() {
                 match Self::safe_handle_task(
                     task,
@@ -186,7 +182,6 @@ impl DecodeService {
                     &mut page_queue,
                     &mut node_queue,
                     &mut crop_queue,
-                    &mut pending_keys,
                     &load_result_tx,
                     &error_flag,
                 ) {
@@ -195,25 +190,19 @@ impl DecodeService {
                 }
             }
 
-            // 2. 按优先级选择下一个任务
             let task = page_queue.pop_front()
                 .or_else(|| node_queue.pop_front())
                 .or_else(|| crop_queue.pop_front());
 
             if let Some(render_page) = task {
-                // 可见性检查
-                let is_visible = if let Some(ref checker) = render_page.visibility_checker {
-                    checker(render_page.page_info.index)
-                } else {
-                    pending_keys.contains(&render_page.key)
-                };
+                let is_visible = render_page.visibility_checker
+                    .as_ref()
+                    .map_or(true, |checker| checker(render_page.page_info.index));
 
                 if !is_visible {
-                    pending_keys.remove(&render_page.key);
                     continue;
                 }
 
-                // 执行解码
                 let render_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     if let Some(ref dec) = decoder {
                         let start_time = Instant::now();
@@ -236,8 +225,6 @@ impl DecodeService {
                         None
                     }
                 }));
-
-                pending_keys.remove(&render_page.key);
 
                 match render_result {
                     Ok(Some((key, page_info, image_data, width, height, links))) => {
@@ -269,11 +256,9 @@ impl DecodeService {
                         page_queue.clear();
                         node_queue.clear();
                         crop_queue.clear();
-                        pending_keys.clear();
                     }
                 }
             } else {
-                // 3. 队列全空，阻塞等待新任务
                 match task_rx.recv() {
                     Ok(task) => {
                         match Self::safe_handle_task(
@@ -282,7 +267,6 @@ impl DecodeService {
                             &mut page_queue,
                             &mut node_queue,
                             &mut crop_queue,
-                            &mut pending_keys,
                             &load_result_tx,
                             &error_flag,
                         ) {
@@ -310,12 +294,11 @@ impl DecodeService {
         page_queue: &mut VecDeque<RenderPage>,
         node_queue: &mut VecDeque<RenderPage>,
         crop_queue: &mut VecDeque<RenderPage>,
-        pending_keys: &mut HashSet<String>,
         load_result_tx: &Sender<Result<Vec<PageInfo>>>,
         error_flag: &Arc<AtomicBool>,
     ) -> TaskHandled {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            Self::handle_task(task, decoder, page_queue, node_queue, crop_queue, pending_keys, load_result_tx)
+            Self::handle_task(task, decoder, page_queue, node_queue, crop_queue, load_result_tx)
         })) {
             Ok(should_exit) => {
                 if should_exit { TaskHandled::Exit } else { TaskHandled::Continue }
@@ -334,7 +317,6 @@ impl DecodeService {
                 page_queue.clear();
                 node_queue.clear();
                 crop_queue.clear();
-                pending_keys.clear();
                 TaskHandled::Continue
             }
         }
@@ -346,7 +328,6 @@ impl DecodeService {
         page_queue: &mut VecDeque<RenderPage>,
         node_queue: &mut VecDeque<RenderPage>,
         crop_queue: &mut VecDeque<RenderPage>,
-        pending_keys: &mut HashSet<String>,
         load_result_tx: &Sender<Result<Vec<PageInfo>>>,
     ) -> bool {
         match task {
@@ -378,18 +359,11 @@ impl DecodeService {
             DecodeTask::RenderPages { pages } => {
                 debug!("收到批量渲染任务: {} 页", pages.len());
                 for page in pages {
-                    if pending_keys.contains(&page.key) {
-                        debug!("跳过重复任务: key={}", page.key);
-                        continue;
-                    }
-                    pending_keys.insert(page.key.clone());
                     match page.task_type {
                         TaskType::Page => {
-                            debug!("加入Page队列: key={}", page.key);
                             page_queue.push_back(page);
                         }
                         TaskType::Node => {
-                            debug!("加入Node队列: key={}", page.key);
                             node_queue.push_back(page);
                         }
                         TaskType::Crop => {
@@ -397,8 +371,8 @@ impl DecodeService {
                         }
                     }
                 }
-                debug!("队列状态 - Page: {}, Node: {}, Crop: {}, pending: {}",
-                    page_queue.len(), node_queue.len(), crop_queue.len(), pending_keys.len());
+                debug!("队列状态 - Page: {}, Node: {}, Crop: {}",
+                    page_queue.len(), node_queue.len(), crop_queue.len());
                 false
             }
             DecodeTask::GetOutline { response_tx } => {
