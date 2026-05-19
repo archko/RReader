@@ -9,26 +9,23 @@ use std::sync::Arc;
 use super::{PageNode, PageNodePool, Orientation, PageRenderState};
 use crate::cache::PageCache;
 use crate::decoder::{Link, PageInfo, Rect};
-use crate::decoder::decode_service::{DecodeService, VisibilityChecker};
+use crate::decoder::decode_service::{DecodeService, DecodeCallbackRef};
+use super::render_state::PageCallback;
 
 pub struct Page {
     pub info: PageInfo,
-    /// 页面在文档坐标中的位置
     pub bounds: Rect,
-    /// 当前可见的 tile node, key = row * x_blocks + col
     pub visible_nodes: HashMap<usize, PageNode>,
     pub links: Vec<Link>,
     pub width: f32,
     pub height: f32,
     pub is_decoding: bool,
 
-    /// 低分辨率缩略图
     pub thumb_bitmap: Option<Arc<image::DynamicImage>>,
     pub is_thumb_loading: bool,
     pub x_offset: f32,
     pub y_offset: f32,
     pub total_scale: f32,
-    /// 上次 layout 时的 zoom 值（用于 scaleRatio 修正）
     pub base_zoom: f32,
     pub links_loaded: bool,
     pub tile_config: TileConfig,
@@ -71,7 +68,6 @@ impl Page {
         self.invalidate_nodes();
     }
 
-    /// 重新计算瓦片分块配置
     pub fn invalidate_nodes(&mut self) {
         self.tile_config = TileConfig::from_size(self.width, self.height);
     }
@@ -88,7 +84,6 @@ impl Page {
         let adj_top = self.bounds.top * scale_ratio;
         let adj_right = self.bounds.right * scale_ratio;
         let adj_bottom = self.bounds.bottom * scale_ratio;
-
         let adj_width = self.width * scale_ratio;
         let adj_height = self.height * scale_ratio;
 
@@ -114,11 +109,8 @@ impl Page {
         }
     }
 
-    /// 绘制链接高亮区域
     pub fn draw_links(&self, scene: &mut Scene, scroll: Affine, scale_ratio: f32) {
-        if self.links.is_empty() {
-            return;
-        }
+        if self.links.is_empty() { return; }
         let adj_left = self.bounds.left * scale_ratio;
         let adj_top = self.bounds.top * scale_ratio;
         let adj_width = self.width * scale_ratio;
@@ -162,7 +154,6 @@ impl Page {
             Orientation::Horizontal => 1,
         };
 
-        // 单块优化
         if config.is_single_block() {
             let old_keys: Vec<usize> = self.visible_nodes.keys().copied().collect();
             for k in &old_keys {
@@ -175,11 +166,13 @@ impl Page {
             self.visible_nodes.insert(0, node);
             if let Some(n) = self.visible_nodes.get_mut(&0) {
                 if n.needs_decoding() && cache.get_page_image_by_key(&n.cache_key).is_none() {
-                    let checker: Option<VisibilityChecker> = Some(Arc::new({
-                        let sa = Arc::clone(&state_arc);
-                        move |page_idx| sa.read().visible_pages.contains(&page_idx)
-                    }));
-                    n.decode(self.width, self.height, &self.info, crop, decode_service, checker);
+                    let cb: DecodeCallbackRef = Arc::new(PageCallback {
+                        state: Arc::clone(&state_arc),
+                        page_idx: self.info.index,
+                        node_key: Some(0),
+                        cache_key: n.cache_key.clone(),
+                    });
+                    n.decode(self.width, self.height, &self.info, crop, decode_service, cb);
                 }
             }
             return;
@@ -206,16 +199,13 @@ impl Page {
             }
             if let Some(n) = self.visible_nodes.get_mut(&key) {
                 if n.needs_decoding() && cache.get_page_image_by_key(&n.cache_key).is_none() {
-                    let tile_key = n.cache_key.clone();
-                    let checker: Option<VisibilityChecker> = Some(Arc::new({
-                        let sa = Arc::clone(&state_arc);
-                        move |page_idx| {
-                            sa.read().pages.get(page_idx)
-                                .map(|p| p.visible_nodes.values().any(|n| n.cache_key == tile_key))
-                                .unwrap_or(false)
-                        }
-                    }));
-                    n.decode(self.width, self.height, &self.info, crop, decode_service, checker);
+                    let cb: DecodeCallbackRef = Arc::new(PageCallback {
+                        state: Arc::clone(&state_arc),
+                        page_idx: self.info.index,
+                        node_key: Some(key),
+                        cache_key: n.cache_key.clone(),
+                    });
+                    n.decode(self.width, self.height, &self.info, crop, decode_service, cb);
                 }
             }
         }
@@ -252,7 +242,6 @@ impl Page {
         }
     }
 
-    /// 点击检测链接
     pub fn find_link_at(&self, doc_x: f32, doc_y: f32) -> Option<&Link> {
         let page_x = doc_x - self.bounds.left;
         let page_y = doc_y - self.bounds.top;
@@ -288,8 +277,6 @@ impl Page {
 pub fn rects_intersect(a: &Rect, b: &Rect) -> bool {
     a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
 }
-
-// ── TileConfig ─────────────────────────────────
 
 pub struct TileConfig {
     pub x_blocks: usize,

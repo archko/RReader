@@ -14,26 +14,28 @@ use crate::decoder::{Decoder, Link, PageInfo, Rect};
 use crate::ui::utils::generate_thumbnail_hash;
 use std::sync::Arc;
 
-/// 任务类型（用于三队列优先级调度）
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskType {
-    Page = 0,  // 最高优先级（缩略图）
-    Node = 1,  // 中优先级（瓦片）
-    Crop = 2,  // 低优先级（裁剪检测）
+    Page = 0,
+    Node = 1,
+    Crop = 2,
 }
 
-/// 可见性检查回调类型：传入页面索引，返回是否可见
-pub type VisibilityChecker = Arc<dyn Fn(usize) -> bool + Send + Sync>;
+pub trait DecodeCallback: Send + Sync {
+    fn should_render(&self, page_index: usize) -> bool;
+    fn on_completed(&self, result: DecodeResult);
+    fn on_error(&self, page_index: usize);
+}
 
-/// 渲染页面请求
+pub type DecodeCallbackRef = Arc<dyn DecodeCallback>;
+
 #[derive(Clone)]
 pub struct RenderPage {
     pub key: String,
     pub page_info: PageInfo,
     pub crop: i32,
     pub task_type: TaskType,
-    /// 可见性检查回调：执行前检查页面是否仍需要渲染
-    pub visibility_checker: Option<VisibilityChecker>,
+    pub callback: Option<DecodeCallbackRef>,
 }
 
 impl std::fmt::Debug for RenderPage {
@@ -43,40 +45,20 @@ impl std::fmt::Debug for RenderPage {
             .field("page_info", &self.page_info)
             .field("crop", &self.crop)
             .field("task_type", &self.task_type)
-            .field("has_visibility_checker", &self.visibility_checker.is_some())
+            .field("has_callback", &self.callback.is_some())
             .finish()
     }
 }
 
-/// 解码任务（管理员任务通过 channel 传递）
 enum DecodeTask {
-    /// 加载文档
-    LoadDocument {
-        path: PathBuf,
-    },
-    /// 批量渲染任务（内部分发到三队列）
-    RenderPages {
-        pages: Vec<RenderPage>,
-    },
-    /// 获取大纲
-    GetOutline {
-        response_tx: Sender<Result<Vec<crate::entity::OutlineItem>>>,
-    },
-    /// 获取页面文本
-    GetPageText {
-        page_index: usize,
-        response_tx: Sender<Result<String>>,
-    },
-    /// 解析reflow数据
-    ExtractReflowData {
-        start_page: usize,
-        response_tx: Sender<Result<Vec<crate::entity::ReflowEntry>>>,
-    },
-    /// 关闭服务
+    LoadDocument { path: PathBuf },
+    RenderPages { pages: Vec<RenderPage> },
+    GetOutline { response_tx: Sender<Result<Vec<crate::entity::OutlineItem>>> },
+    GetPageText { page_index: usize, response_tx: Sender<Result<String>> },
+    ExtractReflowData { start_page: usize, response_tx: Sender<Result<Vec<crate::entity::ReflowEntry>>> },
     Shutdown,
 }
 
-/// 解码结果
 pub struct DecodeResult {
     pub key: String,
     pub page_info: PageInfo,
@@ -86,19 +68,11 @@ pub struct DecodeResult {
     pub links: Vec<Link>,
 }
 
-/// 解码服务 - 三队列优先级调度，单线程解码
-///
-/// 优先级顺序：Page(缩略图) > Node(瓦片) > Crop(裁剪检测)
-/// 内部维护三个独立队列，每次 selectNextTask 按优先级 poll。
 pub struct DecodeService {
     task_sender: Sender<DecodeTask>,
-    result_receiver: Mutex<Receiver<DecodeResult>>,
     load_result_sender: Sender<Result<Vec<PageInfo>>>,
     load_result_receiver: Mutex<Receiver<Result<Vec<PageInfo>>>>,
     decode_thread: Option<JoinHandle<()>>,
-    /// 是否有解码任务正在处理
-    work_pending: AtomicBool,
-    /// 解码线程是否发生过 panic
     error_occurred: Arc<AtomicBool>,
 }
 
@@ -142,30 +116,24 @@ impl DecodeService {
 impl DecodeService {
     pub fn new() -> Self {
         let (task_tx, task_rx) = unbounded::<DecodeTask>();
-        let (result_tx, result_rx) = unbounded::<DecodeResult>();
         let (load_result_tx, load_result_rx) = unbounded::<Result<Vec<PageInfo>>>();
         let error_flag = Arc::new(AtomicBool::new(false));
         let error_flag_clone = Arc::clone(&error_flag);
-
         let load_result_tx_for_thread = load_result_tx.clone();
         let decode_thread = thread::spawn(move || {
-            Self::decode_loop(task_rx, result_tx, load_result_tx_for_thread, error_flag_clone);
+            Self::decode_loop(task_rx, load_result_tx_for_thread, error_flag_clone);
         });
-
         Self {
             task_sender: task_tx,
-            result_receiver: Mutex::new(result_rx),
             load_result_sender: load_result_tx,
             load_result_receiver: Mutex::new(load_result_rx),
             decode_thread: Some(decode_thread),
-            work_pending: AtomicBool::new(false),
             error_occurred: error_flag,
         }
     }
 
     fn decode_loop(
         task_rx: Receiver<DecodeTask>,
-        result_tx: Sender<DecodeResult>,
         load_result_tx: Sender<Result<Vec<PageInfo>>>,
         error_flag: Arc<AtomicBool>,
     ) {
@@ -177,13 +145,8 @@ impl DecodeService {
         loop {
             while let Ok(task) = task_rx.try_recv() {
                 match Self::safe_handle_task(
-                    task,
-                    &mut decoder,
-                    &mut page_queue,
-                    &mut node_queue,
-                    &mut crop_queue,
-                    &load_result_tx,
-                    &error_flag,
+                    task, &mut decoder, &mut page_queue, &mut node_queue,
+                    &mut crop_queue, &load_result_tx, &error_flag,
                 ) {
                     TaskHandled::Exit => return,
                     TaskHandled::Continue => {}
@@ -195,53 +158,50 @@ impl DecodeService {
                 .or_else(|| crop_queue.pop_front());
 
             if let Some(render_page) = task {
-                let is_visible = render_page.visibility_checker
+                let should_render = render_page.callback
                     .as_ref()
-                    .map_or(true, |checker| checker(render_page.page_info.index));
+                    .map_or(true, |cb| cb.should_render(render_page.page_info.index));
 
-                if !is_visible {
+                if !should_render {
                     continue;
                 }
 
+                let duration;
                 let render_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     if let Some(ref dec) = decoder {
-                        let start_time = Instant::now();
+                        let start = Instant::now();
                         match dec.render_page(&render_page.page_info, render_page.crop != 0) {
                             Ok((image_data, width, height)) => {
                                 let links = dec.get_page_links(render_page.page_info.index)
                                     .unwrap_or_default();
-                                let duration = start_time.elapsed();
-                                info!("页面 {} 解码完成，耗时: {:?}, links: {}",
-                                    render_page.page_info.index, duration, links.len());
                                 Some((render_page.key.clone(), render_page.page_info.clone(),
-                                      image_data, width, height, links))
+                                      image_data, width, height, links, start.elapsed()))
                             }
                             Err(e) => {
                                 info!("页面 {} 解码失败: {}", render_page.page_info.index, e);
                                 None
                             }
                         }
-                    } else {
-                        None
-                    }
+                    } else { None }
                 }));
 
                 match render_result {
-                    Ok(Some((key, page_info, image_data, width, height, links))) => {
-                        let result = DecodeResult {
-                            key,
-                            page_info,
-                            image_data,
-                            image_width: width,
-                            image_height: height,
-                            links,
-                        };
-                        if result_tx.send(result).is_err() {
-                            info!("Result channel closed");
-                            return;
+                    Ok(Some((key, page_info, image_data, width, height, links, dur))) => {
+                        duration = dur;
+                        info!("页面 {} 解码完成，耗时: {:?}, links: {}",
+                            page_info.index, duration, links.len());
+                        if let Some(ref cb) = render_page.callback {
+                            cb.on_completed(DecodeResult {
+                                key, page_info, image_data,
+                                image_width: width, image_height: height, links,
+                            });
                         }
                     }
-                    Ok(None) => {}
+                    Ok(None) => {
+                        if let Some(ref cb) = render_page.callback {
+                            cb.on_error(render_page.page_info.index);
+                        }
+                    }
                     Err(panic_info) => {
                         let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
                             s.to_string()
@@ -262,13 +222,8 @@ impl DecodeService {
                 match task_rx.recv() {
                     Ok(task) => {
                         match Self::safe_handle_task(
-                            task,
-                            &mut decoder,
-                            &mut page_queue,
-                            &mut node_queue,
-                            &mut crop_queue,
-                            &load_result_tx,
-                            &error_flag,
+                            task, &mut decoder, &mut page_queue, &mut node_queue,
+                            &mut crop_queue, &load_result_tx, &error_flag,
                         ) {
                             TaskHandled::Exit => break,
                             TaskHandled::Continue => {}
@@ -283,19 +238,13 @@ impl DecodeService {
         }
     }
 
-    enum TaskHandled {
-        Exit,
-        Continue,
-    }
+    enum TaskHandled { Exit, Continue }
 
     fn safe_handle_task(
-        task: DecodeTask,
-        decoder: &mut Option<Box<dyn Decoder>>,
-        page_queue: &mut VecDeque<RenderPage>,
-        node_queue: &mut VecDeque<RenderPage>,
+        task: DecodeTask, decoder: &mut Option<Box<dyn Decoder>>,
+        page_queue: &mut VecDeque<RenderPage>, node_queue: &mut VecDeque<RenderPage>,
         crop_queue: &mut VecDeque<RenderPage>,
-        load_result_tx: &Sender<Result<Vec<PageInfo>>>,
-        error_flag: &Arc<AtomicBool>,
+        load_result_tx: &Sender<Result<Vec<PageInfo>>>, error_flag: &Arc<AtomicBool>,
     ) -> TaskHandled {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             Self::handle_task(task, decoder, page_queue, node_queue, crop_queue, load_result_tx)
@@ -323,10 +272,8 @@ impl DecodeService {
     }
 
     fn handle_task(
-        task: DecodeTask,
-        decoder: &mut Option<Box<dyn Decoder>>,
-        page_queue: &mut VecDeque<RenderPage>,
-        node_queue: &mut VecDeque<RenderPage>,
+        task: DecodeTask, decoder: &mut Option<Box<dyn Decoder>>,
+        page_queue: &mut VecDeque<RenderPage>, node_queue: &mut VecDeque<RenderPage>,
         crop_queue: &mut VecDeque<RenderPage>,
         load_result_tx: &Sender<Result<Vec<PageInfo>>>,
     ) -> bool {
@@ -360,15 +307,9 @@ impl DecodeService {
                 debug!("收到批量渲染任务: {} 页", pages.len());
                 for page in pages {
                     match page.task_type {
-                        TaskType::Page => {
-                            page_queue.push_back(page);
-                        }
-                        TaskType::Node => {
-                            node_queue.push_back(page);
-                        }
-                        TaskType::Crop => {
-                            crop_queue.push_back(page);
-                        }
+                        TaskType::Page => page_queue.push_back(page),
+                        TaskType::Node => node_queue.push_back(page),
+                        TaskType::Crop => crop_queue.push_back(page),
                     }
                 }
                 debug!("队列状态 - Page: {}, Node: {}, Crop: {}",
@@ -377,8 +318,7 @@ impl DecodeService {
             }
             DecodeTask::GetOutline { response_tx } => {
                 if let Some(ref dec) = decoder {
-                    let outline_result = dec.get_outline_items();
-                    let _ = response_tx.send(outline_result);
+                    let _ = response_tx.send(dec.get_outline_items());
                 } else {
                     let _ = response_tx.send(Ok(Vec::new()));
                 }
@@ -386,8 +326,7 @@ impl DecodeService {
             }
             DecodeTask::GetPageText { page_index, response_tx } => {
                 if let Some(ref dec) = decoder {
-                    let text_result = dec.get_page_text(page_index);
-                    let _ = response_tx.send(text_result);
+                    let _ = response_tx.send(dec.get_page_text(page_index));
                 } else {
                     let _ = response_tx.send(Err(anyhow::anyhow!("No decoder")));
                 }
@@ -395,8 +334,7 @@ impl DecodeService {
             }
             DecodeTask::ExtractReflowData { start_page, response_tx } => {
                 if let Some(ref dec) = decoder {
-                    let reflow_result = dec.get_reflow_from_page(start_page);
-                    let _ = response_tx.send(reflow_result);
+                    let _ = response_tx.send(dec.get_reflow_from_page(start_page));
                 } else {
                     let _ = response_tx.send(Err(anyhow::anyhow!("No decoder")));
                 }
@@ -414,56 +352,35 @@ impl DecodeService {
     pub fn load_pdf<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         self.clear_error();
         self.task_sender
-            .send(DecodeTask::LoadDocument {
-                path: path.as_ref().to_path_buf(),
-            })
+            .send(DecodeTask::LoadDocument { path: path.as_ref().to_path_buf() })
             .map_err(|e| anyhow::anyhow!("Failed to send load task: {}", e))
     }
 
     pub fn get_outline(&self) -> Result<Vec<crate::entity::OutlineItem>> {
-        let (response_tx, response_rx) = unbounded();
-        self.task_sender
-            .send(DecodeTask::GetOutline { response_tx })
+        let (tx, rx) = unbounded();
+        self.task_sender.send(DecodeTask::GetOutline { response_tx: tx })
             .map_err(|e| anyhow::anyhow!("Failed to send outline task: {}", e))?;
-        response_rx
-            .recv()
-            .map_err(|e| anyhow::anyhow!("Failed to receive outline response: {}", e))?
+        rx.recv().map_err(|e| anyhow::anyhow!("{}", e))?
     }
 
     pub fn get_page_text(&self, page_index: usize) -> Result<String> {
-        let (response_tx, response_rx) = unbounded();
-        self.task_sender
-            .send(DecodeTask::GetPageText { page_index, response_tx })
+        let (tx, rx) = unbounded();
+        self.task_sender.send(DecodeTask::GetPageText { page_index, response_tx: tx })
             .map_err(|e| anyhow::anyhow!("Failed to send page text task: {}", e))?;
-        response_rx
-            .recv()
-            .map_err(|e| anyhow::anyhow!("Failed to receive page text response: {}", e))?
+        rx.recv().map_err(|e| anyhow::anyhow!("{}", e))?
     }
 
     pub fn get_reflow_from_page(&self, start_page: usize) -> Result<Vec<crate::entity::ReflowEntry>> {
-        let (response_tx, response_rx) = unbounded();
-        self.task_sender
-            .send(DecodeTask::ExtractReflowData { start_page, response_tx })
+        let (tx, rx) = unbounded();
+        self.task_sender.send(DecodeTask::ExtractReflowData { start_page, response_tx: tx })
             .map_err(|e| anyhow::anyhow!("Failed to send reflow task: {}", e))?;
-        response_rx
-            .recv()
-            .map_err(|e| anyhow::anyhow!("Failed to receive reflow response: {}", e))?
+        rx.recv().map_err(|e| anyhow::anyhow!("{}", e))?
     }
 
-    /// 批量提交渲染任务（内部分发到对应优先级队列）
     pub fn render_pages(&self, pages: Vec<RenderPage>) {
         if !pages.is_empty() {
-            self.work_pending.store(true, Ordering::Release);
             let _ = self.task_sender.send(DecodeTask::RenderPages { pages });
         }
-    }
-
-    pub fn is_work_pending(&self) -> bool {
-        self.work_pending.load(Ordering::Acquire)
-    }
-
-    pub fn clear_work_pending(&self) {
-        self.work_pending.store(false, Ordering::Release);
     }
 
     pub fn has_error(&self) -> bool {
@@ -472,10 +389,6 @@ impl DecodeService {
 
     pub fn clear_error(&self) {
         self.error_occurred.store(false, Ordering::Release);
-    }
-
-    pub fn try_recv_result(&self) -> Option<DecodeResult> {
-        self.result_receiver.lock().unwrap().try_recv().ok()
     }
 
     pub fn try_recv_load_result(&self) -> Option<Result<Vec<PageInfo>>> {

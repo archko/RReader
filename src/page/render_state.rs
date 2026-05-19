@@ -6,7 +6,7 @@ use super::Page;
 use super::Orientation;
 use crate::cache::PageCache;
 use crate::decoder::DecodeService;
-use crate::decoder::decode_service::{RenderPage, TaskType, VisibilityChecker};
+use crate::decoder::decode_service::{RenderPage, TaskType, DecodeCallback, DecodeResult};
 use crate::decoder::Rect;
 use crate::entity::OutlineItem;
 
@@ -35,6 +35,76 @@ struct Inner {
     pub crop: i32,
     pub preload_screens: f32,
     pub outline_items: Vec<OutlineItem>,
+}
+
+pub struct PageCallback {
+    pub state: Arc<PageRenderState>,
+    pub page_idx: usize,
+    /// None = 缩略图模式，Some(key) = 瓦片模式
+    pub node_key: Option<usize>,
+    pub cache_key: String,
+}
+
+impl DecodeCallback for PageCallback {
+    fn should_render(&self, _page_idx: usize) -> bool {
+        match self.node_key {
+            Some(nk) => self.state.read().pages.get(self.page_idx)
+                .and_then(|p| p.visible_nodes.get(&nk))
+                .map(|n| n.cache_key == self.cache_key && n.is_decoding)
+                .unwrap_or(false),
+            None => self.state.read().visible_pages.contains(&self.page_idx),
+        }
+    }
+
+    fn on_completed(&self, result: DecodeResult) {
+        if result.key != self.cache_key { return; }
+        if let Some(img) = image::RgbaImage::from_raw(
+            result.image_width, result.image_height, result.image_data,
+        ) {
+            let dyn_img = image::DynamicImage::ImageRgba8(img);
+            match self.node_key {
+                Some(nk) => {
+                    self.state.cache.put_page_image_by_key(self.cache_key.clone(), dyn_img);
+                    let cache_arc = self.state.cache.get_page_image_by_key(&self.cache_key);
+                    let mut inner = self.state.write().unwrap();
+                    if let Some(page) = inner.pages.get_mut(self.page_idx) {
+                        if let Some(node) = page.visible_nodes.get_mut(&nk) {
+                            if node.cache_key == self.cache_key {
+                                node.bitmap = cache_arc;
+                                node.is_decoding = false;
+                            }
+                        }
+                    }
+                }
+                None => {
+                    self.state.cache.put_thumbnail(self.cache_key.clone(), dyn_img);
+                    let mut inner = self.state.write().unwrap();
+                    if let Some(page) = inner.pages.get_mut(self.page_idx) {
+                        if page.is_thumb_loading {
+                            page.thumb_bitmap = self.state.cache.get_thumbnail(&self.cache_key);
+                            page.is_thumb_loading = false;
+                        }
+                    }
+                }
+            }
+        }
+        self.state.repaint_needed.store(true, Ordering::Release);
+    }
+
+    fn on_error(&self, _page_idx: usize) {
+        let mut inner = self.state.write().unwrap();
+        if let Some(page) = inner.pages.get_mut(self.page_idx) {
+            match self.node_key {
+                Some(nk) => {
+                    if let Some(node) = page.visible_nodes.get_mut(&nk) {
+                        node.is_decoding = false;
+                    }
+                }
+                None => page.is_thumb_loading = false,
+            }
+        }
+        self.state.repaint_needed.store(true, Ordering::Release);
+    }
 }
 
 impl PageRenderState {
@@ -72,7 +142,6 @@ impl PageRenderState {
         inner.pages = pages;
     }
 
-    /// 更新视图尺寸并重新布局 + 重新计算可见页
     pub fn update_view_size(&self, width: f32, height: f32, zoom: f32, force: bool) {
         let mut inner = self.inner.write().unwrap();
         let size_changed = inner.view_size.0 != width || inner.view_size.1 != height;
@@ -86,7 +155,6 @@ impl PageRenderState {
         Self::recalculate_visible_pages(&mut inner);
     }
 
-    /// 更新偏移并重新计算可见页
     pub fn update_offset(&self, x: f32, y: f32) {
         let mut inner = self.inner.write().unwrap();
         inner.view_offset = (x, y);
@@ -110,7 +178,6 @@ impl PageRenderState {
             inner.view_offset, inner.view_size, inner.orientation, inner.preload_screens,
         );
 
-        // 后续若支持 layout 与 visible 使用不同 zoom，传实际值即可
         let scale_ratio = if inner.zoom > 0.0 { inner.zoom / inner.zoom } else { 1.0 };
         let first = find_first_visible(&inner.pages, &visible_rect, inner.orientation, scale_ratio);
         let last = find_last_visible(&inner.pages, &visible_rect, inner.orientation, scale_ratio);
@@ -152,7 +219,6 @@ impl PageRenderState {
         self.update_view_size(vw, vh, new_zoom, true);
     }
 
-    /// 关闭并清理资源
     pub fn close(&self) {
         {
             let mut inner = self.inner.write().unwrap();
@@ -190,17 +256,9 @@ fn calculate_thumbnail_scale(page_width: f32, page_height: f32) -> f32 {
     base_size / max_dim
 }
 
-// ===== 可见页节点管理 + 解码提交（委托给 Page） =====
+// ===== 可见页节点管理 + 解码提交 =====
 
 pub fn process_visible_nodes(state: &Arc<PageRenderState>) {
-    // 先创建 checker，避免与下面的 write 锁形成死锁
-    let checker: VisibilityChecker = Arc::new({
-        let state_arc = Arc::clone(state);
-        move |page_idx: usize| -> bool {
-            state_arc.read().visible_pages.contains(&page_idx)
-        }
-    });
-
     let mut inner = state.inner.write().unwrap();
     let visible_rect = compute_visible_rect(
         inner.view_offset, inner.view_size, inner.orientation, inner.preload_screens,
@@ -212,13 +270,8 @@ pub fn process_visible_nodes(state: &Arc<PageRenderState>) {
     for &page_idx in &inner.visible_pages {
         if let Some(page) = inner.pages.get_mut(page_idx) {
             page.update_visible_nodes(
-                &visible_rect,
-                &state.decode_service,
-                &state.cache,
-                crop,
-                zoom,
-                orientation,
-                Arc::clone(state),
+                &visible_rect, &state.decode_service, &state.cache,
+                crop, zoom, orientation, Arc::clone(state),
             );
 
             let thumb_key = thumbnail_cache_key(page.info.index, crop);
@@ -231,69 +284,18 @@ pub fn process_visible_nodes(state: &Arc<PageRenderState>) {
                     let mut thumb_info = page.info.clone();
                     thumb_info.scale = thumb_scale;
                     state.decode_service.render_pages(vec![RenderPage {
-                        key: thumb_key,
+                        key: thumb_key.clone(),
                         page_info: thumb_info,
                         crop,
                         task_type: TaskType::Page,
-                        visibility_checker: Some(checker.clone()),
+                        callback: Some(Arc::new(PageCallback {
+                            state: Arc::clone(state),
+                            page_idx: page.info.index,
+                            node_key: None,
+                            cache_key: thumb_key,
+                        })),
                     }]);
                 }
-            }
-        }
-    }
-
-    state.repaint_needed.store(true, Ordering::Release);
-}
-
-// ===== 解码结果消费（由 paint 方法在主线程轮询，见 document_canvas.rs） =====
-
-pub fn consume_decode_result(state: &PageRenderState, result: crate::decoder::decode_service::DecodeResult) {
-    let is_thumb = result.key.starts_with("thumb-");
-    let key = result.key.clone();
-
-    if let Some(img) = image::RgbaImage::from_raw(
-        result.image_width,
-        result.image_height,
-        result.image_data,
-    ) {
-        let dyn_img = image::DynamicImage::ImageRgba8(img);
-        if is_thumb {
-            state.cache.put_thumbnail(key.clone(), dyn_img);
-        } else {
-            state.cache.put_page_image_by_key(key.clone(), dyn_img);
-        }
-    }
-
-    let mut inner = state.inner.write().unwrap();
-    if is_thumb {
-        if let Some(page) = inner.pages.get_mut(result.page_info.index) {
-            // 仅当 key 与当前 crop 状态匹配时才更新（crop 变化后旧缩略图不应用）
-            let expected = thumbnail_cache_key(result.page_info.index, inner.crop);
-            if key != expected {
-                return;
-            }
-            if page.is_thumb_loading {
-                page.is_thumb_loading = false;
-                if let Some(img) = state.cache.get_thumbnail(&key) {
-                    page.thumb_bitmap = Some(img);
-                }
-            }
-        }
-    } else {
-        for page in &mut inner.pages {
-            let mut matched = false;
-            for (_nk, node) in &mut page.visible_nodes {
-                if node.cache_key == key && node.is_decoding {
-                    node.is_decoding = false;
-                    if let Some(img) = state.cache.get_page_image_by_key(&key) {
-                        node.bitmap = Some(img);
-                    }
-                    matched = true;
-                    break;
-                }
-            }
-            if matched {
-                break;
             }
         }
     }
@@ -356,8 +358,6 @@ fn compute_visible_rect(
         }
     }
 }
-
-// ===== 二分查找 =====
 
 fn find_first_visible(
     pages: &[Page], visible_rect: &Rect,

@@ -15,7 +15,7 @@ use masonry::{
 
 use xilem::core::{Pod, View, ViewCtx, ViewMarker, MessageContext, MessageResult};
 
-use crate::page::render_state::{PageRenderState, process_visible_nodes, consume_decode_result};
+use crate::page::render_state::{PageRenderState, process_visible_nodes};
 
 pub struct DocumentCanvasWidget {
     state: Arc<PageRenderState>,
@@ -151,13 +151,8 @@ impl Widget for DocumentCanvasWidget {
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx) {
-        // repaint_needed is set by consume_decode_result when no cascade is active
+        // repaint_needed 由解码回调设置，级联刷新
         if self.state.repaint_needed.swap(false, Ordering::Acquire) {
-            ctx.request_paint();
-        }
-
-        while let Some(result) = self.state.decode_service.try_recv_result() {
-            consume_decode_result(&self.state, result);
             ctx.request_paint();
         }
 

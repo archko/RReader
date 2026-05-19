@@ -6,7 +6,7 @@ use vello::kurbo::Affine;
 use std::sync::Arc;
 
 use crate::decoder::{Rect, PageInfo};
-use crate::decoder::decode_service::{DecodeService, RenderPage, TaskType, VisibilityChecker};
+use crate::decoder::decode_service::{DecodeService, RenderPage, TaskType, DecodeCallbackRef};
 use crate::cache::PageCache;
 
 pub struct PageNode {
@@ -51,13 +51,7 @@ impl PageNode {
         self.cached_page_size = None;
     }
 
-    pub fn to_pixel_rect(
-        &mut self,
-        page_width: f32,
-        page_height: f32,
-        x_offset: f32,
-        y_offset: f32,
-    ) -> Rect {
+    pub fn to_pixel_rect(&mut self, page_width: f32, page_height: f32, x_offset: f32, y_offset: f32) -> Rect {
         if let Some((cw, ch, cx, cy)) = self.cached_page_size {
             if (cw - page_width).abs() < 0.1
                 && (ch - page_height).abs() < 0.1
@@ -113,18 +107,18 @@ impl PageNode {
         }
     }
 
-    pub fn decode(&mut self, _page_width: f32, _page_height: f32, page_info: &PageInfo,
-                  crop: i32, decode_service: &DecodeService,
-                  visibility_checker: Option<VisibilityChecker>) {
+    pub fn decode(&mut self, _page_width: f32, _page_height: f32, _page_info: &PageInfo,
+                  _crop: i32, decode_service: &DecodeService,
+                  callback: DecodeCallbackRef) {
         if self.is_decoding || self.bitmap.is_some() {
             return;
         }
         decode_service.render_pages(vec![RenderPage {
             key: self.cache_key.clone(),
-            page_info: page_info.clone(),
-            crop,
+            page_info: _page_info.clone(),
+            crop: _crop,
             task_type: TaskType::Node,
-            visibility_checker,
+            callback: Some(callback),
         }]);
         self.is_decoding = true;
     }
