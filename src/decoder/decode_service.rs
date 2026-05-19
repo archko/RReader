@@ -68,6 +68,8 @@ pub struct DecodeResult {
     pub links: Vec<Link>,
 }
 
+enum TaskHandled { Exit, Continue }
+
 pub struct DecodeService {
     task_sender: Sender<DecodeTask>,
     load_result_sender: Sender<Result<Vec<PageInfo>>>,
@@ -237,8 +239,6 @@ impl DecodeService {
             }
         }
     }
-
-    enum TaskHandled { Exit, Continue }
 
     fn safe_handle_task(
         task: DecodeTask, decoder: &mut Option<Box<dyn Decoder>>,

@@ -3,7 +3,6 @@ use std::sync::{Arc, RwLock, atomic::{AtomicBool, Ordering}};
 use log::debug;
 
 use super::Page;
-use super::Orientation;
 use crate::cache::PageCache;
 use crate::decoder::DecodeService;
 use crate::decoder::decode_service::{RenderPage, TaskType, DecodeCallback, DecodeResult};
