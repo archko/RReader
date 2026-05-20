@@ -280,6 +280,9 @@ impl DecodeService {
         match task {
             DecodeTask::LoadDocument { path } => {
                 info!("Loading document: {:?}", path);
+                page_queue.clear();
+                node_queue.clear();
+                crop_queue.clear();
                 match PdfDecoder::open(&path) {
                     Ok(pdf_decoder) => {
                         let boxed_decoder = Box::new(pdf_decoder);

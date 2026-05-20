@@ -236,7 +236,6 @@ impl PageRenderState {
             inner.total_height = 0.0;
         }
         self.cache.clear();
-        self.decode_service.destroy();
     }
 }
 
@@ -274,11 +273,6 @@ pub fn process_visible_nodes(state: &Arc<PageRenderState>) {
     let visible_pages = inner.visible_pages.clone();
     for &page_idx in &visible_pages {
         if let Some(page) = inner.pages.get_mut(page_idx) {
-            page.update_visible_nodes(
-                &visible_rect, &state.decode_service, &state.cache,
-                crop, zoom, orientation, Arc::clone(state),
-            );
-
             let thumb_key = thumbnail_cache_key(page.info.index, crop);
             if page.thumb_bitmap.is_none() && !page.is_thumb_loading {
                 if let Some(img) = state.cache.get_thumbnail(&thumb_key) {
@@ -302,6 +296,11 @@ pub fn process_visible_nodes(state: &Arc<PageRenderState>) {
                     }]);
                 }
             }
+
+            /*page.update_visible_nodes(
+                &visible_rect, &state.decode_service, &state.cache,
+                crop, zoom, orientation, Arc::clone(state),
+            );*/
         }
     }
 

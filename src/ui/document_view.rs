@@ -109,12 +109,12 @@ pub fn document_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> 
         ),
     )
     .padding(Length::const_px(8.0))
-    .background(palette::css::LIGHT_STEEL_BLUE);
+    .background(palette::css::WHITE);
 
     // ---- 大纲面板 + 主区域 ----
     let main_area = if state.document_ui.outline_visible {
         let outline_items = state.page_render_state.read().outline_items.clone();
-        let outline_panel_width = 220.0;
+        let outline_panel_width = 240.0;
 
         // 左侧大纲面板
         let outline_panel = flex(Axis::Vertical, (
@@ -126,7 +126,7 @@ pub fn document_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> 
                 }),
             ))
             .padding(Length::const_px(8.0))
-            .background(palette::css::LIGHT_STEEL_BLUE),
+            .background(palette::css::WHITE),
             // 条目列表
             flex(Axis::Vertical, outline_items.iter().map(|item| {
                 label(format!("{}{}", "  ".repeat(item.level as usize), item.title))

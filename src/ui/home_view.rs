@@ -231,7 +231,7 @@ impl HomeViewState {
             }
             match image::open(&cache_path) {
                 Ok(img) => {
-                    let resized = img.thumbnail(100, 140);
+                    let resized = img.thumbnail(160, 200);
                     let rgba = resized.to_rgba8();
                     let (w, h) = rgba.dimensions();
                     self.thumbnails.push(Some(ThumbData {
@@ -275,7 +275,7 @@ pub fn home_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
         ),
     )
     .padding(Length::const_px(8.0))
-    .background(palette::css::WHITE_SMOKE);
+    .background(palette::css::WHITE);
 
     // ---- 历史网格 ----
     let grid_cols = state.home.grid_cols.max(1);
@@ -304,11 +304,18 @@ pub fn home_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
                         width: thumb.width,
                         height: thumb.height,
                     };
-                    image(img_data).fit(ObjectFit::Contain).boxed()
+                    sized_box(
+                        image(img_data).fit(ObjectFit::Cover),
+                    )
+                    .fixed_width(Length::const_px(160.0))
+                    .fixed_height(Length::const_px(200.0))
+                    .boxed()
                 } else {
                     sized_box(
                         label("").background(palette::css::GAINSBORO),
                     )
+                    .fixed_width(Length::const_px(160.0))
+                    .fixed_height(Length::const_px(200.0))
                     .boxed()
                 };
 
@@ -333,16 +340,17 @@ pub fn home_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
         vec![label("暂无阅读记录，点击「打开文档」开始阅读").boxed().grid_pos(0, 0)]
     };
 
-    let grid_widget = grid(grid_items, grid_cols, grid_rows).gap(Length::const_px(4.0));
+    let grid_widget = grid(grid_items, grid_cols, grid_rows).gap(Length::const_px(8.0));
 
     resize_observer(
         |s: &mut AppState, size: Size| {
-            let gap = 4.0_f64;
-            let min_card = 180.0_f64;
-            let cols = ((size.width + gap) / (min_card + gap)).max(1.0) as i32;
+            let gap = 32.0_f64;
+            let card = 160.0_f64;
+            let cols = ((size.width - 16.0_f64) / (card + gap)).floor().max(1.0) as i32;
             s.home.grid_cols = cols;
         },
         flex(Axis::Vertical, (toolbar, portal(grid_widget).flex(1.0)))
+            .padding(Length::const_px(8.0))
             .background(palette::css::WHITE),
     )
     .boxed()
