@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use xilem::masonry::imaging::Painter;
 use xilem::masonry::peniko::{Blob, Brush, ImageAlphaType, ImageBrush, ImageData, ImageFormat, Color, Fill};
 use xilem::masonry::kurbo::Rect as KurboRect;
-use xilem::masonry::kurbo::Affine;
 use std::sync::Arc;
 
 use super::{PageNode, PageNodePool, Orientation, PageRenderState};
@@ -74,17 +73,33 @@ impl Page {
     pub fn x_offset(&self) -> f32 { self.bounds.left }
     pub fn y_offset(&self) -> f32 { self.bounds.top }
 
-    pub fn draw(&self, painter: &mut Painter<'_>, scroll: Affine, cache: &PageCache,
-                current_zoom: f32, crop: i32,
+    /// 绘制页面
+    /// - scroll_x, scroll_y: 视口在大画布中的偏移（offset），正值
+    /// - 绘制坐标 = 页面 bounds - offset
+    pub fn draw(&self, painter: &mut Painter<'_>, scroll_x: f32, scroll_y: f32, 
+                cache: &PageCache, current_zoom: f32, crop: i32,
                 vis_left: f32, vis_top: f32, vis_right: f32, vis_bottom: f32) {
+        // 计算当前缩放下的实际显示尺寸和位置
+        // Page 的属性是基于 base_zoom 计算的，但当前的 zoom 可能已经改变
         let scale_ratio = if self.base_zoom > 0.0 { current_zoom / self.base_zoom } else { 1.0 };
 
-        let adj_left = self.bounds.left * scale_ratio;
-        let adj_top = self.bounds.top * scale_ratio;
-        let adj_right = self.bounds.right * scale_ratio;
-        let adj_bottom = self.bounds.bottom * scale_ratio;
-        let adj_width = self.width * scale_ratio;
-        let adj_height = self.height * scale_ratio;
+        // 计算当前 bounds（参考 kreader: currentBounds = bounds * scaleRatio）
+        let current_left = self.bounds.left * scale_ratio;
+        let current_top = self.bounds.top * scale_ratio;
+        let current_right = self.bounds.right * scale_ratio;
+        let current_bottom = self.bounds.bottom * scale_ratio;
+        let current_width = self.width * scale_ratio;
+        let current_height = self.height * scale_ratio;
+
+        // 检查页面是否真正可见（参考 kreader 的 overlaps 检查）
+        let is_actually_visible = current_left < vis_right
+            && current_right > vis_left
+            && current_top < vis_bottom
+            && current_bottom > vis_top;
+
+        if !is_actually_visible {
+            return;
+        }
 
         let thumb_key = format!("thumb-{}-{}", self.info.index, crop);
         let thumb_img = self.thumb_bitmap.clone()
@@ -95,39 +110,46 @@ impl Page {
             let data = Blob::from(rgba.into_raw());
             let image_data = ImageData { data, format: ImageFormat::Rgba8, alpha_type: ImageAlphaType::Alpha, width: w, height: h };
             let brush: Brush = ImageBrush::new(image_data).into();
-            let t = scroll.translation();
+
+            // 关键：绘制坐标 = currentBounds - offset
+            // 但需要减去 scroll 偏移，因为 painter 的坐标系是视口坐标
+            let draw_left = current_left - scroll_x;
+            let draw_top = current_top - scroll_y;
+            let draw_right = current_right - scroll_x;
+            let draw_bottom = current_bottom - scroll_y;
+
             let draw_rect = KurboRect::new(
-                (t.x + adj_left as f64),
-                (t.y + adj_top as f64),
-                (t.x + adj_right as f64),
-                (t.y + adj_bottom as f64),
+                draw_left as f64,
+                draw_top as f64,
+                draw_right as f64,
+                draw_bottom as f64,
             );
             painter.fill(draw_rect, &brush).draw();
         }
 
         for node in self.visible_nodes.values() {
-            node.draw(painter, scroll, adj_width, adj_height, adj_left, adj_top, cache,
+            node.draw(painter, scroll_x, scroll_y, current_width, current_height, current_left, current_top, cache,
                       vis_left, vis_top, vis_right, vis_bottom);
         }
     }
 
-    pub fn draw_links(&self, painter: &mut Painter<'_>, scroll: Affine, scale_ratio: f32) {
+    pub fn draw_links(&self, painter: &mut Painter<'_>, scroll_x: f32, scroll_y: f32, scale_ratio: f32) {
         if self.links.is_empty() { return; }
-        let adj_left = self.bounds.left * scale_ratio;
-        let adj_top = self.bounds.top * scale_ratio;
-        let adj_width = self.width * scale_ratio;
-        let adj_height = self.height * scale_ratio;
+
+        let current_left = self.bounds.left * scale_ratio;
+        let current_top = self.bounds.top * scale_ratio;
+        let current_width = self.width * scale_ratio;
+        let current_height = self.height * scale_ratio;
 
         let link_color = Color::new([0.0, 0.5, 1.0, 0.3]);
         let border_color = Color::new([0.0, 0.5, 1.0, 0.8]);
 
-        let t = scroll.translation();
         for link in &self.links {
             let link_rect = KurboRect::new(
-                t.x + adj_left as f64 + link.bounds.left as f64 * adj_width as f64 / self.info.width as f64,
-                t.y + adj_top as f64 + link.bounds.top as f64 * adj_height as f64 / self.info.height as f64,
-                t.x + adj_left as f64 + link.bounds.right as f64 * adj_width as f64 / self.info.width as f64,
-                t.y + adj_top as f64 + link.bounds.bottom as f64 * adj_height as f64 / self.info.height as f64,
+                (current_left + link.bounds.left * current_width / self.info.width - scroll_x) as f64,
+                (current_top + link.bounds.top * current_height / self.info.height - scroll_y) as f64,
+                (current_left + link.bounds.right * current_width / self.info.width - scroll_x) as f64,
+                (current_top + link.bounds.bottom * current_height / self.info.height - scroll_y) as f64,
             );
             painter.fill(link_rect, link_color).draw();
             let stroke_width = 1.0;

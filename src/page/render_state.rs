@@ -182,9 +182,10 @@ impl PageRenderState {
             inner.view_offset, inner.view_size, inner.orientation, inner.preload_screens,
         );
 
-        let scale_ratio = if inner.zoom > 0.0 { inner.zoom / inner.zoom } else { 1.0 };
-        let first = find_first_visible(&inner.pages, &visible_rect, inner.orientation, scale_ratio);
-        let last = find_last_visible(&inner.pages, &visible_rect, inner.orientation, scale_ratio);
+        // scale_ratio 用于将页面 bounds 从布局坐标系转换到视图坐标系
+        // 当 zoom = 1.0 时，页面 bounds 已经是基于视口大小计算的，无需额外缩放
+        let first = find_first_visible(&inner.pages, &visible_rect, inner.orientation);
+        let last = find_last_visible(&inner.pages, &visible_rect, inner.orientation);
 
         for &old_idx in &old_visible {
             if old_idx < first || old_idx > last {
@@ -364,8 +365,7 @@ fn compute_visible_rect(
 }
 
 fn find_first_visible(
-    pages: &[Page], visible_rect: &Rect,
-    orientation: Orientation, scale_ratio: f32,
+    pages: &[Page], visible_rect: &Rect, orientation: Orientation,
 ) -> usize {
     let mut low = 0;
     let mut high = pages.len();
@@ -374,8 +374,8 @@ fn find_first_visible(
         let mid = (low + high) / 2;
         let page = &pages[mid];
         let is_visible = match orientation {
-            Orientation::Vertical => page.bounds.bottom * scale_ratio > visible_rect.top,
-            Orientation::Horizontal => page.bounds.right * scale_ratio > visible_rect.left,
+            Orientation::Vertical => page.bounds.bottom > visible_rect.top,
+            Orientation::Horizontal => page.bounds.right > visible_rect.left,
         };
         if is_visible {
             result = mid;
@@ -388,8 +388,7 @@ fn find_first_visible(
 }
 
 fn find_last_visible(
-    pages: &[Page], visible_rect: &Rect,
-    orientation: Orientation, scale_ratio: f32,
+    pages: &[Page], visible_rect: &Rect, orientation: Orientation,
 ) -> usize {
     let mut low = 0;
     let mut high = pages.len();
@@ -398,8 +397,8 @@ fn find_last_visible(
         let mid = (low + high) / 2;
         let page = &pages[mid];
         let is_visible = match orientation {
-            Orientation::Vertical => page.bounds.top * scale_ratio < visible_rect.bottom,
-            Orientation::Horizontal => page.bounds.left * scale_ratio < visible_rect.right,
+            Orientation::Vertical => page.bounds.top < visible_rect.bottom,
+            Orientation::Horizontal => page.bounds.left < visible_rect.right,
         };
         if is_visible {
             result = mid;

@@ -112,12 +112,17 @@ pub fn document_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> 
     .background(palette::css::WHITE);
 
     // ---- 大纲面板 + 主区域 ----
-    let main_area = if state.document_ui.outline_visible {
-        let outline_items = state.page_render_state.read().outline_items.clone();
-        let outline_panel_width = 240.0;
+    let outline_items = state.page_render_state.read().outline_items.clone();
 
-        // 左侧大纲面板
-        let outline_panel = flex(Axis::Vertical, (
+    // 大纲切换按钮（始终显示）
+    let toggle_btn = text_button("☰", |s: &mut AppState| {
+        s.document_ui.outline_visible = !s.document_ui.outline_visible;
+    })
+    .padding(Length::const_px(4.0));
+
+    // 大纲面板（条件显示）
+    let outline_panel = if state.document_ui.outline_visible {
+        let panel = flex(Axis::Vertical, (
             // 面板标题栏
             flex(Axis::Horizontal, (
                 label("大纲").flex(1.0),
@@ -135,24 +140,16 @@ pub fn document_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> 
         ))
         .background(palette::css::WHITE_SMOKE);
 
-        flex(Axis::Horizontal, (
-            sized_box(outline_panel),
-            flex(Axis::Vertical, (toolbar, canvas.flex(1.0))).flex(1.0),
-        ))
-        .boxed()
+        sized_box(panel).boxed()
     } else {
-        // 大纲收起：左侧保留一个小按钮用于展开
-        let content = flex(Axis::Vertical, (toolbar, canvas.flex(1.0)));
-        flex(Axis::Horizontal, (
-            // 展开大纲的窄按钮
-            text_button("☰", |s: &mut AppState| {
-                s.document_ui.outline_visible = true;
-            })
-            .padding(Length::const_px(4.0)),
-            content.flex(1.0),
-        ))
-        .boxed()
+        sized_box(label("")).boxed()
     };
+
+    let main_area = flex(Axis::Horizontal, (
+        outline_panel,
+        toggle_btn,
+        flex(Axis::Vertical, (toolbar, canvas.flex(1.0))).flex(1.0),
+    ));
 
     main_area
 }

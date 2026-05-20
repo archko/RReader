@@ -1,7 +1,6 @@
 use xilem::masonry::imaging::Painter;
 use xilem::masonry::peniko::{Blob, Brush, ImageAlphaType, ImageBrush, ImageData, ImageFormat};
 use xilem::masonry::kurbo::Rect as KurboRect;
-use xilem::masonry::kurbo::Affine;
 use std::sync::Arc;
 
 use crate::decoder::{Rect, PageInfo};
@@ -80,20 +79,28 @@ impl PageNode {
         )
     }
 
-    pub fn draw(&self, painter: &mut Painter<'_>, scroll: Affine,
+    /// 绘制节点
+    /// scroll_x, scroll_y: 视口在大画布中的位置（visLeft, visTop），正值
+    /// page_width, page_height: 当前缩放后的页面尺寸
+    /// x_offset, y_offset: 页面在大画布中的位置（currentBounds.left/top）
+    pub fn draw(&self, painter: &mut Painter<'_>, scroll_x: f32, scroll_y: f32,
                 page_width: f32, page_height: f32, x_offset: f32, y_offset: f32,
                 cache: &PageCache,
                 vis_left: f32, vis_top: f32, vis_right: f32, vis_bottom: f32) {
         let pixel_rect = self.get_pixel_rect(page_width, page_height, x_offset, y_offset);
 
+        // 检查是否在可见区域内
         if pixel_rect.left > vis_right || pixel_rect.right < vis_left
             || pixel_rect.top > vis_bottom || pixel_rect.bottom < vis_top {
             return;
         }
 
+        // 绘制坐标 = pixel_rect - scroll（视口位置）
         let draw_rect = KurboRect::new(
-            pixel_rect.left as f64, pixel_rect.top as f64,
-            pixel_rect.right as f64, pixel_rect.bottom as f64,
+            (pixel_rect.left - scroll_x) as f64,
+            (pixel_rect.top - scroll_y) as f64,
+            (pixel_rect.right - scroll_x) as f64,
+            (pixel_rect.bottom - scroll_y) as f64,
         );
         let img = self.bitmap.clone().or_else(|| cache.get_page_image_by_key(&self.cache_key));
         if let Some(img_arc) = img {

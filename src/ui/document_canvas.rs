@@ -222,24 +222,31 @@ impl Widget for DocumentCanvasWidget {
             palette::css::WHITE,
         );
 
-        let scroll_x = inner.view_offset.0 as f64;
-        let scroll_y = inner.view_offset.1 as f64;
+        // view_offset: 负值，表示视口相对于大画布左上角的偏移
+        // 例如：view_offset.y = -100 表示视口向下滚动了 100 像素
+        // 可见区域计算（参考 kreader）：
+        // visLeft = -offset.x, visTop = -offset.y
+        // visRight = viewSize.width - offset.x
+        // visBottom = viewSize.height - offset.y
+        let offset_x = inner.view_offset.0;  // 负值
+        let offset_y = inner.view_offset.1;  // 负值
+
+        let vis_left = -offset_x;  // 正值，表示可见区域在大画布中的左边界
+        let vis_top = -offset_y;   // 正值，表示可见区域在大画布中的上边界
+        let vis_right = inner.view_size.0 - offset_x;
+        let vis_bottom = inner.view_size.1 - offset_y;
+
         let current_zoom = inner.zoom;
         let crop = inner.crop;
-
-        let vis_left = -inner.view_offset.0;
-        let vis_top = -inner.view_offset.1;
-        let vis_right = inner.view_size.0 - inner.view_offset.0;
-        let vis_bottom = inner.view_size.1 - inner.view_offset.1;
-
-        let scroll_affine = xilem::masonry::kurbo::Affine::translate((scroll_x, scroll_y));
 
         // 绘制可见页面
         for &page_idx in &inner.visible_pages {
             if let Some(page) = inner.pages.get(page_idx) {
+                // 传递负的 offset，因为 draw 中需要 scroll = -offset
                 page.draw(
                     painter,
-                    scroll_affine,
+                    -offset_x,
+                    -offset_y,
                     &self.state.cache,
                     current_zoom,
                     crop,
@@ -248,7 +255,7 @@ impl Widget for DocumentCanvasWidget {
                     vis_right,
                     vis_bottom,
                 );
-                page.draw_links(painter, scroll_affine, 1.0);
+                page.draw_links(painter, -offset_x, -offset_y, 1.0);
             }
         }
     }
