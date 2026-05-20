@@ -1,5 +1,9 @@
-use xilem::view::{Axis, flex, label, sized_box, text_button, FlexExt, WidgetView};
+use xilem::masonry::layout::Length;
+use xilem::view::{flex, label, sized_box, text_button, FlexExt};
+use xilem::WidgetView;
+use xilem::masonry::kurbo::Axis;
 use xilem::palette;
+use xilem::style::Style;
 
 use super::home_view::{AppState, ViewKind};
 use super::document_canvas::DocumentCanvasView;
@@ -54,11 +58,25 @@ impl AppState {
         self.page_render_state.update_view_size(vw, vh, zoom, true);
         process_visible_nodes(&self.page_render_state);
     }
+
+    pub fn prev_page(&mut self) {
+        let current = self.page_render_state.read().visible_pages.first().copied().unwrap_or(0);
+        if current > 0 {
+            self.page_render_state.jump_to_page(current - 1);
+            process_visible_nodes(&self.page_render_state);
+        }
+    }
+
+    pub fn next_page(&mut self) {
+        let current = self.page_render_state.read().visible_pages.first().copied().unwrap_or(0);
+        self.page_render_state.jump_to_page(current + 1);
+        process_visible_nodes(&self.page_render_state);
+    }
 }
 
 // ── 文档视图 ─────────────────────────────────────
 
-pub fn document_view(state: &mut AppState) -> Box<dyn WidgetView<AppState>> {
+pub fn document_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
     let (path, _title) = match &state.view {
         ViewKind::Document { path, title } => (path.clone(), title.clone()),
         _ => ("".to_string(), "".to_string()),
@@ -66,39 +84,32 @@ pub fn document_view(state: &mut AppState) -> Box<dyn WidgetView<AppState>> {
 
     let canvas = DocumentCanvasView::new(state.page_render_state.clone());
 
+    let page_total = state.page_render_state.read().pages.len();
+    let page_current = state.page_render_state.read().visible_pages.first().copied().unwrap_or(0) + 1;
+
     // ---- 顶部工具栏（不含大纲） ----
     let toolbar = flex(
         Axis::Horizontal,
         (
-            text_button("← 返回", |s: &mut AppState| s.back_to_home())
-                .background_color(palette::css::DODGER_BLUE)
-                .color(palette::css::WHITE),
+            text_button("← 返回", |s: &mut AppState| s.back_to_home()),
             label(format!("📂 {}", path))
                 .color(palette::css::DIM_GRAY)
-                .padding((4.0, 0.0)),
+                .padding(Length::const_px(4.0)),
             label("").flex(1.0),
-            text_button("方向", |s: &mut AppState| s.toggle_orientation())
-                .background_color(palette::css::LIGHT_SLATE_GRAY)
-                .color(palette::css::WHITE),
-            text_button("切边", |s: &mut AppState| s.toggle_crop())
-                .background_color(palette::css::LIGHT_SLATE_GRAY)
-                .color(palette::css::WHITE),
-            text_button("AI", |_| log::debug!("AI"))
-                .background_color(palette::css::LIGHT_SLATE_GRAY)
-                .color(palette::css::WHITE),
-            text_button("书签", |_| log::debug!("书签"))
-                .background_color(palette::css::LIGHT_SLATE_GRAY)
-                .color(palette::css::WHITE),
-            text_button("🔍−", |s: &mut AppState| s.zoom_out())
-                .background_color(palette::css::LIGHT_SLATE_GRAY)
-                .color(palette::css::WHITE),
-            text_button("🔍+", |s: &mut AppState| s.zoom_in())
-                .background_color(palette::css::LIGHT_SLATE_GRAY)
-                .color(palette::css::WHITE),
+            text_button("◀", |s: &mut AppState| s.prev_page()),
+            label(format!("{}/{}", page_current, page_total)),
+            text_button("▶", |s: &mut AppState| s.next_page()),
+            label("").padding(Length::const_px(4.0)),
+            text_button("方向", |s: &mut AppState| s.toggle_orientation()),
+            text_button("切边", |s: &mut AppState| s.toggle_crop()),
+            text_button("AI", |_| log::debug!("AI")),
+            text_button("书签", |_| log::debug!("书签")),
+            text_button("🔍−", |s: &mut AppState| s.zoom_out()),
+            text_button("🔍+", |s: &mut AppState| s.zoom_in()),
         ),
     )
-    .padding(8.0)
-    .background_color(palette::css::LIGHT_STEEL_BLUE);
+    .padding(Length::const_px(8.0))
+    .background(palette::css::LIGHT_STEEL_BLUE);
 
     // ---- 大纲面板 + 主区域 ----
     let main_area = if state.document_ui.outline_visible {
@@ -112,36 +123,32 @@ pub fn document_view(state: &mut AppState) -> Box<dyn WidgetView<AppState>> {
                 label("大纲").flex(1.0),
                 text_button("✕", |s: &mut AppState| {
                     s.document_ui.outline_visible = false;
-                })
-                .background_color(palette::css::LIGHT_SLATE_GRAY)
-                .color(palette::css::WHITE),
+                }),
             ))
-            .padding(8.0)
-            .background_color(palette::css::LIGHT_STEEL_BLUE),
+            .padding(Length::const_px(8.0))
+            .background(palette::css::LIGHT_STEEL_BLUE),
             // 条目列表
             flex(Axis::Vertical, outline_items.iter().map(|item| {
                 label(format!("{}{}", "  ".repeat(item.level as usize), item.title))
-                    .padding((12.0, 4.0))
-            })).flex(1.0),
+                    .padding(Length::const_px(4.0))
+            }).collect::<Vec<_>>()).flex(1.0),
         ))
-        .background_color(palette::css::WHITE_SMOKE);
+        .background(palette::css::WHITE_SMOKE);
 
         flex(Axis::Horizontal, (
-            sized_box(outline_panel, outline_panel_width, 0.0),
+            sized_box(outline_panel),
             flex(Axis::Vertical, (toolbar, canvas.flex(1.0))).flex(1.0),
         ))
         .boxed()
     } else {
         // 大纲收起：左侧保留一个小按钮用于展开
-        let content = flex(Axis::Vertical, (toolbar, canvas.flex(1.0))).flex(1.0);
+        let content = flex(Axis::Vertical, (toolbar, canvas.flex(1.0)));
         flex(Axis::Horizontal, (
             // 展开大纲的窄按钮
             text_button("☰", |s: &mut AppState| {
                 s.document_ui.outline_visible = true;
             })
-            .padding(4.0)
-            .background_color(palette::css::LIGHT_SLATE_GRAY)
-            .color(palette::css::WHITE),
+            .padding(Length::const_px(4.0)),
             content.flex(1.0),
         ))
         .boxed()

@@ -4,11 +4,13 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
-mupdf = { path = "mupdf-rs", features = ["system-fonts"] } #{ version = "0.6.0" }  # PDF文档处理和渲染引擎
-# 使用Xilem v0.4作为UI框架（基于Masonry + Vello GPU渲染 + Winit窗口系统）
-xilem = "0.4.0"                                          # 下一代跨平台Rust UI框架
+xilem = { path = "xilem/xilem" }
+xilem_core = { path = "xilem/xilem_core" }
+masonry = { path = "xilem/masonry", default-features = false }
+
+mupdf = { path = "mupdf-rs", features = ["system-fonts"] } # PDF文档处理和渲染引擎
 tokio = { version = "1.48.0", features = ["full"] }      # 异步运行时，支持并发操作
-serde = { version = "1.0.228", features = ["derive"] } # 序列化/反序列化框架
+serde = { version = "1.0.228", features = ["derive"] }   # 序列化/反序列化框架
 serde_json = "1.0.145"                                   # JSON数据处理
 image = "0.25.9"                                         # 图像处理和操作库
 anyhow = "1.0.100"                                       # 错误处理库，简化错误传播
@@ -23,10 +25,10 @@ lazy_static = "1.5.0"
 regex = "1.12.2"
 dirs = "6.0.0"
 lru = "0.13"
-vello = "0.9.0"
+tracing = "0.1"
 
 [profile.dev]
-incremental = true          # 保留增量编译（核心提速点）
+incremental = true          # 保留增量编译
 
 [profile.release]
 opt-level = 1          # 最高优化级别

@@ -22,7 +22,7 @@ pub struct PageRenderState {
     inner: RwLock<Inner>,
 }
 
-struct Inner {
+pub(crate) struct Inner {
     pub pages: Vec<Page>,
     pub view_offset: (f32, f32),
     pub zoom: f32,
@@ -66,7 +66,7 @@ impl DecodeCallback for PageCallback {
                 Some(nk) => {
                     self.state.cache.put_page_image_by_key(self.cache_key.clone(), dyn_img);
                     let cache_arc = self.state.cache.get_page_image_by_key(&self.cache_key);
-                    let mut inner = self.state.write().unwrap();
+                    let mut inner = self.state.write();
                     if let Some(page) = inner.pages.get_mut(self.page_idx) {
                         if let Some(node) = page.visible_nodes.get_mut(&nk) {
                             if node.cache_key == self.cache_key {
@@ -78,7 +78,7 @@ impl DecodeCallback for PageCallback {
                 }
                 None => {
                     self.state.cache.put_thumbnail(self.cache_key.clone(), dyn_img);
-                    let mut inner = self.state.write().unwrap();
+                    let mut inner = self.state.write();
                     if let Some(page) = inner.pages.get_mut(self.page_idx) {
                         if page.is_thumb_loading {
                             page.thumb_bitmap = self.state.cache.get_thumbnail(&self.cache_key);
@@ -96,7 +96,7 @@ impl DecodeCallback for PageCallback {
     }
 
     fn on_error(&self, _page_idx: usize) {
-        let mut inner = self.state.write().unwrap();
+        let mut inner = self.state.write();
         if let Some(page) = inner.pages.get_mut(self.page_idx) {
             match self.node_key {
                 Some(nk) => {
@@ -271,7 +271,8 @@ pub fn process_visible_nodes(state: &Arc<PageRenderState>) {
     let zoom = inner.zoom;
     let orientation = inner.orientation;
 
-    for &page_idx in &inner.visible_pages {
+    let visible_pages = inner.visible_pages.clone();
+    for &page_idx in &visible_pages {
         if let Some(page) = inner.pages.get_mut(page_idx) {
             page.update_visible_nodes(
                 &visible_rect, &state.decode_service, &state.cache,

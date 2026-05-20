@@ -50,7 +50,7 @@ impl std::fmt::Debug for RenderPage {
     }
 }
 
-enum DecodeTask {
+pub enum DecodeTask {
     LoadDocument { path: PathBuf },
     RenderPages { pages: Vec<RenderPage> },
     GetOutline { response_tx: Sender<Result<Vec<crate::entity::OutlineItem>>> },

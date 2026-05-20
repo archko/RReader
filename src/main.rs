@@ -3,7 +3,7 @@
 #![allow(non_snake_case)]
 
 use log::info;
-use winit::error::EventLoopError;
+use xilem::masonry::dpi::LogicalSize;
 
 mod cache;
 mod dao;
@@ -13,7 +13,7 @@ mod page;
 mod tts;
 mod ui;
 
-use xilem::view::WidgetView;
+use xilem::WidgetView;
 use xilem::{EventLoop, WindowOptions, Xilem};
 use ui::{AppState, ViewKind, home_view, document_view};
 
@@ -29,16 +29,16 @@ fn pick_file() -> Option<String> {
 }
 
 /// 根视图：根据当前状态切换 Home / Document
-fn app_logic(state: &mut AppState) -> Box<dyn WidgetView<AppState>> {
+fn app_logic(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
     match state.view {
-        ViewKind::Home => home_view(state),
-        ViewKind::Document { .. } => document_view(state),
+        ViewKind::Home => home_view(state).boxed(),
+        ViewKind::Document { .. } => document_view(state).boxed(),
     }
 }
 
 #[tokio::main]
-async fn main() -> Result<(), EventLoopError> {
-    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     // 初始化应用数据目录
     let data_dir = dirs::data_dir().expect("Unable to get data directory");
@@ -65,7 +65,7 @@ async fn main() -> Result<(), EventLoopError> {
     let app = Xilem::new_simple(
         state,
         app_logic,
-        WindowOptions::new("RReader - 文档阅读").with_min_inner_size(winit::dpi::LogicalSize::new(
+        WindowOptions::new("RReader - 文档阅读").with_min_inner_size(LogicalSize::new(
             900.0,
             700.0,
         )),

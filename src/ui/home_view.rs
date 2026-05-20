@@ -2,13 +2,19 @@ use std::sync::Arc;
 use std::path::Path;
 use log::{error, debug};
 
+use xilem::masonry::layout::Length;
 use xilem::view::{
-    Axis, flex, grid, image, label, portal, sized_box, text_button,
-    FlexExt, GridExt, WidgetView, ObjectFit,
+    button, flex, grid, image, label, portal, resize_observer, sized_box, text_button,
+    zstack, FlexExt, GridExt, ObjectFit, ZStackExt,
 };
+use xilem::WidgetView;
+use xilem::kurbo::Size;
+use xilem::masonry::kurbo::Axis;
+use xilem::masonry::layout::UnitPoint;
 use xilem::palette;
 use xilem::masonry::widgets::GridParams;
-use vello::peniko::{ImageData, ImageFormat};
+use xilem::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat};
+use xilem::style::Style;
 
 use crate::dao::RecentDao;
 use crate::ui::utils::get_thumbnail_path;
@@ -131,6 +137,7 @@ pub struct HomeViewState {
     pub total_pages: usize,
     pub total_records: usize,
     thumbnails: Vec<Option<ThumbData>>,
+    pub grid_cols: i32,
 }
 
 /// UI 层历史条目
@@ -140,6 +147,7 @@ pub struct UIHistoryItem {
     pub title: String,
     pub path: String,
     pub page: i32,
+    pub page_count: i32,
     pub read_times: i32,
     pub update_at: i64,
     pub has_thumbnail: bool,
@@ -153,6 +161,7 @@ impl HomeViewState {
             total_pages: 0,
             total_records: 0,
             thumbnails: Vec::new(),
+            grid_cols: 4,
         }
     }
 
@@ -187,6 +196,7 @@ impl HomeViewState {
                             },
                             path: r.book_path.clone(),
                             page: r.page,
+                            page_count: r.page_count,
                             read_times: r.read_times,
                             update_at: r.update_at,
                             has_thumbnail: !cache_path.is_empty(),
@@ -238,20 +248,6 @@ impl HomeViewState {
         }
     }
 
-    pub fn next_page(&mut self) {
-        if self.page_index + 1 < self.total_pages {
-            self.page_index += 1;
-            self.load_history();
-        }
-    }
-
-    pub fn prev_page(&mut self) {
-        if self.page_index > 0 {
-            self.page_index -= 1;
-            self.load_history();
-        }
-    }
-
     pub fn clear_history(&mut self) {
         if let Err(e) = RecentDao::clear_all_sync() {
             error!("clear history failed: {}", e);
@@ -261,111 +257,93 @@ impl HomeViewState {
     }
 }
 
-const GRID_COLS: i32 = 4;
-
 /// 主页视图
-pub fn home_view(state: &mut AppState) -> Box<dyn WidgetView<AppState>> {
+pub fn home_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
     // ---- 工具栏 ----
     let toolbar = flex(
         Axis::Horizontal,
         (
             text_button("打开文档", |_: &mut AppState| {
                 debug!("打开文档 - 待集成文件对话框");
-            })
-            .background_color(palette::css::DODGER_BLUE)
-            .color(palette::css::WHITE),
+            }),
             text_button("清除历史", |s: &mut AppState| {
                 s.home.clear_history();
-            })
-            .background_color(palette::css::INDIAN_RED)
-            .color(palette::css::WHITE),
+            }),
             label(format!("共 {} 条", state.home.total_records))
                 .color(palette::css::DIM_GRAY)
                 .flex(1.0),
-            text_button("◀ 上一页", |s: &mut AppState| s.home.prev_page()),
-            label(format!(
-                "{}/{}",
-                state.home.page_index + 1,
-                state.home.total_pages.max(1)
-            )),
-            text_button("下一页 ▶", |s: &mut AppState| s.home.next_page()),
         ),
     )
-    .padding(8.0)
-    .background_color(palette::css::WHITE_SMOKE);
+    .padding(Length::const_px(8.0))
+    .background(palette::css::WHITE_SMOKE);
 
     // ---- 历史网格 ----
+    let grid_cols = state.home.grid_cols.max(1);
     let num_records = state.home.records.len();
     let grid_rows = if num_records == 0 {
         1
     } else {
-        (num_records as i32 + GRID_COLS - 1) / GRID_COLS
+        (num_records as i32 + grid_cols - 1) / grid_cols
     };
 
     let grid_items: Vec<_> = if num_records > 0 {
         (0..num_records)
             .map(|i| {
-                let col = (i as i32) % GRID_COLS;
-                let row = (i as i32) / GRID_COLS;
+                let col = (i as i32) % grid_cols;
+                let row = (i as i32) / grid_cols;
                 let item = &state.home.records[i];
-                let title = item.title.clone();
-                let page_text = format!("第 {} 页", item.page);
+                let page_text = format!("{}/{}", item.page, item.page_count);
 
-                let card = if let Some(thumb) =
+                let cover = if let Some(thumb) =
                     state.home.thumbnails.get(i).and_then(|t| t.as_ref())
                 {
                     let img_data = ImageData {
-                        data: Arc::clone(&thumb.rgba),
+                        data: Blob::from(thumb.rgba.to_vec()),
                         format: ImageFormat::Rgba8,
+                        alpha_type: ImageAlphaType::Alpha,
                         width: thumb.width,
                         height: thumb.height,
                     };
-                    flex(Axis::Vertical, (
-                        sized_box(
-                            image(img_data).fit(ObjectFit::ScaleDown),
-                            100.0,
-                            140.0,
-                        )
-                        .border(palette::css::LIGHT_GRAY, 1.0),
-                        label(title).padding(4.0),
-                        label(page_text).padding(4.0).color(palette::css::GRAY),
-                        text_button("打开", move |s: &mut AppState| s.open_document(i))
-                            .background_color(palette::css::DODGER_BLUE)
-                            .color(palette::css::WHITE)
-                            .padding((6.0, 2.0)),
-                    ))
-                    .background_color(palette::css::WHITE)
-                    .border(palette::css::LIGHT_GRAY, 1.0)
-                    .hovered_border_color(palette::css::DODGER_BLUE)
+                    image(img_data).fit(ObjectFit::Contain).boxed()
                 } else {
-                    flex(Axis::Vertical, (
-                        sized_box(
-                            label("").background_color(palette::css::GAINSBORO),
-                            100.0,
-                            140.0,
-                        )
-                        .border(palette::css::LIGHT_GRAY, 1.0),
-                        label(title).padding(4.0),
-                        label(page_text).padding(4.0).color(palette::css::GRAY),
-                        text_button("打开", move |s: &mut AppState| s.open_document(i))
-                            .background_color(palette::css::DODGER_BLUE)
-                            .color(palette::css::WHITE)
-                            .padding((6.0, 2.0)),
-                    ))
-                    .background_color(palette::css::WHITE)
-                    .border(palette::css::LIGHT_GRAY, 1.0)
-                    .hovered_border_color(palette::css::DODGER_BLUE)
+                    sized_box(
+                        label("").background(palette::css::GAINSBORO),
+                    )
+                    .boxed()
                 };
 
-                card.grid_pos(col, row)
+                button(
+                    zstack((
+                        cover,
+                        label(page_text)
+                            .background_color(palette::css::BLACK.multiply_alpha(0.55))
+                            .color(palette::css::WHITE)
+                            .padding(Length::const_px(6.0))
+                            .alignment(UnitPoint::BOTTOM_RIGHT),
+                    ))
+                    .background(palette::css::WHITE),
+                    move |s: &mut AppState| s.open_document(i),
+                )
+                .background(palette::css::WHITE)
+                .boxed()
+                .grid_pos(col, row)
             })
             .collect()
     } else {
-        vec![label("暂无阅读记录，点击「打开文档」开始阅读").grid_pos(0, 0)]
+        vec![label("暂无阅读记录，点击「打开文档」开始阅读").boxed().grid_pos(0, 0)]
     };
 
-    let grid_widget = grid(grid_items, GRID_COLS, grid_rows).spacing(8.0);
+    let grid_widget = grid(grid_items, grid_cols, grid_rows).gap(Length::const_px(4.0));
 
-    // ---- 根布局 ----
-    flex(Axis::Vertical, (toolbar, portal(grid_widget).flex(1.0))).boxed()
+    resize_observer(
+        |s: &mut AppState, size: Size| {
+            let gap = 4.0_f64;
+            let min_card = 180.0_f64;
+            let cols = ((size.width + gap) / (min_card + gap)).max(1.0) as i32;
+            s.home.grid_cols = cols;
+        },
+        flex(Axis::Vertical, (toolbar, portal(grid_widget).flex(1.0)))
+            .background(palette::css::WHITE),
+    )
+    .boxed()
 }

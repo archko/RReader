@@ -1,8 +1,7 @@
-use vello::Scene;
-use vello::peniko::{Brush, ImageBrush, ImageData, ImageFormat};
-use vello::kurbo::Rect as KurboRect;
-use vello::peniko::Fill;
-use vello::kurbo::Affine;
+use xilem::masonry::imaging::Painter;
+use xilem::masonry::peniko::{Blob, Brush, ImageAlphaType, ImageBrush, ImageData, ImageFormat};
+use xilem::masonry::kurbo::Rect as KurboRect;
+use xilem::masonry::kurbo::Affine;
 use std::sync::Arc;
 
 use crate::decoder::{Rect, PageInfo};
@@ -81,7 +80,7 @@ impl PageNode {
         )
     }
 
-    pub fn draw(&self, scene: &mut Scene, scroll: Affine,
+    pub fn draw(&self, painter: &mut Painter<'_>, scroll: Affine,
                 page_width: f32, page_height: f32, x_offset: f32, y_offset: f32,
                 cache: &PageCache,
                 vis_left: f32, vis_top: f32, vis_right: f32, vis_bottom: f32) {
@@ -100,10 +99,10 @@ impl PageNode {
         if let Some(img_arc) = img {
             let rgba = img_arc.to_rgba8();
             let (w, h) = rgba.dimensions();
-            let data: Arc<[u8]> = rgba.into_raw().into();
-            let image_data = ImageData { data, format: ImageFormat::Rgba8, width: w, height: h };
+            let data = Blob::from(rgba.into_raw());
+            let image_data = ImageData { data, format: ImageFormat::Rgba8, alpha_type: ImageAlphaType::Alpha, width: w, height: h };
             let brush: Brush = ImageBrush::new(image_data).into();
-            scene.fill(Fill::NonZero, scroll, &brush, None, &draw_rect);
+            painter.fill(draw_rect, &brush).draw();
         }
     }
 

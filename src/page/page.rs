@@ -1,9 +1,8 @@
 use std::collections::HashMap;
-use vello::Scene;
-use vello::peniko::{Brush, ImageBrush, ImageData, ImageFormat, Color};
-use vello::kurbo::Rect as KurboRect;
-use vello::peniko::Fill;
-use vello::kurbo::Affine;
+use xilem::masonry::imaging::Painter;
+use xilem::masonry::peniko::{Blob, Brush, ImageAlphaType, ImageBrush, ImageData, ImageFormat, Color, Fill};
+use xilem::masonry::kurbo::Rect as KurboRect;
+use xilem::masonry::kurbo::Affine;
 use std::sync::Arc;
 
 use super::{PageNode, PageNodePool, Orientation, PageRenderState};
@@ -75,7 +74,7 @@ impl Page {
     pub fn x_offset(&self) -> f32 { self.bounds.left }
     pub fn y_offset(&self) -> f32 { self.bounds.top }
 
-    pub fn draw(&self, scene: &mut Scene, scroll: Affine, cache: &PageCache,
+    pub fn draw(&self, painter: &mut Painter<'_>, scroll: Affine, cache: &PageCache,
                 current_zoom: f32, crop: i32,
                 vis_left: f32, vis_top: f32, vis_right: f32, vis_bottom: f32) {
         let scale_ratio = if self.base_zoom > 0.0 { current_zoom / self.base_zoom } else { 1.0 };
@@ -93,40 +92,44 @@ impl Page {
         if let Some(ref img) = thumb_img {
             let rgba = img.to_rgba8();
             let (w, h) = rgba.dimensions();
-            let data: Arc<[u8]> = rgba.into_raw().into();
-            let image_data = ImageData { data, format: ImageFormat::Rgba8, width: w, height: h };
+            let data = Blob::from(rgba.into_raw());
+            let image_data = ImageData { data, format: ImageFormat::Rgba8, alpha_type: ImageAlphaType::Alpha, width: w, height: h };
             let brush: Brush = ImageBrush::new(image_data).into();
+            let t = scroll.translation();
             let draw_rect = KurboRect::new(
-                adj_left as f64, adj_top as f64,
-                adj_right as f64, adj_bottom as f64,
+                (t.x + adj_left as f64),
+                (t.y + adj_top as f64),
+                (t.x + adj_right as f64),
+                (t.y + adj_bottom as f64),
             );
-            scene.fill(Fill::NonZero, scroll, &brush, None, &draw_rect);
+            painter.fill(draw_rect, &brush).draw();
         }
 
         for node in self.visible_nodes.values() {
-            node.draw(scene, scroll, adj_width, adj_height, adj_left, adj_top, cache,
+            node.draw(painter, scroll, adj_width, adj_height, adj_left, adj_top, cache,
                       vis_left, vis_top, vis_right, vis_bottom);
         }
     }
 
-    pub fn draw_links(&self, scene: &mut Scene, scroll: Affine, scale_ratio: f32) {
+    pub fn draw_links(&self, painter: &mut Painter<'_>, scroll: Affine, scale_ratio: f32) {
         if self.links.is_empty() { return; }
         let adj_left = self.bounds.left * scale_ratio;
         let adj_top = self.bounds.top * scale_ratio;
         let adj_width = self.width * scale_ratio;
         let adj_height = self.height * scale_ratio;
 
-        let link_color = Color::rgba(0.0, 0.5, 1.0, 0.3);
-        let border_color = Color::rgba(0.0, 0.5, 1.0, 0.8);
+        let link_color = Color::new([0.0, 0.5, 1.0, 0.3]);
+        let border_color = Color::new([0.0, 0.5, 1.0, 0.8]);
 
+        let t = scroll.translation();
         for link in &self.links {
             let link_rect = KurboRect::new(
-                (adj_left + link.bounds.left * adj_width / self.info.width) as f64,
-                (adj_top + link.bounds.top * adj_height / self.info.height) as f64,
-                (adj_left + link.bounds.right * adj_width / self.info.width) as f64,
-                (adj_top + link.bounds.bottom * adj_height / self.info.height) as f64,
+                t.x + adj_left as f64 + link.bounds.left as f64 * adj_width as f64 / self.info.width as f64,
+                t.y + adj_top as f64 + link.bounds.top as f64 * adj_height as f64 / self.info.height as f64,
+                t.x + adj_left as f64 + link.bounds.right as f64 * adj_width as f64 / self.info.width as f64,
+                t.y + adj_top as f64 + link.bounds.bottom as f64 * adj_height as f64 / self.info.height as f64,
             );
-            scene.fill(Fill::NonZero, scroll, &link_color, None, &link_rect);
+            painter.fill(link_rect, link_color).draw();
             let stroke_width = 1.0;
             let stroke_rect = KurboRect::new(
                 link_rect.x0 - stroke_width / 2.0,
@@ -134,7 +137,7 @@ impl Page {
                 link_rect.x1 + stroke_width / 2.0,
                 link_rect.y1 + stroke_width / 2.0,
             );
-            scene.fill(Fill::NonZero, scroll, &border_color, None, &stroke_rect);
+            painter.fill(stroke_rect, border_color).draw();
         }
     }
 
