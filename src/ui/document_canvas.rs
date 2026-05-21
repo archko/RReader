@@ -219,6 +219,8 @@ impl Widget for DocumentCanvasWidget {
         _props: &mut PropertiesMut<'_>,
         interval: u64,
     ) {
+        let mut needs_anim = false;
+
         if self.is_flinging {
             let dt = (interval as f32).min(50_000.0) / 1_000_000.0;
             let decay = (-2.0 * dt).exp();
@@ -232,13 +234,22 @@ impl Widget for DocumentCanvasWidget {
                 self.is_flinging = false;
             } else if self.apply_scroll(dx, dy) {
                 ctx.request_render();
+                needs_anim = true;
+            } else {
+                // 继续减速直到停止
+                needs_anim = true;
             }
         }
 
+        // 解码完成需要重绘
         if self.state.repaint_needed.swap(false, Ordering::Acquire) {
             ctx.request_render();
         }
-        ctx.request_anim_frame();
+
+        // 仅在有动画（fling）时才请求下一帧
+        if needs_anim {
+            ctx.request_anim_frame();
+        }
     }
 
     fn register_children(&mut self, _ctx: &mut RegisterCtx<'_>) {}
@@ -397,7 +408,8 @@ where
         mut element: Mut<'_, Self::Element>,
         _state: &mut AppState,
     ) {
-        element.ctx.request_anim_frame();
+        // 重建时不需要无条件请求动画帧
+        // 由 on_anim_frame 按需请求
     }
 
     fn teardown(
@@ -415,7 +427,7 @@ where
         mut element: Mut<'_, Self::Element>,
         _app_state: &mut AppState,
     ) -> MessageResult<()> {
-        element.ctx.request_anim_frame();
+        // 不无条件请求动画帧，由 widget 的 on_anim_frame 按需处理
         MessageResult::Nop
     }
 }

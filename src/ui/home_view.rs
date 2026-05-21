@@ -419,7 +419,10 @@ pub fn home_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
             let gap = 32.0_f64;
             let card = 160.0_f64;
             let cols = ((size.width - 16.0_f64) / (card + gap)).floor().max(1.0) as i32;
-            s.home.grid_cols = cols;
+            // 仅在值真正变化时才更新，避免无限触发 rebuild
+            if s.home.grid_cols != cols {
+                s.home.grid_cols = cols;
+            }
         },
         flex(Axis::Vertical, (toolbar, portal(grid_widget).flex(1.0)))
             .padding(Length::const_px(8.0))
