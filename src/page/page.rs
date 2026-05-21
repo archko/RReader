@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use xilem::masonry::imaging::Painter;
-use xilem::masonry::peniko::{Blob, Brush, ImageAlphaType, ImageBrush, ImageData, ImageFormat, Color, Fill};
+use xilem::masonry::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat, Color, Fill};
+use xilem::masonry::kurbo::Affine;
 use xilem::masonry::kurbo::Rect as KurboRect;
 use std::sync::Arc;
 
@@ -109,22 +110,16 @@ impl Page {
             let (w, h) = rgba.dimensions();
             let data = Blob::from(rgba.into_raw());
             let image_data = ImageData { data, format: ImageFormat::Rgba8, alpha_type: ImageAlphaType::Alpha, width: w, height: h };
-            let brush: Brush = ImageBrush::new(image_data).into();
 
-            // 关键：绘制坐标 = currentBounds - offset
-            // 但需要减去 scroll 偏移，因为 painter 的坐标系是视口坐标
             let draw_left = current_left - scroll_x;
             let draw_top = current_top - scroll_y;
-            let draw_right = current_right - scroll_x;
-            let draw_bottom = current_bottom - scroll_y;
 
-            let draw_rect = KurboRect::new(
-                draw_left as f64,
-                draw_top as f64,
-                draw_right as f64,
-                draw_bottom as f64,
-            );
-            painter.fill(draw_rect, &brush).draw();
+            let transform = Affine::translate((draw_left as f64, draw_top as f64))
+                * Affine::scale_non_uniform(
+                    current_width as f64 / w as f64,
+                    current_height as f64 / h as f64,
+                );
+            painter.draw_image(&image_data, transform);
         }
 
         for node in self.visible_nodes.values() {

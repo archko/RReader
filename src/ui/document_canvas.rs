@@ -76,6 +76,7 @@ impl DocumentCanvasWidget {
                         if let Ok(page_num) = target_page.parse::<usize>() {
                             drop(inner);
                             self.state.jump_to_page(page_num);
+                            process_visible_nodes(&self.state);
                         }
                         return;
                     } else if let Some(ref _uri) = link.uri {
@@ -129,8 +130,8 @@ impl Widget for DocumentCanvasWidget {
                 if self.is_dragging {
                     let dx = (pos.x - self.start_pos.0) as f32;
                     let dy = (pos.y - self.start_pos.1) as f32;
-                    let new_x = self.start_offset.0 + dx;
-                    let new_y = self.start_offset.1 + dy;
+                    let new_x = self.start_offset.0 - dx;
+                    let new_y = self.start_offset.1 - dy;
 
                     let (tw, th, vw, vh) = {
                         let r = self.state.read();
