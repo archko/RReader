@@ -1,7 +1,4 @@
 use log::info;
-use xilem::masonry::imaging::Painter;
-use xilem::masonry::peniko::{Brush, ImageBrush, ImageData};
-use xilem::masonry::kurbo::{Affine, Rect as KurboRect, Vec2};
 use std::sync::Arc;
 
 use crate::decoder::{Rect, PageInfo};
@@ -12,7 +9,7 @@ pub struct PageNode {
     pub page_index: usize,
     pub bounds: Rect,
     pub cache_key: String,
-    pub bitmap: Option<Arc<ImageData>>,
+    pub bitmap: Option<Arc<image::DynamicImage>>,
     pub is_decoding: bool,
     cached_pixel_rect: Option<Rect>,
     cached_page_size: Option<(f32, f32, f32, f32)>,
@@ -80,52 +77,6 @@ impl PageNode {
         )
     }
 
-    /// 绘制节点
-    /// scroll_x, scroll_y: 视口在大画布中的位置（visLeft, visTop），正值
-    /// page_width, page_height: 当前缩放后的页面尺寸
-    /// x_offset, y_offset: 页面在大画布中的位置（currentBounds.left/top）
-    pub fn draw(&self, painter: &mut Painter<'_>, scroll_x: f32, scroll_y: f32,
-                page_width: f32, page_height: f32, x_offset: f32, y_offset: f32,
-                cache: &PageCache,
-                vis_left: f32, vis_top: f32, vis_right: f32, vis_bottom: f32) {
-        let pixel_rect = self.get_pixel_rect(page_width, page_height, x_offset, y_offset);
-
-        // 检查是否在可见区域内
-        if pixel_rect.left > vis_right || pixel_rect.right < vis_left
-            || pixel_rect.top > vis_bottom || pixel_rect.bottom < vis_top {
-            return;
-        }
-
-        // 绘制坐标 = pixel_rect - scroll（视口位置）
-        let draw_left = pixel_rect.left - scroll_x;
-        let draw_top = pixel_rect.top - scroll_y;
-        let draw_right = pixel_rect.right - scroll_x;
-        let draw_bottom = pixel_rect.bottom - scroll_y;
-        let draw_width = draw_right - draw_left;
-        let draw_height = draw_bottom - draw_top;
-
-        let draw_rect = KurboRect::new(
-            draw_left as f64,
-            draw_top as f64,
-            draw_right as f64,
-            draw_bottom as f64,
-        );
-        let img = self.bitmap.clone().or_else(|| cache.get_page_image_by_key(&self.cache_key));
-        if let Some(img_data) = img {
-            let brush: Brush = ImageBrush::new(ImageData::clone(&img_data)).into();
-
-            let scale_x = draw_width / img_data.width as f32;
-            let scale_y = draw_height / img_data.height as f32;
-            let trans_x = draw_left;
-            let trans_y = draw_top;
-
-            let brush_transform = Affine::scale_non_uniform(scale_x as f64, scale_y as f64)
-                .pre_translate(Vec2::new(trans_x as f64, trans_y as f64));
-
-            painter.fill(draw_rect, &brush).brush_transform(Some(brush_transform)).draw();
-        }
-    }
-
     pub fn decode(&mut self, _page_width: f32, _page_height: f32, _page_info: &PageInfo,
                   _crop: i32, decode_service: &DecodeService,
                   callback: DecodeCallbackRef) {
@@ -149,9 +100,6 @@ impl PageNode {
             self.bounds.right * _page_width + offset_x,
             self.bounds.bottom * _page_height + offset_y,
         );
-        //info!("[PageNode] decode key={} bounds={:?} region={:?} page={}x{} crop_offset=({}, {})",
-        //    self.cache_key, self.bounds, region, _page_width, _page_height,
-        //    offset_x, offset_y);
         decode_service.render_pages(vec![RenderPage {
             key: self.cache_key.clone(),
             page_info: _page_info.clone(),

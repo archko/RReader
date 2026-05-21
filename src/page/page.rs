@@ -1,16 +1,12 @@
 use std::collections::HashMap;
 use log::info;
-use xilem::masonry::imaging::Painter;
-use xilem::masonry::peniko::{ImageData, Color, Fill};
-use xilem::masonry::kurbo::Affine;
-use xilem::masonry::kurbo::Rect as KurboRect;
 use std::sync::Arc;
 
-use super::{PageNode, PageNodePool, Orientation, PageRenderState};
+use super::{PageNode, PageNodePool, Orientation, PageViewState};
 use crate::cache::PageCache;
 use crate::decoder::{Link, PageInfo, Rect};
 use crate::decoder::decode_service::{DecodeService, DecodeCallbackRef};
-use super::render_state::PageCallback;
+use super::page_view_state::PageCallback;
 
 pub struct Page {
     pub info: PageInfo,
@@ -21,7 +17,7 @@ pub struct Page {
     pub height: f32,
     pub is_decoding: bool,
 
-    pub thumb_bitmap: Option<Arc<ImageData>>,
+    pub thumb_bitmap: Option<Arc<image::DynamicImage>>,
     pub is_thumb_loading: bool,
     pub x_offset: f32,
     pub y_offset: f32,
@@ -75,85 +71,6 @@ impl Page {
     pub fn x_offset(&self) -> f32 { self.bounds.left }
     pub fn y_offset(&self) -> f32 { self.bounds.top }
 
-    /// 绘制页面
-    /// - scroll_x, scroll_y: 视口在大画布中的偏移（offset），正值
-    /// - 绘制坐标 = 页面 bounds - offset
-    pub fn draw(&self, painter: &mut Painter<'_>, scroll_x: f32, scroll_y: f32, 
-                cache: &PageCache, current_zoom: f32, crop: i32,
-                vis_left: f32, vis_top: f32, vis_right: f32, vis_bottom: f32) {
-        // 计算当前缩放下的实际显示尺寸和位置
-        // Page 的属性是基于 base_zoom 计算的，但当前的 zoom 可能已经改变
-        let scale_ratio = if self.base_zoom > 0.0 { current_zoom / self.base_zoom } else { 1.0 };
-
-        // 计算当前 bounds（参考 kreader: currentBounds = bounds * scaleRatio）
-        let current_left = self.bounds.left * scale_ratio;
-        let current_top = self.bounds.top * scale_ratio;
-        let current_right = self.bounds.right * scale_ratio;
-        let current_bottom = self.bounds.bottom * scale_ratio;
-        let current_width = self.width * scale_ratio;
-        let current_height = self.height * scale_ratio;
-
-        // 检查页面是否真正可见（参考 kreader 的 overlaps 检查）
-        let is_actually_visible = current_left < vis_right
-            && current_right > vis_left
-            && current_top < vis_bottom
-            && current_bottom > vis_top;
-
-        if !is_actually_visible {
-            return;
-        }
-
-        let thumb_key = format!("thumb-{}-{}", self.info.index, crop);
-        let thumb_img = self.thumb_bitmap.clone()
-            .or_else(|| cache.get_thumbnail(&thumb_key));
-        if let Some(ref img) = thumb_img {
-            let draw_left = current_left - scroll_x;
-            let draw_top = current_top - scroll_y;
-
-            let transform = Affine::translate((draw_left as f64, draw_top as f64))
-                * Affine::scale_non_uniform(
-                    current_width as f64 / img.width as f64,
-                    current_height as f64 / img.height as f64,
-                );
-            painter.draw_image(&**img, transform);
-        }
-
-        for node in self.visible_nodes.values() {
-            node.draw(painter, scroll_x, scroll_y, current_width, current_height, current_left, current_top, cache,
-                      vis_left, vis_top, vis_right, vis_bottom);
-        }
-    }
-
-    pub fn draw_links(&self, painter: &mut Painter<'_>, scroll_x: f32, scroll_y: f32, scale_ratio: f32) {
-        if self.links.is_empty() { return; }
-
-        let current_left = self.bounds.left * scale_ratio;
-        let current_top = self.bounds.top * scale_ratio;
-        let current_width = self.width * scale_ratio;
-        let current_height = self.height * scale_ratio;
-
-        let link_color = Color::new([0.0, 0.5, 1.0, 0.3]);
-        let border_color = Color::new([0.0, 0.5, 1.0, 0.8]);
-
-        for link in &self.links {
-            let link_rect = KurboRect::new(
-                (current_left + link.bounds.left * current_width / self.info.width - scroll_x) as f64,
-                (current_top + link.bounds.top * current_height / self.info.height - scroll_y) as f64,
-                (current_left + link.bounds.right * current_width / self.info.width - scroll_x) as f64,
-                (current_top + link.bounds.bottom * current_height / self.info.height - scroll_y) as f64,
-            );
-            painter.fill(link_rect, link_color).draw();
-            let stroke_width = 1.0;
-            let stroke_rect = KurboRect::new(
-                link_rect.x0 - stroke_width / 2.0,
-                link_rect.y0 - stroke_width / 2.0,
-                link_rect.x1 + stroke_width / 2.0,
-                link_rect.y1 + stroke_width / 2.0,
-            );
-            painter.fill(stroke_rect, border_color).draw();
-        }
-    }
-
     pub fn update_visible_nodes(
         &mut self,
         viewport: &Rect,
@@ -162,7 +79,7 @@ impl Page {
         crop: i32,
         zoom: f32,
         orientation: Orientation,
-        state_arc: Arc<PageRenderState>,
+        state_arc: Arc<PageViewState>,
     ) {
         let config = &self.tile_config;
         let ori = match orientation {

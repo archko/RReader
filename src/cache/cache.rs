@@ -115,6 +115,16 @@ impl PageCache {
         self.image_cache.put(key, image)
     }
 
+    /// 通过缓存key获取瓦片图像
+    pub fn get_page_image_by_key(&self, key: &str) -> Option<Arc<DynamicImage>> {
+        self.image_cache.get(key)
+    }
+
+    /// 通过缓存key存储瓦片图像
+    pub fn put_page_image_by_key(&self, key: String, image: DynamicImage) -> Arc<DynamicImage> {
+        self.image_cache.put(key, image)
+    }
+
     pub fn get_thumbnail(&self, key: &str) -> Option<Arc<DynamicImage>> {
         self.thumbnail_cache.get(key)
     }

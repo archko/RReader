@@ -1,13 +1,14 @@
+use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, RwLock, atomic::{AtomicBool, Ordering}};
 
-use log::debug;
-use xilem::masonry::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat};
+use anyhow::Result;
+use log::{debug, info};
 
-use super::Page;
+use super::{Page, PageNode};
 use crate::cache::PageCache;
-use crate::decoder::DecodeService;
-use crate::decoder::decode_service::{RenderPage, TaskType, DecodeCallback, DecodeResult};
-use crate::decoder::Rect;
+use crate::decoder::{DecodeService, Link, PageInfo, Rect};
+use crate::decoder::decode_service::{DecodeCallback, DecodeResult, DecodeCallbackRef, RenderPage, TaskType};
 use crate::entity::OutlineItem;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -16,20 +17,22 @@ pub enum Orientation {
     Horizontal,
 }
 
-pub struct PageRenderState {
+/// 页面视图状态 - 与 PageRenderState 相同设计模式
+/// 使用 RwLock<Inner> 保证线程安全，供回调线程和 UI 线程共享
+pub struct PageViewState {
     pub decode_service: Arc<DecodeService>,
     pub cache: PageCache,
     pub repaint_needed: AtomicBool,
+    pub page_links: Arc<std::sync::Mutex<HashMap<usize, Vec<Link>>>>,
     inner: RwLock<Inner>,
 }
 
 pub(crate) struct Inner {
     pub pages: Vec<Page>,
-    pub view_offset: (f32, f32),
     pub zoom: f32,
+    pub view_size: (f32, f32),
     pub total_width: f32,
     pub total_height: f32,
-    pub view_size: (f32, f32),
     pub visible_pages: Vec<usize>,
     pub orientation: Orientation,
     pub crop: i32,
@@ -37,8 +40,10 @@ pub(crate) struct Inner {
     pub outline_items: Vec<OutlineItem>,
 }
 
+// ===== PageCallback - 解码回调 =====
+
 pub struct PageCallback {
-    pub state: Arc<PageRenderState>,
+    pub state: Arc<PageViewState>,
     pub page_idx: usize,
     /// None = 缩略图模式，Some(key) = 瓦片模式
     pub node_key: Option<usize>,
@@ -59,17 +64,26 @@ impl DecodeCallback for PageCallback {
     fn on_completed(&self, result: DecodeResult) {
         if result.key != self.cache_key { return; }
 
-        let blob = Blob::from(result.image_data);
-        let image_data = ImageData {
-            data: blob,
-            format: ImageFormat::Rgba8,
-            alpha_type: ImageAlphaType::Alpha,
-            width: result.image_width,
-            height: result.image_height,
+        // 将原始 RGBA 数据转换为 DynamicImage
+        let rgba = image::RgbaImage::from_raw(
+            result.image_width,
+            result.image_height,
+            result.image_data,
+        );
+        let dynamic_image = match rgba {
+            Some(img) => image::DynamicImage::ImageRgba8(img),
+            None => {
+                log::error!("[PageCallback] Failed to create image from raw data");
+                return;
+            }
         };
+
         match self.node_key {
             Some(nk) => {
-                let arc = self.state.cache.put_page_image_by_key(self.cache_key.clone(), image_data);
+                let arc = self.state.cache.put_page_image_by_key(
+                    self.cache_key.clone(),
+                    dynamic_image,
+                );
                 let mut inner = self.state.write();
                 if let Some(page) = inner.pages.get_mut(self.page_idx) {
                     if let Some(node) = page.visible_nodes.get_mut(&nk) {
@@ -81,7 +95,10 @@ impl DecodeCallback for PageCallback {
                 }
             }
             None => {
-                let arc = self.state.cache.put_thumbnail(self.cache_key.clone(), image_data);
+                let arc = self.state.cache.put_thumbnail(
+                    self.cache_key.clone(),
+                    dynamic_image,
+                );
                 let mut inner = self.state.write();
                 if let Some(page) = inner.pages.get_mut(self.page_idx) {
                     if page.is_thumb_loading {
@@ -114,22 +131,24 @@ impl DecodeCallback for PageCallback {
     }
 }
 
-impl PageRenderState {
-    pub fn new() -> Self {
+// ===== PageViewState 实现 =====
+
+impl PageViewState {
+    pub fn new(orientation: Orientation, crop: i32) -> Self {
         Self {
             decode_service: Arc::new(DecodeService::new()),
             cache: PageCache::new(24, 10),
             repaint_needed: AtomicBool::new(false),
+            page_links: Arc::new(std::sync::Mutex::new(HashMap::new())),
             inner: RwLock::new(Inner {
                 pages: Vec::new(),
-                view_offset: (0.0, 0.0),
                 zoom: 1.0,
+                view_size: (0.0, 0.0),
                 total_width: 0.0,
                 total_height: 0.0,
-                view_size: (0.0, 0.0),
                 visible_pages: Vec::new(),
-                orientation: Orientation::Vertical,
-                crop: 0,
+                orientation,
+                crop,
                 preload_screens: 1.0,
                 outline_items: Vec::new(),
             }),
@@ -144,10 +163,24 @@ impl PageRenderState {
         self.inner.write().unwrap()
     }
 
-    pub fn set_pages(&self, pages: Vec<Page>) {
+    // ===== 文档操作 =====
+
+    /// 打开文档（异步，通过 decode_service 加载）
+    pub fn open_document(&mut self, path: &Path) -> Result<()> {
+        self.decode_service.load_pdf(path)
+    }
+
+    /// 从 PageInfo 列表设置页面
+    pub fn set_pages_from_info(&mut self, pages_info: Vec<PageInfo>) {
+        let pages: Vec<Page> = pages_info
+            .into_iter()
+            .map(|info| Page::new(info, 0.0, 0.0, 0.0, 0.0, 1.0))
+            .collect();
         let mut inner = self.inner.write().unwrap();
         inner.pages = pages;
     }
+
+    // ===== 视口与布局 =====
 
     pub fn update_view_size(&self, width: f32, height: f32, zoom: f32, force: bool) {
         let mut inner = self.inner.write().unwrap();
@@ -164,29 +197,14 @@ impl PageRenderState {
 
     pub fn update_offset(&self, x: f32, y: f32) {
         let mut inner = self.inner.write().unwrap();
-        inner.view_offset = (x, y);
-        Self::recalculate_visible_pages(&mut inner);
-    }
-
-    fn recalculate_layout(inner: &mut Inner) {
-        if inner.view_size.0 == 0.0 || inner.view_size.1 == 0.0 {
-            return;
-        }
-        match inner.orientation {
-            Orientation::Vertical => layout_vertical(inner),
-            Orientation::Horizontal => layout_horizontal(inner),
-        }
-    }
-
-    fn recalculate_visible_pages(inner: &mut Inner) {
+        // 布局偏移通过重新计算可见页来实现
+        let visible_rect = compute_visible_rect(
+            (x, y), inner.view_size, inner.orientation, inner.preload_screens,
+        );
+        // 暂时用 view_offset 的概念 - 将 x,y 存储为偏移
+        // 但 Inner 没有 view_offset 字段，通过 visible_rect 计算可见页
         let old_visible = std::mem::take(&mut inner.visible_pages);
 
-        let visible_rect = compute_visible_rect(
-            inner.view_offset, inner.view_size, inner.orientation, inner.preload_screens,
-        );
-
-        // scale_ratio 用于将页面 bounds 从布局坐标系转换到视图坐标系
-        // 当 zoom = 1.0 时，页面 bounds 已经是基于视口大小计算的，无需额外缩放
         let first = find_first_visible(&inner.pages, &visible_rect, inner.orientation);
         let last = find_last_visible(&inner.pages, &visible_rect, inner.orientation);
 
@@ -211,12 +229,35 @@ impl PageRenderState {
             return;
         }
         let page_bounds = inner.pages[page_index].bounds;
-        let new_offset = match inner.orientation {
-            Orientation::Vertical => (inner.view_offset.0, -page_bounds.top),
-            Orientation::Horizontal => (-page_bounds.left, inner.view_offset.1),
+        // 重新计算可见范围，以目标页面为中心
+        let visible_rect = match inner.orientation {
+            Orientation::Vertical => {
+                let preload = inner.view_size.1 * inner.preload_screens;
+                Rect::new(0.0, page_bounds.top, inner.view_size.0, page_bounds.top + inner.view_size.1 + preload)
+            }
+            Orientation::Horizontal => {
+                let preload = inner.view_size.0 * inner.preload_screens;
+                Rect::new(page_bounds.left, 0.0, page_bounds.left + inner.view_size.0 + preload, inner.view_size.1)
+            }
         };
-        inner.view_offset = new_offset;
-        Self::recalculate_visible_pages(&mut inner);
+        let old_visible = std::mem::take(&mut inner.visible_pages);
+
+        let first = find_first_visible(&inner.pages, &visible_rect, inner.orientation);
+        let last = find_last_visible(&inner.pages, &visible_rect, inner.orientation);
+
+        for &old_idx in &old_visible {
+            if old_idx < first || old_idx > last {
+                if let Some(page) = inner.pages.get_mut(old_idx) {
+                    page.recycle();
+                }
+            }
+        }
+
+        if first <= last && first < inner.pages.len() {
+            for i in first..=last.min(inner.pages.len() - 1) {
+                inner.visible_pages.push(i);
+            }
+        }
     }
 
     pub fn update_zoom(&self, new_zoom: f32) {
@@ -227,7 +268,32 @@ impl PageRenderState {
         self.update_view_size(vw, vh, new_zoom, true);
     }
 
-    pub fn close(&self) {
+    // ===== 可见页面管理 =====
+
+    /// 重新计算可见页面（用于解码线程触发的刷新）
+    pub fn update_visible_pages(&self) {
+        let mut inner = self.inner.write().unwrap();
+        Self::recalculate_visible_pages(&mut inner);
+    }
+
+    pub fn get_first_visible_page(&self) -> Option<usize> {
+        self.read().visible_pages.first().copied()
+    }
+
+    /// 获取可见页面的引用（方便 canvas 绘制）
+    pub fn get_visible_pages_snapshot(&self) -> Vec<(usize, String)> {
+        let inner = self.read();
+        inner.visible_pages.iter().filter_map(|&idx| {
+            inner.pages.get(idx).map(|p| {
+                let key = thumbnail_cache_key(p.info.index, inner.crop);
+                (idx, key)
+            })
+        }).collect()
+    }
+
+    // ===== 资源清理 =====
+
+    pub fn shutdown(&mut self) {
         {
             let mut inner = self.inner.write().unwrap();
             for page in &mut inner.pages {
@@ -240,14 +306,56 @@ impl PageRenderState {
             inner.total_height = 0.0;
         }
         self.cache.clear();
+        if let Ok(mut links) = self.page_links.lock() {
+            links.clear();
+        }
+    }
+
+    // ===== 内部布局/可见页计算 =====
+
+    fn recalculate_layout(inner: &mut Inner) {
+        if inner.view_size.0 == 0.0 || inner.view_size.1 == 0.0 {
+            return;
+        }
+        match inner.orientation {
+            Orientation::Vertical => layout_vertical(inner),
+            Orientation::Horizontal => layout_horizontal(inner),
+        }
+    }
+
+    fn recalculate_visible_pages(inner: &mut Inner) {
+        let old_visible = std::mem::take(&mut inner.visible_pages);
+
+        let visible_rect = compute_visible_rect(
+            (0.0, 0.0), inner.view_size, inner.orientation, inner.preload_screens,
+        );
+
+        let first = find_first_visible(&inner.pages, &visible_rect, inner.orientation);
+        let last = find_last_visible(&inner.pages, &visible_rect, inner.orientation);
+
+        for &old_idx in &old_visible {
+            if old_idx < first || old_idx > last {
+                if let Some(page) = inner.pages.get_mut(old_idx) {
+                    page.recycle();
+                }
+            }
+        }
+
+        if first <= last && first < inner.pages.len() {
+            for i in first..=last.min(inner.pages.len() - 1) {
+                inner.visible_pages.push(i);
+            }
+        }
     }
 }
 
-impl Default for PageRenderState {
+impl Default for PageViewState {
     fn default() -> Self {
-        Self::new()
+        Self::new(Orientation::Vertical, 0)
     }
 }
+
+// ===== 缩略图管理 =====
 
 fn thumbnail_cache_key(page_index: usize, crop: i32) -> String {
     format!("thumb-{}-{}", page_index, crop)
@@ -265,10 +373,10 @@ fn calculate_thumbnail_scale(page_width: f32, page_height: f32) -> f32 {
 
 // ===== 可见页节点管理 + 解码提交 =====
 
-pub fn process_visible_nodes(state: &Arc<PageRenderState>) {
+pub fn process_visible_nodes(state: &Arc<PageViewState>) {
     let mut inner = state.inner.write().unwrap();
     let visible_rect = compute_visible_rect(
-        inner.view_offset, inner.view_size, inner.orientation, inner.preload_screens,
+        (0.0, 0.0), inner.view_size, inner.orientation, inner.preload_screens,
     );
     let crop = inner.crop;
     let zoom = inner.zoom;

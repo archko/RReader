@@ -12,12 +12,10 @@ use anyhow::Result;
 use env_logger::Env;
 use log::{debug, error, info};
 use floem::prelude::*;
-use floem::style::TextOverflow;
+use floem::style::{TextOverflow, NoWrapOverflow};
 use floem::event::EventPropagation;
-use floem::views::Decorators;
-use floem::reactive::create_effect;
-use floem::views::empty;
-use floem::prelude::scroll::scroll;
+use floem::views::{Button, Container, Decorators, Label, Scroll, Stack};
+use floem::reactive::Effect;
 use floem::action::{exec_after, TimerToken};
 
 ///以下代码能显示,但要修改floem/src/lib.rs,添加
@@ -180,24 +178,24 @@ fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryI
         let page_count_inner = page_count.clone();
 
         if document_opened.get() {
-            let back_button = button("Back")
+            let back_button = Button::new("Back")
                 .style(|s| s.padding(8.0).min_width(70.0))
-                .on_click({
+                .on_event(listener::Click, {
                     let state = state.clone();
                     let document_opened = document_opened_inner.clone();
-                    move |_| {
+                    move |_cx, _event| {
                         state.borrow_mut().shutdown();
                         document_opened.set(false);
                         EventPropagation::Continue
                     }
                 });
 
-            let prev_button = button("Previous")
+            let prev_button = Button::new("Previous")
                 .style(|s| s.padding(8.0).min_width(70.0))
-                .on_click({
+                .on_event(listener::Click, {
                     let state = state.clone();
                     let current_page = current_page_inner.clone();
-                    move |_| {
+                    move |_cx, _event| {
                         let new_page = (current_page.get() as usize).saturating_sub(1);
                         if new_page > 0 {
                             current_page.set(new_page as i32);
@@ -207,13 +205,13 @@ fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryI
                     }
                 });
 
-            let next_button = button("Next")
+            let next_button = Button::new("Next")
                 .style(|s| s.padding(8.0).min_width(70.0))
-                .on_click({
+                .on_event(listener::Click, {
                     let state = state.clone();
                     let current_page = current_page_inner.clone();
                     let page_count = page_count_inner.clone();
-                    move |_| {
+                    move |_cx, _event| {
                         let new_page = current_page.get() as usize + 1;
                         let max_pages = page_count.get() as usize;
                         if new_page <= max_pages {
@@ -224,12 +222,12 @@ fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryI
                     }
                 });
 
-            let zoom_in_button = button("Zoom +")
+            let zoom_in_button = Button::new("Zoom +")
                 .style(|s| s.padding(8.0).min_width(70.0))
-                .on_click({
+                .on_event(listener::Click, {
                     let zoom_level = zoom_level_inner.clone();
                     let state = state.clone();
-                    move |_| {
+                    move |_cx, _event| {
                         let new_zoom = (zoom_level.get() + 0.1).min(4.0);
                         zoom_level.set(new_zoom);
                         state.borrow_mut().update_zoom(new_zoom);
@@ -237,12 +235,12 @@ fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryI
                     }
                 });
 
-            let zoom_out_button = button("Zoom -")
+            let zoom_out_button = Button::new("Zoom -")
                 .style(|s| s.padding(8.0).min_width(70.0))
-                .on_click({
+                .on_event(listener::Click, {
                     let zoom_level = zoom_level_inner.clone();
                     let state = state.clone();
-                    move |_| {
+                    move |_cx, _event| {
                         let new_zoom = (zoom_level.get() - 0.1).max(0.5);
                         zoom_level.set(new_zoom);
                         state.borrow_mut().update_zoom(new_zoom);
@@ -250,17 +248,17 @@ fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryI
                     }
                 });
 
-            h_stack((
+            Stack::horizontal((
                 back_button,
                 // 页面和缩放信息
-                label(move || format!("Page {} / {} | Zoom: {:.1}%",
+                Label::derived(move || format!("Page {} / {} | Zoom: {:.1}%",
                                       current_page.get(),
                                       page_count.get(),
                                       zoom_level.get() * 100.0))
                     .style(|s| s.padding_right(8.0)),
                 // 文件路径，伸缩显示
-                container(label(move || file_path.get()))
-                    .style(|s| s.flex_grow(1.0).text_overflow(TextOverflow::Ellipsis)),
+                Container::new(Label::derived(move || file_path.get()))
+                    .style(|s| s.flex_grow(1.0).text_overflow(TextOverflow::NoWrap(NoWrapOverflow::Ellipsis))),
                 // 导航按钮
                 prev_button,
                 next_button,
@@ -274,16 +272,16 @@ fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryI
             })
         } else {
             // 未打开文档时的工具栏
-            let open_button = button("Open")
+            let open_button = Button::new("Open")
                 .style(|s| s.padding(8.0).min_width(70.0))
-                .on_click({
+                .on_event(listener::Click, {
                     let state = state.clone();
                     let document_opened = document_opened_inner.clone();
                     let current_page = current_page_inner.clone();
                     let zoom_level = zoom_level_inner.clone();
                     let file_path = file_path_inner.clone();
                     let history_items = history_items_inner.clone();
-                    move |_| {
+                    move |_cx, _event| {
                         let file_path_selected = rfd::FileDialog::new()
                             .add_filter("PDF Files", &["pdf"])
                             .add_filter("ePub Files", &["epub"])
@@ -446,17 +444,17 @@ fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryI
                     }
                 });
 
-            let clear_button = button("Clear")
+            let clear_button = Button::new("Clear")
                 .style(|s| s.padding(8.0).min_width(70.0))
-                .on_click({
+                .on_event(listener::Click, {
                     let history_items = history_items_inner.clone();
-                    move |_| {
+                    move |_cx, _event| {
                         history_items.set(vec![]);
                         EventPropagation::Continue
                     }
                 });
 
-            h_stack((
+            Stack::horizontal((
                 open_button,
                 clear_button,
             ))
@@ -482,7 +480,7 @@ fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryI
                 doc_info_trigger,
             ).into_any()
         } else {
-            container(history_grid(
+            Container::new(history_grid(
                 history_items,
                 state_for_history.clone(),
                 document_opened,
@@ -496,15 +494,16 @@ fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryI
         }
     });
 
-    container(v_stack((
+    let vs = viewport_size;
+    Container::new(Stack::vertical((
         toolbar,
-        scroll(content).style(|s| s.size(100.pct(), 100.pct())),
+        Scroll::new(content).style(|s| s.size(100.pct(), 100.pct())),
     )))
-    .keyboard_navigable()
-    .on_resize(move |rect| {
-        viewport_size.set((rect.width(), rect.height()));
+    .on_event(floem::event::listener::WindowResized, move |_cx, size| {
+        vs.set((size.width, size.height));
+        EventPropagation::Continue
     })
-    .style(|s| s.size(100.pct(), 100.pct()))
+    .style(|s| s.keyboard_navigable().size(100.pct(), 100.pct()))
 }
 
 #[tokio::main]
@@ -597,27 +596,27 @@ fn create_card(
         let path_text = filename;
         let item_path = item.path.clone();
 
-        container(v_stack((
-            container(
-                label(|| "📄")
+        Container::new(Stack::vertical((
+            Container::new(
+                Label::new("📄")
                     .style(|s| s.font_size(64.0))
             )
             .style(|s| {
                 s.size(160.0, 160.0)
                     //.background(Color::rgb(0.94, 0.94, 0.94))
                     .border_radius(4.0)
-                    .justify_content(Some(floem::taffy::JustifyContent::Center))
-                    .align_items(Some(floem::taffy::AlignItems::Center))
+                    .justify_content(floem::taffy::JustifyContent::Center)
+                    .align_items(floem::taffy::AlignItems::Center)
             }),
 
-            container(
-                label(move || title_text.clone())
+            Container::new(
+                Label::new(title_text)
                     .style(|s| {
                         s.font_size(14.0)
                             //.color(Color::rgb(0.2, 0.2, 0.2))
                             .line_height(1.2)
                             .max_width(160.0)
-                            .text_overflow(TextOverflow::Ellipsis)
+                            .text_overflow(TextOverflow::NoWrap(NoWrapOverflow::Ellipsis))
                     })
             )
             .style(|s| {
@@ -627,13 +626,13 @@ fn create_card(
             }),
 
             // 文件路径
-            container(
-                label(move || path_text.clone())
+            Container::new(
+                Label::new(path_text)
                     .style(|s| {
                         s.font_size(12.0)
                             //.color(Color::rgb(0.4, 0.4, 0.4))
                             .max_width(160.0)
-                            .text_overflow(TextOverflow::Ellipsis)
+                            .text_overflow(TextOverflow::NoWrap(NoWrapOverflow::Ellipsis))
                     })
             )
             .style(|s| {
@@ -653,7 +652,7 @@ fn create_card(
                     s.border_color(Color::from_rgb8(104, 104, 204))
                 })
         })
-        .on_click(move |_| {
+        .on_event(listener::Click, move |_cx, _event| {
             let path = PathBuf::from(&item_path);
             if path.exists() {
                 info!("Opening file from history: {}", item_path);
@@ -758,19 +757,19 @@ fn create_card(
         })
     } else {
         // empty_card logic
-        container(v_stack((
-            container(label(|| ""))
+        Container::new(Stack::vertical((
+            Container::new(Label::new(""))
                 .style(|s| {
                     s.size(160.0, 160.0)
                         //.background(Color::rgb(0.94, 0.94, 0.94))
                         .border_radius(4.0)
                 }),
-            container(label(|| ""))
+            Container::new(Label::new(""))
                 .style(|s| {
                     s.size(160.0, 32.0)
                         .margin_top(8.0)
                 }),
-            container(label(|| ""))
+            Container::new(Label::new(""))
                 .style(|s| {
                     s.size(160.0, 16.0)
                 }),
@@ -796,7 +795,7 @@ fn document_view(
 ) -> impl IntoView {
     // 监听视口大小变化
     let state_for_resize = page_view_state.clone();
-    create_effect(move |_| {
+    Effect::new(move |_| {
         let (width, height) = viewport_size.get();
         if width > 0.0 && height > 0.0 {
             let mut state = state_for_resize.borrow_mut();
@@ -875,8 +874,8 @@ fn document_view(
 
     // 滚动容器管理
     let state_for_scroll = page_view_state.clone();
-    scroll(
-        container(doc_canvas).style(|s| s.padding(20.0))
+    Scroll::new(
+        Container::new(doc_canvas).style(|s| s.padding(20.0))
     )
     .on_scroll(move |rect| {
         let offset_x = -rect.x0 as f32;
