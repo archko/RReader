@@ -157,9 +157,9 @@ impl PageNode {
             self.bounds.right * _page_width + offset_x,
             self.bounds.bottom * _page_height + offset_y,
         );
-        info!("[PageNode] decode key={} bounds={:?} region={:?} page={}x{} crop_offset=({}, {})",
-            self.cache_key, self.bounds, region, _page_width, _page_height,
-            offset_x, offset_y);
+        //info!("[PageNode] decode key={} bounds={:?} region={:?} page={}x{} crop_offset=({}, {})",
+        //    self.cache_key, self.bounds, region, _page_width, _page_height,
+        //    offset_x, offset_y);
         decode_service.render_pages(vec![RenderPage {
             key: self.cache_key.clone(),
             page_info: _page_info.clone(),

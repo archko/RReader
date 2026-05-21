@@ -6,7 +6,7 @@ use tracing::{Span, trace_span};
 use xilem::masonry::core::{
     AccessCtx, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NoAction, PaintCtx,
     PointerButtonEvent, PointerEvent, PointerScrollEvent, PointerUpdate, ScrollDelta,
-    PropertiesMut, PropertiesRef, RegisterCtx, Widget, WidgetId,
+    PropertiesMut, PropertiesRef, RegisterCtx, UpdateCtx, Widget, WidgetId,
 };
 use xilem::masonry::dpi;
 use xilem::masonry::imaging::Painter;
@@ -14,7 +14,7 @@ use xilem::masonry::kurbo::{Axis, Size};
 use xilem::masonry::layout::{LenReq, Length};
 use xilem::masonry::palette;
 use xilem::masonry::accesskit::{Node, Role};
-use xilem::core::{MessageCtx, MessageResult, Mut, View, ViewMarker, ViewId};
+use xilem::core::{MessageCtx, MessageProxy, MessageResult, Mut, View, ViewMarker, ViewId, ViewPathTracker};
 
 use crate::page::render_state::{PageRenderState, process_visible_nodes};
 
@@ -168,6 +168,18 @@ impl Widget for DocumentCanvasWidget {
         }
     }
 
+    fn on_anim_frame(
+        &mut self,
+        ctx: &mut UpdateCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        _interval: u64,
+    ) {
+        if self.state.repaint_needed.swap(false, Ordering::Acquire) {
+            ctx.request_render();
+        }
+        ctx.request_anim_frame();
+    }
+
     fn register_children(&mut self, _ctx: &mut RegisterCtx<'_>) {}
 
     fn measure(
@@ -307,6 +319,11 @@ where
         ctx: &mut xilem::ViewCtx,
         _state: &mut AppState,
     ) -> (Self::Element, Self::ViewState) {
+        let proxy = ctx.proxy();
+        let path: Arc<[ViewId]> = ctx.view_path().into();
+        let msg_proxy = MessageProxy::<()>::new(proxy, path);
+        let _ = msg_proxy.message(());
+
         let widget = DocumentCanvasWidget::new(Arc::clone(&self.state));
         (xilem::Pod::new(widget), ())
     }
@@ -316,9 +333,10 @@ where
         _prev: &Self,
         _vs: &mut Self::ViewState,
         _ctx: &mut xilem::ViewCtx,
-        _element: Mut<'_, Self::Element>,
+        mut element: Mut<'_, Self::Element>,
         _state: &mut AppState,
     ) {
+        element.ctx.request_anim_frame();
     }
 
     fn teardown(
@@ -333,9 +351,10 @@ where
         &self,
         _vs: &mut Self::ViewState,
         _message: &mut MessageCtx,
-        _element: Mut<'_, Self::Element>,
+        mut element: Mut<'_, Self::Element>,
         _app_state: &mut AppState,
     ) -> MessageResult<()> {
+        element.ctx.request_anim_frame();
         MessageResult::Nop
     }
 }
