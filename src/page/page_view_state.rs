@@ -137,7 +137,7 @@ impl PageViewState {
     pub fn new(orientation: Orientation, crop: i32) -> Self {
         Self {
             decode_service: Arc::new(DecodeService::new()),
-            cache: PageCache::new(24, 10),
+            cache: PageCache::new(24, 20),
             repaint_needed: AtomicBool::new(false),
             page_links: Arc::new(std::sync::Mutex::new(HashMap::new())),
             inner: RwLock::new(Inner {

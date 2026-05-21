@@ -10,8 +10,8 @@ use floem::event::EventPropagation;
 use floem::peniko::Color;
 use floem::prelude::*;
 use floem::reactive::Effect;
-use floem::style::{NoWrapOverflow, TextOverflow};
-use floem::views::{Button, Container, Decorators, DynStack, Label, Scroll, Stack};
+use floem::style::{NoWrapOverflow, ObjectFit, TextOverflow};
+use floem::views::{Button, Container, Decorators, DynStack, Label, Scroll, Stack, img_from_path};
 use log::{debug, error, info};
 use sea_orm::ActiveValue;
 
@@ -20,6 +20,7 @@ use crate::decoder::PageInfo;
 use crate::entity::recent::ActiveModel;
 use crate::page::PageViewState;
 use crate::ui::MainViewmodel;
+use crate::ui::utils::get_thumbnail_path;
 
 // ============================================================
 // HistoryItem — 历史记录条目
@@ -190,15 +191,32 @@ pub fn create_history_card(
     let page = item.page;
     let total_pages = item.page_count;
 
+    let thumb_cache_path = get_thumbnail_path(&item_path);
+    let has_thumbnail = !thumb_cache_path.is_empty();
+
     Container::new(
         Stack::vertical((
-            // 封面占位区域（flex-grow 撑满剩余空间）
-            Container::new(Label::new("📄").style(|s| s.font_size(48.0)))
+            // 封面区域：有缩略图则显示，否则显示占位图标
+            if has_thumbnail {
+                // 直接从缓存路径加载缩略图，固定尺寸并裁剪显示
+                let thumb_path = thumb_cache_path.clone();
+                Container::new(
+                    img_from_path(move || PathBuf::from(thumb_path.clone()))
+                        .style(|s| s.size(160, 200).object_fit(ObjectFit::Cover)),
+                )
                 .style(|s| {
                     s.flex_grow(1.0)
                         .justify_content(floem::taffy::JustifyContent::Center)
                         .align_items(floem::taffy::AlignItems::Center)
-                }),
+                })
+            } else {
+                Container::new(Label::new("📄").style(|s| s.font_size(48.0)))
+                    .style(|s| {
+                        s.flex_grow(1.0)
+                            .justify_content(floem::taffy::JustifyContent::Center)
+                            .align_items(floem::taffy::AlignItems::Center)
+                    })
+            },
             // 底部半透明信息叠加层：页数/总页数 + 标题
             Container::new(Stack::vertical((
                 Container::new(Label::derived(move || format!("{}/{}", page, total_pages)).style(|s| {

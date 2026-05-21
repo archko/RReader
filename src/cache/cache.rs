@@ -147,6 +147,6 @@ impl Default for ImageCache {
 
 impl Default for PageCache {
     fn default() -> Self {
-        Self::new(24, 10)
+        Self::new(24, 20)
     }
 }
