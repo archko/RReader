@@ -1,4 +1,5 @@
 use dirs;
+use image::DynamicImage;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
@@ -15,27 +16,45 @@ pub fn get_thumbnail_path(book_path: &str) -> String {
         let cache_dir = data_dir.join("RReader").join("images");
         let hash = generate_thumbnail_hash(book_path);
         let cache_path = cache_dir.join(format!("{}.png", hash));
-        //log::info!("[Thumbnail] expected cache_path: {:?}, exists: {}", cache_path, cache_path.exists());
         if cache_path.exists() {
             cache_path.to_string_lossy().to_string()
         } else {
             "".to_string()
         }
     } else {
-        //log::warn!("[Thumbnail] data_dir is None for: {:?}", book_path);
         "".to_string()
     }
 }
 
 #[derive(Clone)]
-struct CachedImageData {
-    data: Vec<u8>,
-    width: u32,
-    height: u32,
+pub struct CachedImageData {
+    pub data: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl CachedImageData {
-    fn new(data: Vec<u8>, width: u32, height: u32) -> Self {
+    pub fn new(data: Vec<u8>, width: u32, height: u32) -> Self {
         Self { data, width, height }
     }
+
+    pub fn to_dynamic_image(&self) -> DynamicImage {
+        let img_buffer = image::ImageBuffer::from_raw(self.width, self.height, self.data.clone())
+            .unwrap_or_else(|| image::ImageBuffer::new(self.width, self.height));
+        DynamicImage::ImageRgba8(img_buffer)
+    }
+}
+
+/// 打开文件对话框，从用户文档目录开始浏览
+pub fn pick_file() -> Option<String> {
+    let mut dialog = rfd::FileDialog::new()
+        .add_filter("支持的文件", &[
+            "pdf", "epub", "mobi", "cbz", "docx", "xps", "djvu", "tif", "tiff",
+        ])
+        .set_title("选择文档");
+    if let Some(doc_dir) = dirs::document_dir() {
+        dialog = dialog.set_directory(doc_dir);
+    }
+    let file_path = dialog.pick_file();
+    file_path.map(|p| p.to_string_lossy().to_string())
 }

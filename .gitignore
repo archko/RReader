@@ -20,3 +20,6 @@ Thumbs.db
 *.pdf
 *.log
 *.app
+.clineignore
+.idea
+.clinerules
