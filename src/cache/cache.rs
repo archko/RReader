@@ -1,12 +1,11 @@
-use image::DynamicImage;
+use xilem::masonry::peniko::ImageData;
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
-/// O(1) LRU 图片缓存，淘汰策略为最近最少使用
 #[derive(Clone)]
 pub struct ImageCache {
-    cache: Arc<Mutex<LruCache<String, Arc<DynamicImage>>>>,
+    cache: Arc<Mutex<LruCache<String, Arc<ImageData>>>>,
 }
 
 impl ImageCache {
@@ -18,14 +17,12 @@ impl ImageCache {
         }
     }
 
-    /// 获取图片并标记为最近使用
-    pub fn get(&self, key: &str) -> Option<Arc<DynamicImage>> {
+    pub fn get(&self, key: &str) -> Option<Arc<ImageData>> {
         let mut cache = self.cache.lock().unwrap();
         cache.get(key).cloned()
     }
 
-    /// 存入图片（自动淘汰最久未使用的项）
-    pub fn put(&self, key: String, image: DynamicImage) -> Arc<DynamicImage> {
+    pub fn put(&self, key: String, image: ImageData) -> Arc<ImageData> {
         let mut cache = self.cache.lock().unwrap();
         let arc = Arc::new(image);
         let cloned = arc.clone();
@@ -49,7 +46,6 @@ impl ImageCache {
     }
 }
 
-/// 双层缓存：全尺寸页面图片（24张）+ 缩略图（10张）
 #[derive(Clone)]
 pub struct PageCache {
     pub image_cache: ImageCache,
@@ -64,23 +60,19 @@ impl PageCache {
         }
     }
 
-    // ===== 全尺寸页面图片缓存 =====
-
-    pub fn get_page_image_by_key(&self, key: &str) -> Option<Arc<DynamicImage>> {
+    pub fn get_page_image_by_key(&self, key: &str) -> Option<Arc<ImageData>> {
         self.image_cache.get(key)
     }
 
-    pub fn put_page_image_by_key(&self, key: String, image: DynamicImage) -> Arc<DynamicImage> {
+    pub fn put_page_image_by_key(&self, key: String, image: ImageData) -> Arc<ImageData> {
         self.image_cache.put(key, image)
     }
 
-    // ===== 缩略图缓存 =====
-
-    pub fn get_thumbnail(&self, key: &str) -> Option<Arc<DynamicImage>> {
+    pub fn get_thumbnail(&self, key: &str) -> Option<Arc<ImageData>> {
         self.thumbnail_cache.get(key)
     }
 
-    pub fn put_thumbnail(&self, key: String, image: DynamicImage) -> Arc<DynamicImage> {
+    pub fn put_thumbnail(&self, key: String, image: ImageData) -> Arc<ImageData> {
         self.thumbnail_cache.put(key, image)
     }
 

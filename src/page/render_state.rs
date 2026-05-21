@@ -1,6 +1,7 @@
 use std::sync::{Arc, RwLock, atomic::{AtomicBool, Ordering}};
 
 use log::debug;
+use xilem::masonry::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat};
 
 use super::Page;
 use crate::cache::PageCache;
@@ -58,36 +59,38 @@ impl DecodeCallback for PageCallback {
     fn on_completed(&self, result: DecodeResult) {
         if result.key != self.cache_key { return; }
 
-        if let Some(img) = image::RgbaImage::from_raw(
-            result.image_width, result.image_height, result.image_data,
-        ) {
-            let dyn_img = image::DynamicImage::ImageRgba8(img);
-            match self.node_key {
-                Some(nk) => {
-                    self.state.cache.put_page_image_by_key(self.cache_key.clone(), dyn_img);
-                    let cache_arc = self.state.cache.get_page_image_by_key(&self.cache_key);
-                    let mut inner = self.state.write();
-                    if let Some(page) = inner.pages.get_mut(self.page_idx) {
-                        if let Some(node) = page.visible_nodes.get_mut(&nk) {
-                            if node.cache_key == self.cache_key {
-                                node.bitmap = cache_arc;
-                                node.is_decoding = false;
-                            }
+        let blob = Blob::from(result.image_data);
+        let image_data = ImageData {
+            data: blob,
+            format: ImageFormat::Rgba8,
+            alpha_type: ImageAlphaType::Alpha,
+            width: result.image_width,
+            height: result.image_height,
+        };
+        match self.node_key {
+            Some(nk) => {
+                let arc = self.state.cache.put_page_image_by_key(self.cache_key.clone(), image_data);
+                let mut inner = self.state.write();
+                if let Some(page) = inner.pages.get_mut(self.page_idx) {
+                    if let Some(node) = page.visible_nodes.get_mut(&nk) {
+                        if node.cache_key == self.cache_key {
+                            node.bitmap = Some(arc);
+                            node.is_decoding = false;
                         }
                     }
                 }
-                None => {
-                    self.state.cache.put_thumbnail(self.cache_key.clone(), dyn_img);
-                    let mut inner = self.state.write();
-                    if let Some(page) = inner.pages.get_mut(self.page_idx) {
-                        if page.is_thumb_loading {
-                            page.thumb_bitmap = self.state.cache.get_thumbnail(&self.cache_key);
-                            page.is_thumb_loading = false;
-                        }
-                        if !result.links.is_empty() {
-                            page.links = result.links;
-                            page.links_loaded = true;
-                        }
+            }
+            None => {
+                let arc = self.state.cache.put_thumbnail(self.cache_key.clone(), image_data);
+                let mut inner = self.state.write();
+                if let Some(page) = inner.pages.get_mut(self.page_idx) {
+                    if page.is_thumb_loading {
+                        page.thumb_bitmap = Some(arc);
+                        page.is_thumb_loading = false;
+                    }
+                    if !result.links.is_empty() {
+                        page.links = result.links;
+                        page.links_loaded = true;
                     }
                 }
             }

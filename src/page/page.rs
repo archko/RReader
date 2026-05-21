@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use log::info;
 use xilem::masonry::imaging::Painter;
-use xilem::masonry::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat, Color, Fill};
+use xilem::masonry::peniko::{ImageData, Color, Fill};
 use xilem::masonry::kurbo::Affine;
 use xilem::masonry::kurbo::Rect as KurboRect;
 use std::sync::Arc;
@@ -21,7 +21,7 @@ pub struct Page {
     pub height: f32,
     pub is_decoding: bool,
 
-    pub thumb_bitmap: Option<Arc<image::DynamicImage>>,
+    pub thumb_bitmap: Option<Arc<ImageData>>,
     pub is_thumb_loading: bool,
     pub x_offset: f32,
     pub y_offset: f32,
@@ -107,20 +107,15 @@ impl Page {
         let thumb_img = self.thumb_bitmap.clone()
             .or_else(|| cache.get_thumbnail(&thumb_key));
         if let Some(ref img) = thumb_img {
-            let rgba = img.to_rgba8();
-            let (w, h) = rgba.dimensions();
-            let data = Blob::from(rgba.into_raw());
-            let image_data = ImageData { data, format: ImageFormat::Rgba8, alpha_type: ImageAlphaType::Alpha, width: w, height: h };
-
             let draw_left = current_left - scroll_x;
             let draw_top = current_top - scroll_y;
 
             let transform = Affine::translate((draw_left as f64, draw_top as f64))
                 * Affine::scale_non_uniform(
-                    current_width as f64 / w as f64,
-                    current_height as f64 / h as f64,
+                    current_width as f64 / img.width as f64,
+                    current_height as f64 / img.height as f64,
                 );
-            painter.draw_image(&image_data, transform);
+            painter.draw_image(&**img, transform);
         }
 
         for node in self.visible_nodes.values() {

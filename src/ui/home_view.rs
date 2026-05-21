@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use std::path::Path;
+use std::time::SystemTime;
 use log::{error, debug};
+use sea_orm::ActiveValue;
 
 use xilem::masonry::layout::Length;
 use xilem::view::{
@@ -52,15 +54,15 @@ impl AppState {
             let path = item.path.clone();
             let title = item.title.clone();
 
-            // 启动文档加载
-            self.start_loading_document(&path);
+            // 启动文档加载，传入历史记录中的位置
+            self.start_loading_document(&path, item.page.max(1), item.zoom, item.crop);
 
             self.view = ViewKind::Document { path, title };
         }
     }
 
-    /// 启动后台加载文档
-    fn start_loading_document(&self, path: &str) {
+    /// 启动后台加载文档，并定位到指定页面
+    fn start_loading_document(&self, path: &str, init_page: i32, init_zoom: f32, init_crop: i32) {
         let pv = Arc::clone(&self.page_render_state);
         let path_owned = path.to_string();
 
@@ -70,21 +72,26 @@ impl AppState {
             return;
         }
 
-        // 后台线程：等待文档加载完成 → 设置页面 → 启动缓存消费者
+        // 后台线程：等待文档加载完成 → 设置页面 → 恢复阅读位置
         std::thread::spawn(move || {
             let mut attempts = 0;
             loop {
                 if let Some(result) = pv.decode_service.try_recv_load_result() {
                     match result {
                         Ok(pages_info) => {
-                            debug!("Document loaded: {} pages", pages_info.len());
+                            let page_count = pages_info.len();
+                            debug!("Document loaded: {} pages", page_count);
                             let pages: Vec<crate::page::Page> = pages_info
                                 .into_iter()
                                 .map(|info| crate::page::Page::new(info, 0.0, 0.0, 0.0, 0.0, 1.0))
                                 .collect();
                             pv.set_pages(pages);
-                            pv.update_view_size(800.0, 600.0, 1.0, true);
-                            pv.update_offset(0.0, 0.0);
+                            pv.update_view_size(800.0, 600.0, init_zoom, true);
+                            // jump_to_page 使用 0-based 索引
+                            let target_page = (init_page as usize)
+                                .saturating_sub(1)
+                                .min(page_count.saturating_sub(1));
+                            pv.jump_to_page(target_page);
                             process_visible_nodes(&pv);
                             // 加载大纲
                             if let Ok(outline) = pv.decode_service.get_outline() {
@@ -102,15 +109,69 @@ impl AppState {
                     error!("Document load timed out");
                     break;
                 }
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                std::thread::sleep(std::time::Duration::from_millis(200));
             }
         });
     }
 
     /// 返回历史记录首页
     pub fn back_to_home(&mut self) {
+        let doc_path = match &self.view {
+            ViewKind::Document { path, .. } => Some(path.clone()),
+            _ => None,
+        };
+
+        if let Some(ref path) = doc_path {
+            let (page, scroll_x, scroll_y, zoom, crop) = {
+                let r = self.page_render_state.read();
+                let page = r.visible_pages.first().map(|&p| p + 1).unwrap_or(1);
+                (page, r.view_offset.0, r.view_offset.1, r.zoom, r.crop)
+            };
+
+            let now = SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64;
+
+            let existing = RecentDao::find_by_path_sync(path).ok().flatten();
+
+            if let Some(rec) = existing {
+                let active = crate::entity::recent::ActiveModel {
+                    id: ActiveValue::Set(rec.id),
+                    page: ActiveValue::Set(page as i32),
+                    scroll_x: ActiveValue::Set(scroll_x as i32),
+                    scroll_y: ActiveValue::Set(scroll_y as i32),
+                    zoom: ActiveValue::Set(zoom),
+                    crop: ActiveValue::Set(crop),
+                    update_at: ActiveValue::Set(now),
+                    ..Default::default()
+                };
+                let _ = RecentDao::update_by_path_sync(path, active);
+            } else {
+                let title = match &self.view {
+                    ViewKind::Document { ref title, .. } => title.clone(),
+                    _ => String::new(),
+                };
+                let active = crate::entity::recent::ActiveModel {
+                    id: ActiveValue::NotSet,
+                    book_path: ActiveValue::Set(path.clone()),
+                    name: ActiveValue::Set(title),
+                    page: ActiveValue::Set(page as i32),
+                    crop: ActiveValue::Set(crop),
+                    zoom: ActiveValue::Set(zoom),
+                    scroll_x: ActiveValue::Set(scroll_x as i32),
+                    scroll_y: ActiveValue::Set(scroll_y as i32),
+                    update_at: ActiveValue::Set(now),
+                    create_at: ActiveValue::Set(now),
+                    ..Default::default()
+                };
+                let _ = RecentDao::insert_sync(active);
+            }
+        }
+
         self.page_render_state.close();
         self.view = ViewKind::Home;
+        self.home.load_history();
     }
 
 }
@@ -151,6 +212,8 @@ pub struct UIHistoryItem {
     pub read_times: i32,
     pub update_at: i64,
     pub has_thumbnail: bool,
+    pub zoom: f32,
+    pub crop: i32,
 }
 
 impl HomeViewState {
@@ -200,6 +263,8 @@ impl HomeViewState {
                             read_times: r.read_times,
                             update_at: r.update_at,
                             has_thumbnail: !cache_path.is_empty(),
+                            zoom: r.zoom,
+                            crop: r.crop,
                         }
                     })
                     .collect();
@@ -269,7 +334,7 @@ pub fn home_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_else(|| path.clone());
-                    s.start_loading_document(&path);
+                    s.start_loading_document(&path, 1, 1.0, 0);
                     s.view = ViewKind::Document { path, title };
                 }
             }),

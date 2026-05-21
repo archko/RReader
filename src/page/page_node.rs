@@ -1,6 +1,6 @@
 use log::info;
 use xilem::masonry::imaging::Painter;
-use xilem::masonry::peniko::{Blob, Brush, ImageAlphaType, ImageBrush, ImageData, ImageFormat};
+use xilem::masonry::peniko::{Brush, ImageBrush, ImageData};
 use xilem::masonry::kurbo::{Affine, Rect as KurboRect, Vec2};
 use std::sync::Arc;
 
@@ -12,7 +12,7 @@ pub struct PageNode {
     pub page_index: usize,
     pub bounds: Rect,
     pub cache_key: String,
-    pub bitmap: Option<Arc<image::DynamicImage>>,
+    pub bitmap: Option<Arc<ImageData>>,
     pub is_decoding: bool,
     cached_pixel_rect: Option<Rect>,
     cached_page_size: Option<(f32, f32, f32, f32)>,
@@ -111,19 +111,11 @@ impl PageNode {
             draw_bottom as f64,
         );
         let img = self.bitmap.clone().or_else(|| cache.get_page_image_by_key(&self.cache_key));
-        if let Some(img_arc) = img {
-            let rgba = img_arc.to_rgba8();
-            let (img_w, img_h) = rgba.dimensions();
-            let data = Blob::from(rgba.into_raw());
-            let image_data = ImageData { data, format: ImageFormat::Rgba8, alpha_type: ImageAlphaType::Alpha, width: img_w, height: img_h };
-            let brush: Brush = ImageBrush::new(image_data).into();
+        if let Some(img_data) = img {
+            let brush: Brush = ImageBrush::new(ImageData::clone(&img_data)).into();
 
-            // brush_transform maps image coordinates -> surface coordinates
-            // surface = scale * image + translate
-            //   surface(draw_left, draw_top) ← image(0, 0)
-            //   surface(draw_right, draw_bottom) ← image(img_w, img_h)
-            let scale_x = draw_width / img_w as f32;
-            let scale_y = draw_height / img_h as f32;
+            let scale_x = draw_width / img_data.width as f32;
+            let scale_y = draw_height / img_data.height as f32;
             let trans_x = draw_left;
             let trans_y = draw_top;
 

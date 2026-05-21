@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -18,14 +19,24 @@ use xilem::core::{MessageCtx, MessageProxy, MessageResult, Mut, View, ViewMarker
 
 use crate::page::render_state::{PageRenderState, process_visible_nodes};
 
+struct DragSample {
+    time: std::time::Instant,
+    x: f64,
+    y: f64,
+}
+
 /// 文档画布 Widget - 处理滚动、拖拽、点击等交互
 pub struct DocumentCanvasWidget {
     state: Arc<PageRenderState>,
     is_dragging: bool,
+    is_flinging: bool,
+    fling_velocity_x: f32,
+    fling_velocity_y: f32,
     start_offset: (f32, f32),
     start_pos: (f64, f64),
     pointer_down_pos: (f64, f64),
     pointer_down_time: std::time::Instant,
+    drag_samples: VecDeque<DragSample>,
     size: Size,
 }
 
@@ -34,10 +45,14 @@ impl DocumentCanvasWidget {
         Self {
             state,
             is_dragging: false,
+            is_flinging: false,
+            fling_velocity_x: 0.0,
+            fling_velocity_y: 0.0,
             start_offset: (0.0, 0.0),
             start_pos: (0.0, 0.0),
             pointer_down_pos: (0.0, 0.0),
             pointer_down_time: std::time::Instant::now(),
+            drag_samples: VecDeque::new(),
             size: Size::ZERO,
         }
     }
@@ -116,7 +131,9 @@ impl Widget for DocumentCanvasWidget {
                         let r = self.state.read();
                         (r.view_offset.0, r.view_offset.1)
                     };
+                    self.is_flinging = false;
                     self.is_dragging = true;
+                    self.drag_samples.clear();
                     self.start_offset = (ox, oy);
                     self.start_pos = (pos.x, pos.y);
                     self.pointer_down_pos = (pos.x, pos.y);
@@ -128,10 +145,19 @@ impl Widget for DocumentCanvasWidget {
             PointerEvent::Move(PointerUpdate { current: state, .. }) => {
                 let pos = state.position;
                 if self.is_dragging {
+                    self.drag_samples.push_back(DragSample {
+                        time: std::time::Instant::now(),
+                        x: pos.x,
+                        y: pos.y,
+                    });
+                    while self.drag_samples.len() > 5 {
+                        self.drag_samples.pop_front();
+                    }
+
                     let dx = (pos.x - self.start_pos.0) as f32;
                     let dy = (pos.y - self.start_pos.1) as f32;
-                    let new_x = self.start_offset.0 - dx;
-                    let new_y = self.start_offset.1 - dy;
+                    let new_x = self.start_offset.0 + dx;
+                    let new_y = self.start_offset.1 + dy;
 
                     let (tw, th, vw, vh) = {
                         let r = self.state.read();
@@ -152,12 +178,31 @@ impl Widget for DocumentCanvasWidget {
                 self.is_dragging = false;
 
                 if was_dragging {
+                    // compute fling velocity from drag samples
+                    if self.drag_samples.len() >= 2 {
+                        let first = self.drag_samples.front().unwrap();
+                        let last = self.drag_samples.back().unwrap();
+                        let dt = last.time.duration_since(first.time).as_secs_f64();
+                        if dt > 0.02 {
+                            self.fling_velocity_x = ((last.x - first.x) / dt) as f32;
+                            self.fling_velocity_y = ((last.y - first.y) / dt) as f32;
+                            let speed = (self.fling_velocity_x.powi(2)
+                                + self.fling_velocity_y.powi(2))
+                            .sqrt();
+                            if speed > 80.0 {
+                                self.is_flinging = true;
+                            }
+                        }
+                    }
+                    self.drag_samples.clear();
+
                     let dist = ((pos.x - self.pointer_down_pos.0).powi(2)
                         + (pos.y - self.pointer_down_pos.1).powi(2))
                     .sqrt();
                     let elapsed = self.pointer_down_time.elapsed();
 
                     if dist < 10.0 && elapsed < std::time::Duration::from_millis(500) {
+                        self.is_flinging = false;
                         self.handle_click(pos);
                         ctx.request_render();
                     }
@@ -172,8 +217,24 @@ impl Widget for DocumentCanvasWidget {
         &mut self,
         ctx: &mut UpdateCtx<'_>,
         _props: &mut PropertiesMut<'_>,
-        _interval: u64,
+        interval: u64,
     ) {
+        if self.is_flinging {
+            let dt = (interval as f32).min(50_000.0) / 1_000_000.0;
+            let decay = (-2.0 * dt).exp();
+            self.fling_velocity_x *= decay;
+            self.fling_velocity_y *= decay;
+
+            let dx = self.fling_velocity_x * dt;
+            let dy = self.fling_velocity_y * dt;
+
+            if dx.abs() < 0.5 && dy.abs() < 0.5 {
+                self.is_flinging = false;
+            } else if self.apply_scroll(dx, dy) {
+                ctx.request_render();
+            }
+        }
+
         if self.state.repaint_needed.swap(false, Ordering::Acquire) {
             ctx.request_render();
         }
