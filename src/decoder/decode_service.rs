@@ -214,7 +214,7 @@ impl DecodeService {
                             TaskType::Crop => "Crop".into(),
                             TaskType::Page => "Page".into(),
                         };
-                        info!("[{}] 页面 {} 解码完成，耗时: {:?}, links: {}",
+                        debug!("[{}] 页面 {} 解码完成，耗时: {:?}, links: {}",
                             task_label, page_info.index, duration, links.len());
                         if let Some(ref cb) = render_page.callback {
                             cb.on_completed(DecodeResult {

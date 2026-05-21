@@ -118,14 +118,14 @@ impl PageNode {
             let image_data = ImageData { data, format: ImageFormat::Rgba8, alpha_type: ImageAlphaType::Alpha, width: img_w, height: img_h };
             let brush: Brush = ImageBrush::new(image_data).into();
 
-            // brush_transform 将视口坐标映射到图片的子区域坐标
-            // ImageBrush 默认以视口绝对坐标采样，当页面不在 (0,0) 时图片偏移
-            let norm_width = self.bounds.right - self.bounds.left;
-            let norm_height = self.bounds.bottom - self.bounds.top;
-            let scale_x = norm_width * img_w as f32 / draw_width;
-            let scale_y = norm_height * img_h as f32 / draw_height;
-            let trans_x = self.bounds.left * img_w as f32 - draw_left * scale_x;
-            let trans_y = self.bounds.top * img_h as f32 - draw_top * scale_y;
+            // brush_transform maps image coordinates -> surface coordinates
+            // surface = scale * image + translate
+            //   surface(draw_left, draw_top) ← image(0, 0)
+            //   surface(draw_right, draw_bottom) ← image(img_w, img_h)
+            let scale_x = draw_width / img_w as f32;
+            let scale_y = draw_height / img_h as f32;
+            let trans_x = draw_left;
+            let trans_y = draw_top;
 
             let brush_transform = Affine::scale_non_uniform(scale_x as f64, scale_y as f64)
                 .pre_translate(Vec2::new(trans_x as f64, trans_y as f64));
