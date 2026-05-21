@@ -148,6 +148,7 @@ async fn main() -> Result<()> {
                 title: r.name.clone(),
                 path: r.book_path.clone(),
                 page: r.page,
+                page_count: r.page_count,
             })
             .collect::<Vec<_>>()
     };

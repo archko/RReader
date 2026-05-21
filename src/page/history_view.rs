@@ -30,13 +30,13 @@ pub struct HistoryItem {
     pub title: String,
     pub path: String,
     pub page: i32,
+    pub page_count: i32,
 }
 
 // ============================================================
 // HistoryView — 历史记录网格视图
 // ============================================================
 
-/// 创建历史记录视图（包含工具栏 + 可滚动历史网格）
 pub fn create_history_view(
     history_items: RwSignal<Vec<HistoryItem>>,
     page_view_state: Rc<RefCell<PageViewState>>,
@@ -185,44 +185,43 @@ pub fn create_history_card(
     page_count: RwSignal<i32>,
     viewmodel: Rc<RefCell<MainViewmodel>>,
 ) -> impl IntoView {
-    let filename = std::path::Path::new(&item.path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_string();
-
     let title_text = item.title.clone();
-    let path_text = filename;
     let item_path = item.path.clone();
+    let page = item.page;
+    let total_pages = item.page_count;
 
-    Container::new(Stack::vertical((
-        // 封面图标区域
-        Container::new(Label::new("📄").style(|s| s.font_size(64.0)))
+    Container::new(
+        Stack::vertical((
+            // 封面占位区域（flex-grow 撑满剩余空间）
+            Container::new(Label::new("📄").style(|s| s.font_size(48.0)))
+                .style(|s| {
+                    s.flex_grow(1.0)
+                        .justify_content(floem::taffy::JustifyContent::Center)
+                        .align_items(floem::taffy::AlignItems::Center)
+                }),
+            // 底部半透明信息叠加层：页数/总页数 + 标题
+            Container::new(Stack::vertical((
+                Container::new(Label::derived(move || format!("{}/{}", page, total_pages)).style(|s| {
+                    s.font_size(11.0)
+                        .color(Color::from_rgb8(220, 220, 220))
+                        .text_overflow(TextOverflow::NoWrap(NoWrapOverflow::Ellipsis))
+                })),
+                Container::new(Label::new(title_text).style(|s| {
+                    s.font_size(12.0)
+                        .color(Color::from_rgb8(255, 255, 255))
+                        .text_overflow(TextOverflow::NoWrap(NoWrapOverflow::Ellipsis))
+                })),
+            )))
             .style(|s| {
-                s.size(160.0, 160.0)
-                    .border_radius(4.0)
-                    .justify_content(floem::taffy::JustifyContent::Center)
-                    .align_items(floem::taffy::AlignItems::Center)
+                s.background(Color::from_rgba8(0, 0, 0, 160))
+                    .padding(6.0)
+                    .gap(2.0)
             }),
-        // 标题
-        Container::new(Label::new(title_text).style(|s| {
-            s.font_size(14.0)
-                .line_height(1.2)
-                .max_width(160.0)
-                .text_overflow(TextOverflow::NoWrap(NoWrapOverflow::Ellipsis))
-        }))
-        .style(|s| s.width(160.0).max_height(34.0).margin_top(8.0)),
-        // 文件路径
-        Container::new(Label::new(path_text).style(|s| {
-            s.font_size(12.0)
-                .max_width(160.0)
-                .text_overflow(TextOverflow::NoWrap(NoWrapOverflow::Ellipsis))
-        }))
-        .style(|s| s.width(160.0).height(16.0)),
-    )))
+        ))
+        .style(|s| s.width(100.pct())),
+    )
     .style(|s| {
         s.size(180.0, 240.0)
-            .padding(10.0)
             .border_radius(4.0)
             .border(1.0)
             .border_color(Color::from_rgb8(104, 104, 104))
