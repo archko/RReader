@@ -36,7 +36,7 @@ pub struct HistoryItem {
 // HistoryView — 历史记录网格视图
 // ============================================================
 
-/// 创建历史记录视图
+/// 创建历史记录视图（包含工具栏 + 可滚动历史网格）
 pub fn create_history_view(
     history_items: RwSignal<Vec<HistoryItem>>,
     page_view_state: Rc<RefCell<PageViewState>>,
@@ -47,6 +47,19 @@ pub fn create_history_view(
     page_count: RwSignal<i32>,
     viewmodel: Rc<RefCell<MainViewmodel>>,
 ) -> impl IntoView {
+    // --- 工具栏 ---
+    let toolbar = create_history_toolbar(
+        page_view_state.clone(),
+        document_opened,
+        file_path,
+        current_page,
+        zoom_level,
+        page_count,
+        history_items,
+        viewmodel.clone(),
+    );
+
+    // --- 历史网格 ---
     let grid = dyn_stack(
         move || history_items.get(),
         |item| item.path.clone(),
@@ -70,8 +83,92 @@ pub fn create_history_view(
             .padding(10.0)
     });
 
-    Scroll::new(Container::new(grid).style(|s| s.size(100.pct(), 100.pct())))
-        .style(|s| s.size(100.pct(), 100.pct()))
+    // 注意：Container 不能设 size(100%, 100%)，否则它的布局尺寸被锁定为视口大小，
+    // 导致 Scroll 检测 content_size == viewport_size，无法滚动。
+    // 让 Container 自然包裹 grid 内容，Scroll 就能正确计算溢出。
+    let scroll = Scroll::new(Container::new(grid))
+        .style(|s| s.flex_grow(1.0).min_height(0));
+
+    Stack::vertical((toolbar, scroll)).style(|s| s.size(100.pct(), 100.pct()))
+}
+
+// ============================================================
+// create_history_toolbar — 主页工具栏（Open / Clear）
+// ============================================================
+
+fn create_history_toolbar(
+    page_view_state: Rc<RefCell<PageViewState>>,
+    document_opened: RwSignal<bool>,
+    file_path: RwSignal<String>,
+    current_page: RwSignal<i32>,
+    zoom_level: RwSignal<f32>,
+    page_count: RwSignal<i32>,
+    history_items: RwSignal<Vec<HistoryItem>>,
+    viewmodel: Rc<RefCell<MainViewmodel>>,
+) -> impl IntoView {
+    let open_button = Button::new("Open")
+        .style(|s| s.padding(8.0).min_width(70.0))
+        .on_event(listener::Click, {
+            let state = page_view_state.clone();
+            let document_opened = document_opened.clone();
+            let current_page = current_page.clone();
+            let zoom_level = zoom_level.clone();
+            let file_path = file_path.clone();
+            let history_items = history_items.clone();
+            let page_count = page_count.clone();
+            let viewmodel = viewmodel.clone();
+
+            move |_cx, _event| {
+                let file_path_selected = rfd::FileDialog::new()
+                    .add_filter("PDF Files", &["pdf"])
+                    .add_filter("ePub Files", &["epub"])
+                    .add_filter("MOBI Files", &["mobi"])
+                    .add_filter("All Files", &["*"])
+                    .set_title("Select File")
+                    .pick_file();
+
+                if let Some(path) = file_path_selected {
+                    let path_str = path.to_string_lossy().to_string();
+                    info!("打开文件: {}", path_str);
+
+                    let result = state.borrow_mut().open_document(&path);
+                    if result.is_ok() {
+                        poll_document_load(
+                            state.clone(),
+                            document_opened,
+                            file_path,
+                            current_page,
+                            zoom_level,
+                            page_count,
+                            viewmodel.clone(),
+                            path_str,
+                        );
+                    }
+                }
+                EventPropagation::Continue
+            }
+        });
+
+    let clear_button = Button::new("Clear")
+        .style(|s| s.padding(8.0).min_width(70.0))
+        .on_event(listener::Click, {
+            let history_items = history_items.clone();
+            move |_cx, _event| {
+                history_items.set(vec![]);
+                EventPropagation::Continue
+            }
+        });
+
+    let label = Label::derived(move || {
+        format!(
+            "RReader — {} history items",
+            history_items.get().len()
+        )
+    })
+    .style(|s| s.padding_right(8.0));
+
+    Stack::horizontal((open_button, clear_button, label))
+        .style(|s| s.padding(10.0).gap(10.0))
 }
 
 // ============================================================

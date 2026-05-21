@@ -13,10 +13,6 @@ use log::info;
 use crate::page::PageViewState;
 use crate::page::document_canvas::{create_document_canvas, start_repaint_loop};
 
-// ============================================================
-// DocumentViewData — 文档视图所需的全部响应式信号
-// ============================================================
-
 pub struct DocumentViewData {
     pub page_view_state: Rc<RefCell<PageViewState>>,
     pub document_opened: RwSignal<bool>,
@@ -98,6 +94,7 @@ pub fn create_document_view(data: DocumentViewData) -> impl IntoView {
 
     // --- 滚动容器 ---
     // 使用 ScrollChanged 自定义事件监听滚动位置变化
+    // 注意：仅画布容器可滚动，工具栏固定在顶部（使用 flex_grow）
     let state_for_scroll = page_view_state.clone();
     let trigger_for_scroll = decode_refresh_trigger.clone();
     let cp = current_page.clone();
@@ -122,7 +119,7 @@ pub fn create_document_view(data: DocumentViewData) -> impl IntoView {
             // 触发 Canvas 重绘（Canvas 会从 cache 读取最新图像）
             trigger_for_scroll.update(|v| *v += 1);
         })
-        .style(|s| s.size(100.pct(), 100.pct()));
+        .style(|s| s.flex_grow(1.0).min_height(0));
 
     Stack::vertical((toolbar, scrolled)).style(|s| s.size(100.pct(), 100.pct()))
 }

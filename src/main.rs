@@ -14,7 +14,7 @@ use log::{debug, error, info};
 
 use floem::prelude::*;
 use floem::event::EventPropagation;
-use floem::views::{Button, Container, Decorators, Label, Scroll, Stack};
+use floem::views::{Container, Decorators};
 use floem::view::IntoView;
 
 use dirs;
@@ -29,7 +29,7 @@ mod tts;
 mod ui;
 
 use page::{PageViewState, Orientation, HistoryItem};
-use page::history_view::{create_history_view, poll_document_load};
+use page::history_view::create_history_view;
 use page::document_view::{create_document_view, DocumentViewData};
 use tts::TtsService;
 use crate::ui::MainViewmodel;
@@ -62,13 +62,11 @@ async fn setup_database() -> Result<()> {
 // ============================================================
 // app_view — 应用主视图
 //
-// 架构说明（回调式文档渲染）：
-//   1. home 模式：显示历史网格 + Open/Clear 工具栏
-//   2. document 模式：显示文档画布 + 文档工具栏
-//   3. 解码流程：不再轮询 try_recv_result()，而是通过
-//      PageCallback::on_completed() 回调直接写入缓存
-//      → start_repaint_loop 检测 AtomicBool
-//      → 递增信号触发 Canvas 重绘
+// main.rs 仅负责在「历史视图」与「文档视图」之间切换。
+// 每个视图都是自包含的：
+//   - 工具栏固定在顶部（不滚动）
+//   - 内容区由内部的 Scroll 处理滚动
+// 没有外层 Scroll，Container 提供 100% 窗口大小约束。
 // ============================================================
 
 fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryItem>) -> impl IntoView {
@@ -80,45 +78,29 @@ fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryI
     let page_count = RwSignal::new(0);
     let viewport_size = RwSignal::new((800.0, 600.0));
 
-    // 历史记录
     let history_items = RwSignal::new(initial_history);
-
-    // 刷新触发器（信号驱动 Canvas 重绘）
     let decode_refresh_trigger = RwSignal::new(0u64);
     let doc_info_trigger = RwSignal::new(0u64);
 
-    // --- 主页工具栏（未打开文档时显示）---
-    let home_toolbar = create_home_toolbar(
-        page_view_state.clone(),
-        document_opened,
-        file_path,
-        current_page,
-        zoom_level,
-        page_count,
-        history_items,
-        viewmodel.clone(),
-    );
-
-    // --- 主内容区域（历史网格 ↔ 文档视图切换）---
+    // 用 dyn_view 切换两个自包含视图（互斥）
     let state_for_content = page_view_state.clone();
+    let vm = viewmodel.clone();
     let content = dyn_view(move || {
         if document_opened.get() {
-            // 文档模式：使用回调式 document_view
             let data = DocumentViewData {
                 page_view_state: state_for_content.clone(),
-                document_opened: document_opened,
-                current_page: current_page,
-                page_count: page_count,
-                zoom_level: zoom_level,
-                file_path: file_path,
-                viewport_size: viewport_size,
-                decode_refresh_trigger: decode_refresh_trigger,
-                doc_info_trigger: doc_info_trigger,
+                document_opened,
+                current_page,
+                page_count,
+                zoom_level,
+                file_path,
+                viewport_size,
+                decode_refresh_trigger,
+                doc_info_trigger,
             };
             create_document_view(data).into_any()
         } else {
-            // 主页模式：历史网格
-            Container::new(create_history_view(
+            create_history_view(
                 history_items,
                 state_for_content.clone(),
                 document_opened,
@@ -126,103 +108,20 @@ fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryI
                 current_page,
                 zoom_level,
                 page_count,
-                viewmodel.clone(),
-            ))
-            .style(|s| s.padding(10.0).size(100.pct(), 100.pct()))
+                vm.clone(),
+            )
             .into_any()
         }
     });
 
-    // --- 整体布局 ---
+    // Container 提供 100% 窗口大小约束，没有外层 Scroll
     let vs = viewport_size;
-    Container::new(Stack::vertical((
-        home_toolbar,
-        Scroll::new(content).style(|s| s.size(100.pct(), 100.pct())),
-    )))
-    .on_event(floem::event::listener::WindowResized, move |_cx, size| {
-        vs.set((size.width, size.height));
-        EventPropagation::Continue
-    })
-    .style(|s| s.keyboard_navigable().size(100.pct(), 100.pct()))
-}
-
-// ============================================================
-// create_home_toolbar — 主页工具栏（Open / Clear）
-// ============================================================
-
-fn create_home_toolbar(
-    page_view_state: Rc<RefCell<PageViewState>>,
-    document_opened: RwSignal<bool>,
-    file_path: RwSignal<String>,
-    current_page: RwSignal<i32>,
-    zoom_level: RwSignal<f32>,
-    page_count: RwSignal<i32>,
-    history_items: RwSignal<Vec<HistoryItem>>,
-    viewmodel: Rc<RefCell<MainViewmodel>>,
-) -> impl IntoView {
-    let open_button = Button::new("Open")
-        .style(|s| s.padding(8.0).min_width(70.0))
-        .on_event(listener::Click, {
-            let state = page_view_state.clone();
-            let document_opened = document_opened.clone();
-            let current_page = current_page.clone();
-            let zoom_level = zoom_level.clone();
-            let file_path = file_path.clone();
-            let history_items = history_items.clone();
-            let page_count = page_count.clone();
-            let viewmodel = viewmodel.clone();
-
-            move |_cx, _event| {
-                let file_path_selected = rfd::FileDialog::new()
-                    .add_filter("PDF Files", &["pdf"])
-                    .add_filter("ePub Files", &["epub"])
-                    .add_filter("MOBI Files", &["mobi"])
-                    .add_filter("All Files", &["*"])
-                    .set_title("Select File")
-                    .pick_file();
-
-                if let Some(path) = file_path_selected {
-                    let path_str = path.to_string_lossy().to_string();
-                    info!("打开文件: {}", path_str);
-
-                    let result = state.borrow_mut().open_document(&path);
-                    if result.is_ok() {
-                        poll_document_load(
-                            state.clone(),
-                            document_opened,
-                            file_path,
-                            current_page,
-                            zoom_level,
-                            page_count,
-                            viewmodel.clone(),
-                            path_str,
-                        );
-                    }
-                }
-                EventPropagation::Continue
-            }
-        });
-
-    let clear_button = Button::new("Clear")
-        .style(|s| s.padding(8.0).min_width(70.0))
-        .on_event(listener::Click, {
-            let history_items = history_items.clone();
-            move |_cx, _event| {
-                history_items.set(vec![]);
-                EventPropagation::Continue
-            }
-        });
-
-    let label = Label::derived(move || {
-        format!(
-            "RReader — {} history items",
-            history_items.get().len()
-        )
-    })
-    .style(|s| s.padding_right(8.0));
-
-    Stack::horizontal((open_button, clear_button, label))
-        .style(|s| s.padding(10.0).gap(10.0))
+    Container::new(content)
+        .on_event(floem::event::listener::WindowResized, move |_cx, size| {
+            vs.set((size.width, size.height));
+            EventPropagation::Continue
+        })
+        .style(|s| s.keyboard_navigable().size(100.pct(), 100.pct()))
 }
 
 // ============================================================
