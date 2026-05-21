@@ -17,17 +17,6 @@ use xilem::WidgetView;
 use xilem::{EventLoop, WindowOptions, Xilem};
 use ui::{AppState, ViewKind, home_view, document_view};
 
-/// 打开文件对话框
-fn pick_file() -> Option<String> {
-    let file_path = rfd::FileDialog::new()
-        .add_filter("支持的文件", &[
-            "pdf", "epub", "mobi", "cbz", "docx", "xps", "djvu", "tif", "tiff",
-        ])
-        .set_title("选择文档")
-        .pick_file();
-    file_path.map(|p| p.to_string_lossy().to_string())
-}
-
 /// 根视图：根据当前状态切换 Home / Document
 fn app_logic(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
     match state.view {

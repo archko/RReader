@@ -17,7 +17,7 @@ use xilem::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat};
 use xilem::style::Style;
 
 use crate::dao::RecentDao;
-use crate::ui::utils::get_thumbnail_path;
+use crate::ui::utils::{get_thumbnail_path, pick_file};
 use crate::ui::main_viewmodel::PAGE_SIZE;
 use crate::page::{PageRenderState, render_state::process_visible_nodes};
 use image::DynamicImage;
@@ -263,8 +263,15 @@ pub fn home_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
     let toolbar = flex(
         Axis::Horizontal,
         (
-            text_button("打开文档", |_: &mut AppState| {
-                debug!("打开文档 - 待集成文件对话框");
+            text_button("打开文档", |s: &mut AppState| {
+                if let Some(path) = pick_file() {
+                    let title = std::path::Path::new(&path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.clone());
+                    s.start_loading_document(&path);
+                    s.view = ViewKind::Document { path, title };
+                }
             }),
             text_button("清除历史", |s: &mut AppState| {
                 s.home.clear_history();

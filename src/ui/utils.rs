@@ -44,3 +44,17 @@ impl CachedImageData {
         DynamicImage::ImageRgba8(img_buffer)
     }
 }
+
+/// 打开文件对话框，从用户文档目录开始浏览
+pub fn pick_file() -> Option<String> {
+    let mut dialog = rfd::FileDialog::new()
+        .add_filter("支持的文件", &[
+            "pdf", "epub", "mobi", "cbz", "docx", "xps", "djvu", "tif", "tiff",
+        ])
+        .set_title("选择文档");
+    if let Some(doc_dir) = dirs::document_dir() {
+        dialog = dialog.set_directory(doc_dir);
+    }
+    let file_path = dialog.pick_file();
+    file_path.map(|p| p.to_string_lossy().to_string())
+}
