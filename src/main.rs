@@ -4,6 +4,7 @@
 
 use log::info;
 use xilem::masonry::dpi::LogicalSize;
+use xilem::palette;
 
 mod cache;
 mod dao;
@@ -58,7 +59,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             900.0,
             700.0,
         )),
-    );
+    )
+    .with_default_base_color(palette::css::WHITE);
     app.run_in(EventLoop::with_user_event())?;
 
     Ok(())

@@ -93,7 +93,6 @@ pub fn document_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> 
         (
             text_button("← 返回", |s: &mut AppState| s.back_to_home()),
             label(format!("📂 {}", path))
-                .color(palette::css::DIM_GRAY)
                 .padding(Length::const_px(4.0)),
             label("").flex(1.0),
             text_button("◀", |s: &mut AppState| s.prev_page()),
@@ -108,8 +107,7 @@ pub fn document_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> 
             text_button("🔍+", |s: &mut AppState| s.zoom_in()),
         ),
     )
-    .padding(Length::const_px(8.0))
-    .background(palette::css::WHITE);
+    .padding(Length::const_px(8.0));
 
     // ---- 大纲面板 + 主区域 ----
     let outline_items = state.page_render_state.read().outline_items.clone();
@@ -130,15 +128,13 @@ pub fn document_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> 
                     s.document_ui.outline_visible = false;
                 }),
             ))
-            .padding(Length::const_px(8.0))
-            .background(palette::css::WHITE),
+            .padding(Length::const_px(8.0)),
             // 条目列表
             flex(Axis::Vertical, outline_items.iter().map(|item| {
                 label(format!("{}{}", "  ".repeat(item.level as usize), item.title))
                     .padding(Length::const_px(4.0))
             }).collect::<Vec<_>>()).flex(1.0),
-        ))
-        .background(palette::css::WHITE_SMOKE);
+        ));
 
         sized_box(panel).boxed()
     } else {
