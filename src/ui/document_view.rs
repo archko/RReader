@@ -2,7 +2,6 @@ use xilem::masonry::layout::Length;
 use xilem::view::{flex, label, sized_box, text_button, FlexExt};
 use xilem::WidgetView;
 use xilem::masonry::kurbo::Axis;
-use xilem::palette;
 use xilem::style::Style;
 
 use super::home_view::{AppState, ViewKind};
@@ -87,41 +86,47 @@ pub fn document_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> 
     let page_total = state.page_render_state.read().pages.len();
     let page_current = state.page_render_state.read().visible_pages.first().copied().unwrap_or(0) + 1;
 
-    // ---- 顶部工具栏（不含大纲） ----
+    // ---- 顶部工具栏 ----
     let toolbar = flex(
         Axis::Horizontal,
         (
-            text_button("← 返回", |s: &mut AppState| s.back_to_home()),
-            label(format!("📂 {}", path))
-                .padding(Length::const_px(4.0)),
+            text_button("←", |s: &mut AppState| s.back_to_home()),
+            label(format!("📂 {}", path)),
             label("").flex(1.0),
             text_button("◀", |s: &mut AppState| s.prev_page()),
             label(format!("{}/{}", page_current, page_total)),
             text_button("▶", |s: &mut AppState| s.next_page()),
-            label("").padding(Length::const_px(4.0)),
             text_button("方向", |s: &mut AppState| s.toggle_orientation()),
             text_button("切边", |s: &mut AppState| s.toggle_crop()),
-            text_button("AI", |_| log::debug!("AI")),
-            text_button("书签", |_| log::debug!("书签")),
             text_button("🔍−", |s: &mut AppState| s.zoom_out()),
             text_button("🔍+", |s: &mut AppState| s.zoom_in()),
         ),
     )
-    .padding(Length::const_px(8.0));
+    .padding(Length::const_px(4.0));
 
     // ---- 大纲面板 + 主区域 ----
     let outline_items = state.page_render_state.read().outline_items.clone();
 
-    // 大纲切换按钮（始终显示）
     let toggle_btn = text_button("☰", |s: &mut AppState| {
         s.document_ui.outline_visible = !s.document_ui.outline_visible;
     })
     .padding(Length::const_px(4.0));
 
-    // 大纲面板（条件显示）
     let outline_panel = if state.document_ui.outline_visible {
+        let items: Vec<_> = outline_items.iter().map(|item| {
+            let page = item.page;
+            text_button(
+                format!("{}{}", "  ".repeat(item.level as usize), item.title),
+                move |s: &mut AppState| {
+                    s.page_render_state.jump_to_page(page.saturating_sub(1) as usize);
+                    process_visible_nodes(&s.page_render_state);
+                },
+            )
+            .padding(Length::const_px(2.0))
+            .boxed()
+        }).collect();
+
         let panel = flex(Axis::Vertical, (
-            // 面板标题栏
             flex(Axis::Horizontal, (
                 label("大纲").flex(1.0),
                 text_button("✕", |s: &mut AppState| {
@@ -129,11 +134,7 @@ pub fn document_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> 
                 }),
             ))
             .padding(Length::const_px(8.0)),
-            // 条目列表
-            flex(Axis::Vertical, outline_items.iter().map(|item| {
-                label(format!("{}{}", "  ".repeat(item.level as usize), item.title))
-                    .padding(Length::const_px(4.0))
-            }).collect::<Vec<_>>()).flex(1.0),
+            flex(Axis::Vertical, items).flex(1.0),
         ));
 
         sized_box(panel).boxed()

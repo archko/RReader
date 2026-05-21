@@ -4,6 +4,11 @@
 
 use log::info;
 use xilem::masonry::dpi::LogicalSize;
+use xilem::masonry::layout::AsUnit;
+use xilem::masonry::peniko::Color;
+use xilem::masonry::properties::{Background, BorderColor, ContentColor, Padding};
+use xilem::masonry::theme::default_property_set;
+use xilem::masonry::widgets::{Button, Label};
 use xilem::palette;
 
 mod cache;
@@ -52,6 +57,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 启动 Xilem UI
     let state = AppState::default();
+
+    let mut theme = default_property_set();
+    theme.insert::<Button, _>(Background::Color(palette::css::WHITE));
+    theme.insert::<Button, _>(BorderColor { color: palette::css::GAINSBORO });
+    theme.insert::<Button, _>(Padding::from_vh(2.px(), 4.px()));
+    theme.insert::<Label, _>(ContentColor::new(Color::from_rgb8(0x33, 0x33, 0x33)));
+
     let app = Xilem::new_simple(
         state,
         app_logic,
@@ -60,7 +72,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             700.0,
         )),
     )
-    .with_default_base_color(palette::css::WHITE);
+    .with_default_base_color(palette::css::WHITE)
+    .with_default_properties(theme);
     app.run_in(EventLoop::with_user_event())?;
 
     Ok(())
