@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use log::info;
 use xilem::masonry::imaging::Painter;
 use xilem::masonry::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat, Color, Fill};
 use xilem::masonry::kurbo::Affine;
@@ -299,7 +300,7 @@ pub struct TileConfig {
 
 impl TileConfig {
     const MIN_BLOCK: f32 = 256.0;
-    const MAX_BLOCK: f32 = 512.0;
+    const MAX_BLOCK: f32 = 5512.0;
 
     pub fn from_size(width: f32, height: f32) -> Self {
         if width <= Self::MAX_BLOCK && height <= Self::MAX_BLOCK {

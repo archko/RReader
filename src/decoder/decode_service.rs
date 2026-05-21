@@ -36,6 +36,8 @@ pub struct RenderPage {
     pub crop: i32,
     pub task_type: TaskType,
     pub callback: Option<DecodeCallbackRef>,
+    /// 节点在原始PDF坐标系中的区域（Node任务使用），None表示渲染整页
+    pub region: Option<Rect>,
 }
 
 impl std::fmt::Debug for RenderPage {
@@ -46,6 +48,7 @@ impl std::fmt::Debug for RenderPage {
             .field("crop", &self.crop)
             .field("task_type", &self.task_type)
             .field("has_callback", &self.callback.is_some())
+            .field("region", &self.region)
             .finish()
     }
 }
@@ -172,7 +175,16 @@ impl DecodeService {
                 let render_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     if let Some(ref dec) = decoder {
                         let start = Instant::now();
-                        match dec.render_page(&render_page.page_info, render_page.crop != 0) {
+                        let result = if render_page.task_type == TaskType::Node {
+                            if let Some(region) = render_page.region {
+                                dec.render_region(render_page.page_info.index, region, render_page.page_info.scale)
+                            } else {
+                                dec.render_page(&render_page.page_info, render_page.crop != 0)
+                            }
+                        } else {
+                            dec.render_page(&render_page.page_info, render_page.crop != 0)
+                        };
+                        match result {
                             Ok((image_data, width, height)) => {
                                 let links = dec.get_page_links(render_page.page_info.index)
                                     .unwrap_or_default();
@@ -190,8 +202,20 @@ impl DecodeService {
                 match render_result {
                     Ok(Some((key, page_info, image_data, width, height, links, dur))) => {
                         duration = dur;
-                        info!("页面 {} 解码完成，耗时: {:?}, links: {}",
-                            page_info.index, duration, links.len());
+                        let task_label = match render_page.task_type {
+                            TaskType::Node => {
+                                if let Some(region) = render_page.region {
+                                    format!("Node({:.0},{:.0} {:.0}x{:.0})",
+                                        region.left, region.top, region.width(), region.height())
+                                } else {
+                                    "Node".into()
+                                }
+                            }
+                            TaskType::Crop => "Crop".into(),
+                            TaskType::Page => "Page".into(),
+                        };
+                        info!("[{}] 页面 {} 解码完成，耗时: {:?}, links: {}",
+                            task_label, page_info.index, duration, links.len());
                         if let Some(ref cb) = render_page.callback {
                             cb.on_completed(DecodeResult {
                                 key, page_info, image_data,

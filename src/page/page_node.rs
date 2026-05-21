@@ -1,6 +1,7 @@
+use log::info;
 use xilem::masonry::imaging::Painter;
 use xilem::masonry::peniko::{Blob, Brush, ImageAlphaType, ImageBrush, ImageData, ImageFormat};
-use xilem::masonry::kurbo::Rect as KurboRect;
+use xilem::masonry::kurbo::{Affine, Rect as KurboRect, Vec2};
 use std::sync::Arc;
 
 use crate::decoder::{Rect, PageInfo};
@@ -96,20 +97,40 @@ impl PageNode {
         }
 
         // 绘制坐标 = pixel_rect - scroll（视口位置）
+        let draw_left = pixel_rect.left - scroll_x;
+        let draw_top = pixel_rect.top - scroll_y;
+        let draw_right = pixel_rect.right - scroll_x;
+        let draw_bottom = pixel_rect.bottom - scroll_y;
+        let draw_width = draw_right - draw_left;
+        let draw_height = draw_bottom - draw_top;
+
         let draw_rect = KurboRect::new(
-            (pixel_rect.left - scroll_x) as f64,
-            (pixel_rect.top - scroll_y) as f64,
-            (pixel_rect.right - scroll_x) as f64,
-            (pixel_rect.bottom - scroll_y) as f64,
+            draw_left as f64,
+            draw_top as f64,
+            draw_right as f64,
+            draw_bottom as f64,
         );
         let img = self.bitmap.clone().or_else(|| cache.get_page_image_by_key(&self.cache_key));
         if let Some(img_arc) = img {
             let rgba = img_arc.to_rgba8();
-            let (w, h) = rgba.dimensions();
+            let (img_w, img_h) = rgba.dimensions();
             let data = Blob::from(rgba.into_raw());
-            let image_data = ImageData { data, format: ImageFormat::Rgba8, alpha_type: ImageAlphaType::Alpha, width: w, height: h };
+            let image_data = ImageData { data, format: ImageFormat::Rgba8, alpha_type: ImageAlphaType::Alpha, width: img_w, height: img_h };
             let brush: Brush = ImageBrush::new(image_data).into();
-            painter.fill(draw_rect, &brush).draw();
+
+            // brush_transform 将视口坐标映射到图片的子区域坐标
+            // ImageBrush 默认以视口绝对坐标采样，当页面不在 (0,0) 时图片偏移
+            let norm_width = self.bounds.right - self.bounds.left;
+            let norm_height = self.bounds.bottom - self.bounds.top;
+            let scale_x = norm_width * img_w as f32 / draw_width;
+            let scale_y = norm_height * img_h as f32 / draw_height;
+            let trans_x = self.bounds.left * img_w as f32 - draw_left * scale_x;
+            let trans_y = self.bounds.top * img_h as f32 - draw_top * scale_y;
+
+            let brush_transform = Affine::scale_non_uniform(scale_x as f64, scale_y as f64)
+                .pre_translate(Vec2::new(trans_x as f64, trans_y as f64));
+
+            painter.fill(draw_rect, &brush).brush_transform(Some(brush_transform)).draw();
         }
     }
 
@@ -119,12 +140,33 @@ impl PageNode {
         if self.is_decoding || self.bitmap.is_some() {
             return;
         }
+        let scale = _page_info.scale;
+        let offset_x = if _crop != 0 {
+            if let Some(crop) = _page_info.crop_bounds { crop.left * scale } else { 0.0 }
+        } else {
+            0.0
+        };
+        let offset_y = if _crop != 0 {
+            if let Some(crop) = _page_info.crop_bounds { crop.top * scale } else { 0.0 }
+        } else {
+            0.0
+        };
+        let region = Rect::new(
+            self.bounds.left * _page_width + offset_x,
+            self.bounds.top * _page_height + offset_y,
+            self.bounds.right * _page_width + offset_x,
+            self.bounds.bottom * _page_height + offset_y,
+        );
+        info!("[PageNode] decode key={} bounds={:?} region={:?} page={}x{} crop_offset=({}, {})",
+            self.cache_key, self.bounds, region, _page_width, _page_height,
+            offset_x, offset_y);
         decode_service.render_pages(vec![RenderPage {
             key: self.cache_key.clone(),
             page_info: _page_info.clone(),
             crop: _crop,
             task_type: TaskType::Node,
             callback: Some(callback),
+            region: Some(region),
         }]);
         self.is_decoding = true;
     }

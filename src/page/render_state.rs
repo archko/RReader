@@ -294,14 +294,15 @@ pub fn process_visible_nodes(state: &Arc<PageRenderState>) {
                             node_key: None,
                             cache_key: thumb_key,
                         })),
+                        region: None,
                     }]);
                 }
             }
 
-            /*page.update_visible_nodes(
+            page.update_visible_nodes(
                 &visible_rect, &state.decode_service, &state.cache,
                 crop, zoom, orientation, Arc::clone(state),
-            );*/
+            );
         }
     }
 

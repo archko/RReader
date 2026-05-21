@@ -198,7 +198,6 @@ impl Decoder for PdfDecoder {
     }
 
     fn render_page(&self, page: &PageInfo, crop: bool) -> Result<(Vec<u8>, u32, u32)> {
-        debug!("Rendering page {} with crop={}", page.index, crop);
         let document = self.document.borrow();
         let mupdf_page = document.load_page(page.index as i32)?;
 
@@ -211,6 +210,7 @@ impl Decoder for PdfDecoder {
 
         let scale = page.scale * 2.0; // DPI scale for retina
         let matrix = Matrix::new(scale, 0.0, 0.0, scale, 0.0, 0.0);
+        info!("Rendering page {} bounds={}x{}, scale={}", page.index, bounds.width(), bounds.height(), scale);
 
         let width = ((bounds.width()) * scale) as i32;
         let height = ((bounds.height()) * scale) as i32;
@@ -229,16 +229,21 @@ impl Decoder for PdfDecoder {
         let document = self.document.borrow();
         let page = document.load_page(page_index as i32)?;
 
-        let dpi_scale = 2.0;
-        let final_scale = scale * dpi_scale;
+        // region 在显示像素坐标中 (displayed pixel coords), patchX=region.left, patchY=region.top
+        // CTM = [[scale, 0, -patchX], [0, scale, -patchY]]
+        // 输出图像尺寸 = region 的像素宽高 (无DPI加倍, 与Kotlin一致)
+        let out_width = region.width() as u32;
+        let out_height = region.height() as u32;
 
-        // 创建变换矩阵，包含偏移
-        let mut matrix = Matrix::new(final_scale, 0.0, 0.0, final_scale, 0.0, 0.0);
-        matrix.e = -region.left * final_scale;
-        matrix.f = -region.top * final_scale;
+        info!("render_region page={} region=({:.1},{:.1},{:.1},{:.1}) scale={} out={}x{}",
+            page_index, region.left, region.top, region.right, region.bottom, scale, out_width, out_height);
 
-        let width = (region.width() * final_scale) as i32;
-        let height = (region.height() * final_scale) as i32;
+        let mut matrix = Matrix::new(scale, 0.0, 0.0, scale, 0.0, 0.0);
+        matrix.e = -region.left;
+        matrix.f = -region.top;
+
+        let width = out_width as i32;
+        let height = out_height as i32;
 
         let colorspace = Colorspace::device_rgb();
         let mut pixmap = Pixmap::new(&colorspace, 0, 0, width, height, true)?;
