@@ -3,6 +3,7 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock, RwLock};
 
 use floem::ext_event::{register_ext_trigger, create_trigger, ExtSendTrigger};
+use floem::peniko::{Blob, ImageAlphaType, ImageData};
 
 use anyhow::Result;
 use log::{debug, info};
@@ -19,7 +20,6 @@ pub enum Orientation {
     Horizontal,
 }
 
-/// 页面视图状态 - 与 PageRenderState 相同设计模式
 /// 使用 RwLock<Inner> 保证线程安全，供回调线程和 UI 线程共享
 pub struct PageViewState {
     pub decode_service: Arc<DecodeService>,
@@ -68,45 +68,39 @@ impl DecodeCallback for PageCallback {
     fn on_completed(&self, result: DecodeResult) {
         if result.key != self.cache_key { return; }
 
-        // 将原始 RGBA 数据转换为 DynamicImage
-        let rgba = image::RgbaImage::from_raw(
-            result.image_width,
-            result.image_height,
-            result.image_data,
-        );
-        let dynamic_image = match rgba {
-            Some(img) => image::DynamicImage::ImageRgba8(img),
-            None => {
-                log::error!("[PageCallback] Failed to create image from raw data");
-                return;
-            }
+        let image_data = ImageData {
+            data: Blob::from(result.image_data),
+            format: floem::peniko::ImageFormat::Rgba8,
+            alpha_type: ImageAlphaType::AlphaPremultiplied,
+            width: result.image_width,
+            height: result.image_height,
         };
 
         match self.node_key {
             Some(nk) => {
-                let arc = self.state.cache.put_page_image_by_key(
+                let img = self.state.cache.put_page_image_by_key(
                     self.cache_key.clone(),
-                    dynamic_image,
+                    image_data,
                 );
                 let mut inner = self.state.write();
                 if let Some(page) = inner.pages.get_mut(self.page_idx) {
                     if let Some(node) = page.visible_nodes.get_mut(&nk) {
                         if node.cache_key == self.cache_key {
-                            node.bitmap = Some(arc);
+                            node.bitmap = Some(img);
                             node.is_decoding = false;
                         }
                     }
                 }
             }
             None => {
-                let arc = self.state.cache.put_thumbnail(
+                let img = self.state.cache.put_thumbnail(
                     self.cache_key.clone(),
-                    dynamic_image,
+                    image_data,
                 );
                 let mut inner = self.state.write();
                 if let Some(page) = inner.pages.get_mut(self.page_idx) {
                     if page.is_thumb_loading {
-                        page.thumb_bitmap = Some(arc);
+                        page.thumb_bitmap = Some(img);
                         page.is_thumb_loading = false;
                     }
                     if !result.links.is_empty() {

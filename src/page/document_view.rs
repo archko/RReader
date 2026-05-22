@@ -51,8 +51,8 @@ fn create_document_toolbar(
             }
         });
 
-    let prev_button = Button::new("◀ Prev")
-        .style(|s| s.padding(8.0).min_width(70.0))
+    let prev_button = Button::new("Prev")
+        .style(|s| s.padding(4).min_width(60.0))
         .on_event(listener::Click, {
             let state = state.clone();
             let current_page = current_page.clone();
@@ -68,7 +68,7 @@ fn create_document_toolbar(
             }
         });
 
-    let next_button = Button::new("Next ▶")
+    let next_button = Button::new("Next")
         .style(|s| s.padding(4).min_width(60.0))
         .on_event(listener::Click, {
             let state = state.clone();
@@ -103,7 +103,7 @@ fn create_document_toolbar(
         });
 
     let zoom_out_button = Button::new("Zoom -")
-        .style(|s| s.padding(4.0).min_width(70.0))
+        .style(|s| s.padding(4.0).min_width(60.0))
         .on_event(listener::Click, {
             let zoom_level = zoom_level.clone();
             let state = state.clone();

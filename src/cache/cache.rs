@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use image::DynamicImage;
+use floem::peniko::ImageData;
 
 pub struct ImageCache {
     cache: Arc<Mutex<HashMap<String, CachedImage>>>,
@@ -9,7 +9,7 @@ pub struct ImageCache {
 
 #[derive(Clone)]
 pub struct CachedImage {
-    pub image: Arc<DynamicImage>,
+    pub image: ImageData,
     pub timestamp: std::time::Instant,
     pub access_count: u64,
 }
@@ -22,7 +22,7 @@ impl ImageCache {
         }
     }
 
-    pub fn get(&self, key: &str) -> Option<Arc<DynamicImage>> {
+    pub fn get(&self, key: &str) -> Option<ImageData> {
         let mut cache = self.cache.lock().unwrap();
 
         if let Some(cached) = cache.get_mut(key) {
@@ -34,21 +34,20 @@ impl ImageCache {
         None
     }
 
-    pub fn put(&self, key: String, image: DynamicImage) -> Arc<DynamicImage> {
+    pub fn put(&self, key: String, image: ImageData) -> ImageData {
         let mut cache = self.cache.lock().unwrap();
 
-        // 如果缓存已满，清理最久未使用的项
         if cache.len() >= self.max_size {
             self.evict_lru(&mut cache);
         }
 
+        let image_ref = image.clone();
         let cached_image = CachedImage {
-            image: Arc::new(image),
+            image,
             timestamp: std::time::Instant::now(),
             access_count: 1,
         };
 
-        let image_ref = cached_image.image.clone();
         cache.insert(key, cached_image);
 
         image_ref
@@ -100,7 +99,7 @@ impl PageCache {
         }
     }
 
-    pub fn get_page_image(&self, page_index: usize, zoom: f32) -> Option<Arc<DynamicImage>> {
+    pub fn get_page_image(&self, page_index: usize, zoom: f32) -> Option<ImageData> {
         let key = format!("page_{}_{:.2}", page_index, zoom);
         self.image_cache.get(&key)
     }
@@ -109,27 +108,25 @@ impl PageCache {
         &self,
         page_index: usize,
         zoom: f32,
-        image: DynamicImage,
-    ) -> Arc<DynamicImage> {
+        image: ImageData,
+    ) -> ImageData {
         let key = format!("page_{}_{:.2}", page_index, zoom);
         self.image_cache.put(key, image)
     }
 
-    /// 通过缓存key获取瓦片图像
-    pub fn get_page_image_by_key(&self, key: &str) -> Option<Arc<DynamicImage>> {
+    pub fn get_page_image_by_key(&self, key: &str) -> Option<ImageData> {
         self.image_cache.get(key)
     }
 
-    /// 通过缓存key存储瓦片图像
-    pub fn put_page_image_by_key(&self, key: String, image: DynamicImage) -> Arc<DynamicImage> {
+    pub fn put_page_image_by_key(&self, key: String, image: ImageData) -> ImageData {
         self.image_cache.put(key, image)
     }
 
-    pub fn get_thumbnail(&self, key: &str) -> Option<Arc<DynamicImage>> {
+    pub fn get_thumbnail(&self, key: &str) -> Option<ImageData> {
         self.thumbnail_cache.get(key)
     }
 
-    pub fn put_thumbnail(&self, key: String, image: DynamicImage) -> Arc<DynamicImage> {
+    pub fn put_thumbnail(&self, key: String, image: ImageData) -> ImageData {
         self.thumbnail_cache.put(key, image)
     }
 

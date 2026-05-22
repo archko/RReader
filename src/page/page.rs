@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use floem::context::PaintCx;
 use floem::kurbo::Rect as KurboRect;
-use floem::peniko::{Blob, Color, ImageAlphaType, ImageData};
+use floem::peniko::{Color, ImageData};
 use floem::Renderer;
 use log::info;
 
@@ -24,7 +24,7 @@ pub struct Page {
     pub height: f32,
     pub is_decoding: bool,
 
-    pub thumb_bitmap: Option<Arc<image::DynamicImage>>,
+    pub thumb_bitmap: Option<ImageData>,
     pub is_thumb_loading: bool,
     pub x_offset: f32,
     pub y_offset: f32,
@@ -187,10 +187,10 @@ impl Page {
         // Draw thumbnail (background)
         let thumb_key = format!("thumb-{}-{}", self.info.index, self.crop);
         if let Some(img) = cache.get_thumbnail(&thumb_key) {
-            draw_image(cx, &*img, bx, by, bw, bh, "");
+            draw_image(cx, &img, bx, by, bw, bh, "");
         } else {
-            let rect = KurboRect::from_origin_size((bx, by), (bw, bh));
-            cx.fill(&rect, Color::from_rgb8(240, 240, 240), 0.0);
+            //let rect = KurboRect::from_origin_size((bx, by), (bw, bh));
+            //cx.fill(&rect, Color::from_rgb8(240, 240, 240), 0.0);
         }
 
         // Draw visible nodes (tiles)
@@ -251,30 +251,18 @@ impl Page {
 
 fn draw_image(
     cx: &mut PaintCx,
-    dynamic_img: &image::DynamicImage,
+    image_data: &ImageData,
     x: f64,
     y: f64,
     w: f64,
     h: f64,
     cache_key: &str,
 ) {
-    let rgba = dynamic_img.to_rgba8();
-    let (img_w, img_h) = rgba.dimensions();
-    let blob = Blob::new(Arc::new(rgba.into_raw()));
-
-    let image_data = ImageData {
-        data: blob,
-        format: floem::peniko::ImageFormat::Rgba8,
-        alpha_type: ImageAlphaType::AlphaPremultiplied,
-        width: img_w,
-        height: img_h,
-    };
-
     let mut hasher = DefaultHasher::new();
     cache_key.hash(&mut hasher);
     let hash_val = hasher.finish().to_le_bytes();
 
-    let image_brush = floem::peniko::ImageBrush::new(image_data);
+    let image_brush = floem::peniko::ImageBrush::new(image_data.clone());
     let rect = KurboRect::from_origin_size((x, y), (w, h));
 
     cx.draw_img(

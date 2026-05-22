@@ -1,6 +1,7 @@
 use log::info;
 use std::sync::Arc;
 
+use floem::peniko::ImageData;
 use crate::decoder::{Rect, PageInfo};
 use crate::decoder::decode_service::{DecodeService, RenderPage, TaskType, DecodeCallbackRef};
 use crate::cache::PageCache;
@@ -9,7 +10,7 @@ pub struct PageNode {
     pub page_index: usize,
     pub bounds: Rect,
     pub cache_key: String,
-    pub bitmap: Option<Arc<image::DynamicImage>>,
+    pub bitmap: Option<ImageData>,
     pub is_decoding: bool,
     cached_pixel_rect: Option<Rect>,
     cached_page_size: Option<(f32, f32, f32, f32)>,
