@@ -39,8 +39,8 @@ fn create_document_toolbar(
 ) -> impl IntoView {
     let state = page_view_state.clone();
 
-    let back_button = Button::new("← Back")
-        .style(|s| s.padding(8.0).min_width(70.0))
+    let back_button = Button::new("Back")
+        .style(|s| s.padding(4.0).min_width(60.0))
         .on_event(listener::Click, {
             let state = state.clone();
             let document_opened = document_opened.clone();
@@ -69,7 +69,7 @@ fn create_document_toolbar(
         });
 
     let next_button = Button::new("Next ▶")
-        .style(|s| s.padding(8.0).min_width(70.0))
+        .style(|s| s.padding(4).min_width(60.0))
         .on_event(listener::Click, {
             let state = state.clone();
             let current_page = current_page.clone();
@@ -88,7 +88,7 @@ fn create_document_toolbar(
         });
 
     let zoom_in_button = Button::new("Zoom +")
-        .style(|s| s.padding(8.0).min_width(70.0))
+        .style(|s| s.padding(4.0).min_width(60.0))
         .on_event(listener::Click, {
             let zoom_level = zoom_level.clone();
             let state = state.clone();
@@ -103,7 +103,7 @@ fn create_document_toolbar(
         });
 
     let zoom_out_button = Button::new("Zoom -")
-        .style(|s| s.padding(8.0).min_width(70.0))
+        .style(|s| s.padding(4.0).min_width(70.0))
         .on_event(listener::Click, {
             let zoom_level = zoom_level.clone();
             let state = state.clone();
@@ -127,7 +127,7 @@ fn create_document_toolbar(
                 zoom_level.get() * 100.0
             )
         })
-        .style(|s| s.padding_right(8.0)),
+        .style(|s| s.padding_right(4.0)),
         Container::new(Label::derived(move || file_path.get()))
             .style(|s| {
                 s.flex_grow(1.0)
@@ -138,7 +138,7 @@ fn create_document_toolbar(
         zoom_out_button,
         zoom_in_button,
     ))
-    .style(|s| s.padding(10.0).gap(10.0))
+    .style(|s| s.padding(8.0).gap(8.0))
 }
 
 // ============================================================
@@ -182,6 +182,8 @@ pub fn create_document_view(data: DocumentViewData) -> impl IntoView {
     // --- 视口大小变化监听 ---
     let state_for_resize = page_view_state.clone();
     let trigger_for_resize = decode_refresh_trigger.clone();
+    let info_trigger_for_resize = doc_info_trigger.clone();
+    let pc = page_count.clone();
     Effect::new(move |_| {
         let (width, height) = viewport_size.get();
         if width > 0.0 && height > 0.0 {
@@ -191,7 +193,8 @@ pub fn create_document_view(data: DocumentViewData) -> impl IntoView {
             };
             state_for_resize.update_view_size(width as f32, height as f32, zoom, false);
             state_for_resize.process_visible_nodes();
-            page_count.set(state_for_resize.read().pages.len() as i32);
+            pc.set(state_for_resize.read().pages.len() as i32);
+            info_trigger_for_resize.update(|v| *v += 1);
             trigger_for_resize.update(|v| *v += 1);
         }
     });

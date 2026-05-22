@@ -32,11 +32,12 @@ pub struct Page {
     pub base_zoom: f32,
     pub links_loaded: bool,
     pub tile_config: TileConfig,
+    pub crop: i32,
     node_pool: PageNodePool,
 }
 
 impl Page {
-    pub fn new(info: PageInfo, width: f32, height: f32, x_offset: f32, y_offset: f32, base_zoom: f32) -> Self {
+    pub fn new(info: PageInfo, width: f32, height: f32, x_offset: f32, y_offset: f32, base_zoom: f32, crop: i32) -> Self {
         let bounds = Rect::new(x_offset, y_offset, x_offset + width, y_offset + height);
         let tile_config = TileConfig::from_size(width, height);
         let total_scale = if width > 0.0 { width / info.width } else { 1.0 };
@@ -56,6 +57,7 @@ impl Page {
             base_zoom,
             links_loaded: false,
             tile_config,
+            crop,
             node_pool: PageNodePool::new(),
         }
     }
@@ -183,7 +185,7 @@ impl Page {
         let bh = self.height as f64;
 
         // Draw thumbnail (background)
-        let thumb_key = format!("{}-{}-{}", self.info.index, self.info.width, self.info.height);
+        let thumb_key = format!("thumb-{}-{}", self.info.index, self.crop);
         if let Some(img) = cache.get_thumbnail(&thumb_key) {
             draw_image(cx, &*img, bx, by, bw, bh, "");
         } else {

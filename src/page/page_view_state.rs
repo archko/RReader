@@ -39,6 +39,7 @@ pub(crate) struct Inner {
     pub crop: i32,
     pub preload_screens: f32,
     pub outline_items: Vec<OutlineItem>,
+    pub view_offset: (f32, f32),
 }
 
 // ===== PageCallback - 解码回调 =====
@@ -152,6 +153,7 @@ impl PageViewState {
                 crop,
                 preload_screens: 1.0,
                 outline_items: Vec::new(),
+                view_offset: (0.0, 0.0),
             }),
             self_arc: OnceLock::new(),
         }
@@ -178,9 +180,10 @@ impl PageViewState {
 
     /// 从 PageInfo 列表设置页面
     pub fn set_pages_from_info(&self, pages_info: Vec<PageInfo>) {
+        let crop = { self.read().crop };
         let pages: Vec<Page> = pages_info
             .into_iter()
-            .map(|info| Page::new(info, 0.0, 0.0, 0.0, 0.0, 1.0))
+            .map(|info| Page::new(info, 0.0, 0.0, 0.0, 0.0, 1.0, crop))
             .collect();
         let mut inner = self.inner.write().unwrap();
         inner.pages = pages;
@@ -203,7 +206,7 @@ impl PageViewState {
 
     pub fn update_offset(&self, x: f32, y: f32) {
         let mut inner = self.inner.write().unwrap();
-        // 布局偏移通过重新计算可见页来实现
+        inner.view_offset = (x, y);
         let visible_rect = compute_visible_rect(
             (x, y), inner.view_size, inner.orientation, inner.preload_screens,
         );
@@ -235,6 +238,10 @@ impl PageViewState {
             return;
         }
         let page_bounds = inner.pages[page_index].bounds;
+        inner.view_offset = match inner.orientation {
+            Orientation::Vertical => (0.0, page_bounds.top),
+            Orientation::Horizontal => (page_bounds.left, 0.0),
+        };
         // 重新计算可见范围，以目标页面为中心
         let visible_rect = match inner.orientation {
             Orientation::Vertical => {
@@ -333,7 +340,7 @@ impl PageViewState {
         let old_visible = std::mem::take(&mut inner.visible_pages);
 
         let visible_rect = compute_visible_rect(
-            (0.0, 0.0), inner.view_size, inner.orientation, inner.preload_screens,
+            inner.view_offset, inner.view_size, inner.orientation, inner.preload_screens,
         );
 
         let first = find_first_visible(&inner.pages, &visible_rect, inner.orientation);
@@ -384,7 +391,7 @@ impl PageViewState {
         let self_arc = self.self_arc.get().expect("self_arc not initialized");
         let mut inner = self.inner.write().unwrap();
         let visible_rect = compute_visible_rect(
-            (0.0, 0.0), inner.view_size, inner.orientation, inner.preload_screens,
+            inner.view_offset, inner.view_size, inner.orientation, inner.preload_screens,
         );
         let crop = inner.crop;
         let zoom = inner.zoom;
