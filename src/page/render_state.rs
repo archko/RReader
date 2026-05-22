@@ -20,6 +20,8 @@ pub struct PageRenderState {
     pub decode_service: Arc<DecodeService>,
     pub cache: PageCache,
     pub repaint_needed: AtomicBool,
+    // 👇 新增：用于存放唤醒 UI 的跨线程回调
+    pub wake_up_ui: RwLock<Option<Arc<dyn Fn() + Send + Sync>>>,
     inner: RwLock<Inner>,
 }
 
@@ -95,7 +97,10 @@ impl DecodeCallback for PageCallback {
                 }
             }
         }
-        self.state.repaint_needed.store(true, Ordering::Release);
+        //self.state.repaint_needed.store(true, Ordering::Release);
+        self.state.repaint_needed.store(true, Ordering::SeqCst);
+        // 解码完成，立刻跨线程拍醒主线程的事件循环
+        self.state.wake_ui(); 
     }
 
     fn on_error(&self, _page_idx: usize) {
@@ -118,8 +123,9 @@ impl PageRenderState {
     pub fn new() -> Self {
         Self {
             decode_service: Arc::new(DecodeService::new()),
-            cache: PageCache::new(24, 10),
+            cache: PageCache::new(32, 20),
             repaint_needed: AtomicBool::new(false),
+            wake_up_ui: RwLock::new(None),
             inner: RwLock::new(Inner {
                 pages: Vec::new(),
                 view_offset: (0.0, 0.0),
@@ -133,6 +139,19 @@ impl PageRenderState {
                 preload_screens: 1.0,
                 outline_items: Vec::new(),
             }),
+        }
+    }
+    
+    // 👇 新增：允许 UI 视图在构建时注册唤醒函数
+    pub fn set_wake_up_callback(&self, callback: impl Fn() + Send + Sync + 'static) {
+        let mut wake = self.wake_up_ui.write().unwrap();
+        *wake = Some(Arc::new(callback));
+    }
+
+    // 👇 新增：触发唤醒
+    pub fn wake_ui(&self) {
+        if let Some(callback) = self.wake_up_ui.read().unwrap().as_ref() {
+            callback();
         }
     }
 

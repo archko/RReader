@@ -4,10 +4,11 @@ use std::sync::atomic::Ordering;
 
 use tracing::{Span, trace_span};
 
+use xilem::masonry::core::keyboard::Key;
 use xilem::masonry::core::{
     AccessCtx, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NoAction, PaintCtx,
     PointerButtonEvent, PointerEvent, PointerScrollEvent, PointerUpdate, ScrollDelta,
-    PropertiesMut, PropertiesRef, RegisterCtx, UpdateCtx, Widget, WidgetId,
+    PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, UpdateCtx, Widget, WidgetId,
 };
 use xilem::masonry::dpi;
 use xilem::masonry::imaging::Painter;
@@ -106,6 +107,10 @@ impl DocumentCanvasWidget {
 impl Widget for DocumentCanvasWidget {
     type Action = NoAction;
 
+    fn accepts_focus(&self) -> bool {
+        true
+    }
+
     fn on_pointer_event(
         &mut self,
         ctx: &mut EventCtx<'_>,
@@ -138,6 +143,7 @@ impl Widget for DocumentCanvasWidget {
                     self.start_pos = (pos.x, pos.y);
                     self.pointer_down_pos = (pos.x, pos.y);
                     self.pointer_down_time = std::time::Instant::now();
+                    ctx.request_focus();
                     ctx.capture_pointer();
                 }
             }
@@ -210,6 +216,32 @@ impl Widget for DocumentCanvasWidget {
             }
 
             _ => {}
+        }
+    }
+
+    fn on_text_event(
+        &mut self,
+        ctx: &mut EventCtx<'_>,
+        _props: &mut PropertiesMut<'_>,
+        event: &TextEvent,
+    ) {
+        if let TextEvent::Keyboard(key_event) = event {
+            if key_event.state.is_up() {
+                return;
+            }
+            match &key_event.key {
+                Key::Character(c) if c == " " => {
+                    let vh = {
+                        let r = self.state.read();
+                        r.view_size.1
+                    };
+                    let scroll_amount = -(vh - 16.0);
+                    if self.apply_scroll(0.0, scroll_amount) {
+                        ctx.request_render();
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -294,11 +326,6 @@ impl Widget for DocumentCanvasWidget {
         _props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        // repaint_needed 由解码回调设置，级联刷新
-        if self.state.repaint_needed.swap(false, Ordering::Acquire) {
-            // 通过 ctx 请求重绘 - PaintCtx 没有 request_render，但我们可以通过其他方式
-        }
-
         let inner = self.state.read();
 
         // 绘制白色背景
@@ -393,8 +420,18 @@ where
     ) -> (Self::Element, Self::ViewState) {
         let proxy = ctx.proxy();
         let path: Arc<[ViewId]> = ctx.view_path().into();
-        let msg_proxy = MessageProxy::<()>::new(proxy, path);
+        let msg_proxy = MessageProxy::<()>::new(proxy.clone(), path.clone());
         let _ = msg_proxy.message(());
+
+        // 创建能够跨线程安全发送消息的代理
+        let msg_proxy = MessageProxy::<()>::new(proxy, path);
+        let msg_proxy_clone = msg_proxy.clone();
+        
+        // 👇 【关键修改】：将代理打包成闭包注册给底层渲染状态
+        self.state.set_wake_up_callback(move || {
+            // 发送一个空消息 () 即可，这会强行将 Winit 事件循环唤醒并导向当前 View 的 message 方法
+            let _ = msg_proxy_clone.message(()); 
+        });
 
         let widget = DocumentCanvasWidget::new(Arc::clone(&self.state));
         (xilem::Pod::new(widget), ())
@@ -408,8 +445,10 @@ where
         mut element: Mut<'_, Self::Element>,
         _state: &mut AppState,
     ) {
-        // 重建时不需要无条件请求动画帧
-        // 由 on_anim_frame 按需请求
+        // 👇 【关键修改】：由于 self.state 是一个 Arc 指针，内部 RwLock 数据变化时
+        // Xilem 无法通过指针比较感知到变化。因此在 View 被 RequestRebuild 触发重建时，
+        // 必须显式强制底层的 Widget 重新绘制，去读缓存里最新的图片
+        element.ctx.request_render();
     }
 
     fn teardown(
@@ -427,7 +466,8 @@ where
         mut element: Mut<'_, Self::Element>,
         _app_state: &mut AppState,
     ) -> MessageResult<()> {
-        // 不无条件请求动画帧，由 widget 的 on_anim_frame 按需处理
-        MessageResult::Nop
+        // 收到消息意味着后台有新的瓦片或页面解码完成了
+        // 返回 RequestRebuild 通知 Xilem 框架重新构建此 View
+        xilem::core::MessageResult::RequestRebuild
     }
 }
