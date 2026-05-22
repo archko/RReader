@@ -416,10 +416,17 @@ pub fn home_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> {
 
     resize_observer(
         |s: &mut AppState, size: Size| {
-            let gap = 32.0_f64;
-            let card = 160.0_f64;
-            let cols = ((size.width - 16.0_f64) / (card + gap)).floor().max(1.0) as i32;
-            // 仅在值真正变化时才更新，避免无限触发 rebuild
+            let card_width = 160.0_f64; // 卡片固定宽度
+            let actual_gap = 8.0_f64;   // 必须与 grid_widget.gap(8.0) 的数值严格一致
+            let padding_x = 20.0_f64;   // 窗口左右总内边距
+
+            // 精确计算：N * card + (N - 1) * gap <= available_width
+            // 移项后：N <= (available_width + gap) / (card + gap)
+            let available_width = size.width - padding_x;
+            let cols = ((available_width + actual_gap) / (card_width + actual_gap))
+                .floor()
+                .max(1.0) as i32;
+
             if s.home.grid_cols != cols {
                 s.home.grid_cols = cols;
             }

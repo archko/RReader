@@ -137,9 +137,9 @@ pub fn document_view(state: &mut AppState) -> impl WidgetView<AppState> + use<> 
             flex(Axis::Vertical, items).flex(1.0),
         ));
 
-        sized_box(panel).boxed()
+        sized_box(panel).width(Length::const_px(250.0)).boxed()
     } else {
-        sized_box(label("")).boxed()
+        sized_box(label("")).width(Length::const_px(0.0)).boxed()
     };
 
     let main_area = flex(Axis::Horizontal, (
