@@ -13,7 +13,7 @@ pub use page_node_pool::PageNodePool;
 pub use page_view_state::PageViewState;
 pub use page_view_state::Orientation;
 pub use page_view_state::PageCallback;
-pub use page_view_state::process_visible_nodes;
+
 pub use history_view::HistoryItem;
 pub use history_view::create_history_view;
 pub use document_view::DocumentViewData;

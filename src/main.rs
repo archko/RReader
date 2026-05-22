@@ -70,7 +70,8 @@ async fn setup_database() -> Result<()> {
 // ============================================================
 
 fn app_view(viewmodel: Rc<RefCell<MainViewmodel>>, initial_history: Vec<HistoryItem>) -> impl IntoView {
-    let page_view_state = Rc::new(RefCell::new(PageViewState::new(Orientation::Vertical, 0)));
+    let page_view_state = Arc::new(PageViewState::new(Orientation::Vertical, 0));
+    page_view_state.init_self_arc(page_view_state.clone());
     let document_opened = RwSignal::new(false);
     let current_page = RwSignal::new(1);
     let zoom_level = RwSignal::new(1.0f32);

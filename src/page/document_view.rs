@@ -1,5 +1,4 @@
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use floem::event::EventPropagation;
 use floem::peniko::kurbo::Vec2;
@@ -14,7 +13,7 @@ use crate::page::PageViewState;
 use crate::page::document_canvas::{create_document_canvas, start_repaint_loop};
 
 pub struct DocumentViewData {
-    pub page_view_state: Rc<RefCell<PageViewState>>,
+    pub page_view_state: Arc<PageViewState>,
     pub document_opened: RwSignal<bool>,
     pub current_page: RwSignal<i32>,
     pub page_count: RwSignal<i32>,
@@ -69,16 +68,13 @@ pub fn create_document_view(data: DocumentViewData) -> impl IntoView {
     Effect::new(move |_| {
         let (width, height) = viewport_size.get();
         if width > 0.0 && height > 0.0 {
-            // 先提取 zoom，避免同时 borrow() 和 borrow_mut()
             let zoom = {
-                let state = state_for_resize.borrow();
-                let inner = state.read();
+                let inner = state_for_resize.read();
                 inner.zoom
             };
-            let mut state = state_for_resize.borrow_mut();
-            state.update_view_size(width as f32, height as f32, zoom, false);
-            state.update_visible_pages();
-            page_count.set(state.read().pages.len() as i32);
+            state_for_resize.update_view_size(width as f32, height as f32, zoom, false);
+            state_for_resize.process_visible_nodes();
+            page_count.set(state_for_resize.read().pages.len() as i32);
             trigger_for_resize.update(|v| *v += 1);
         }
     });
@@ -104,15 +100,13 @@ pub fn create_document_view(data: DocumentViewData) -> impl IntoView {
             let offset_x = -offset.x as f32;
             let offset_y = -offset.y as f32;
 
-            let mut state = state_for_scroll.borrow_mut();
-            state.update_offset(offset_x, offset_y);
-            state.update_visible_pages();
+            state_for_scroll.update_offset(offset_x, offset_y);
+            state_for_scroll.process_visible_nodes();
 
             // 更新当前页码信号
-            if let Some(first_visible) = state.get_first_visible_page() {
+            if let Some(first_visible) = state_for_scroll.get_first_visible_page() {
                 cp.set((first_visible + 1) as i32);
             }
-            drop(state);
 
             info!("[Scroll] offset=({:.0},{:.0})", offset_x, offset_y);
 
@@ -129,7 +123,7 @@ pub fn create_document_view(data: DocumentViewData) -> impl IntoView {
 // ============================================================
 
 fn create_document_toolbar(
-    page_view_state: Rc<RefCell<PageViewState>>,
+    page_view_state: Arc<PageViewState>,
     document_opened: RwSignal<bool>,
     current_page: RwSignal<i32>,
     zoom_level: RwSignal<f32>,
@@ -145,7 +139,7 @@ fn create_document_toolbar(
             let state = state.clone();
             let document_opened = document_opened.clone();
             move |_cx, _event| {
-                state.borrow_mut().shutdown();
+                state.shutdown();
                 document_opened.set(false);
                 EventPropagation::Continue
             }
@@ -161,7 +155,7 @@ fn create_document_toolbar(
                 let new_page = (current_page.get() as usize).saturating_sub(1);
                 if new_page > 0 {
                     current_page.set(new_page as i32);
-                    let _ = state.borrow_mut().jump_to_page(new_page.saturating_sub(1));
+                    let _ = state.jump_to_page(new_page.saturating_sub(1));
                     trigger.update(|v| *v += 1);
                 }
                 EventPropagation::Continue
@@ -180,7 +174,7 @@ fn create_document_toolbar(
                 let max_pages = page_count.get() as usize;
                 if new_page <= max_pages {
                     current_page.set(new_page as i32);
-                    let _ = state.borrow_mut().jump_to_page(new_page.saturating_sub(1));
+                    let _ = state.jump_to_page(new_page.saturating_sub(1));
                     trigger.update(|v| *v += 1);
                 }
                 EventPropagation::Continue
@@ -196,7 +190,7 @@ fn create_document_toolbar(
             move |_cx, _event| {
                 let new_zoom = (zoom_level.get() + 0.1).min(4.0);
                 zoom_level.set(new_zoom);
-                state.borrow().update_zoom(new_zoom);
+                state.update_zoom(new_zoom);
                 trigger.update(|v| *v += 1);
                 EventPropagation::Continue
             }
@@ -211,7 +205,7 @@ fn create_document_toolbar(
             move |_cx, _event| {
                 let new_zoom = (zoom_level.get() - 0.1).max(0.5);
                 zoom_level.set(new_zoom);
-                state.borrow().update_zoom(new_zoom);
+                state.update_zoom(new_zoom);
                 trigger.update(|v| *v += 1);
                 EventPropagation::Continue
             }

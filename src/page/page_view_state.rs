@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, RwLock, atomic::{AtomicBool, Ordering}};
+use std::sync::{Arc, OnceLock, RwLock, atomic::{AtomicBool, Ordering}};
 
 use anyhow::Result;
 use log::{debug, info};
@@ -25,6 +25,7 @@ pub struct PageViewState {
     pub repaint_needed: AtomicBool,
     pub page_links: Arc<std::sync::Mutex<HashMap<usize, Vec<Link>>>>,
     inner: RwLock<Inner>,
+    self_arc: OnceLock<Arc<Self>>,
 }
 
 pub(crate) struct Inner {
@@ -152,6 +153,7 @@ impl PageViewState {
                 preload_screens: 1.0,
                 outline_items: Vec::new(),
             }),
+            self_arc: OnceLock::new(),
         }
     }
 
@@ -166,12 +168,16 @@ impl PageViewState {
     // ===== 文档操作 =====
 
     /// 打开文档（异步，通过 decode_service 加载）
-    pub fn open_document(&mut self, path: &Path) -> Result<()> {
+    pub fn init_self_arc(&self, arc: Arc<Self>) {
+        self.self_arc.set(arc).ok();
+    }
+
+    pub fn open_document(&self, path: &Path) -> Result<()> {
         self.decode_service.load_pdf(path)
     }
 
     /// 从 PageInfo 列表设置页面
-    pub fn set_pages_from_info(&mut self, pages_info: Vec<PageInfo>) {
+    pub fn set_pages_from_info(&self, pages_info: Vec<PageInfo>) {
         let pages: Vec<Page> = pages_info
             .into_iter()
             .map(|info| Page::new(info, 0.0, 0.0, 0.0, 0.0, 1.0))
@@ -293,7 +299,7 @@ impl PageViewState {
 
     // ===== 资源清理 =====
 
-    pub fn shutdown(&mut self) {
+    pub fn shutdown(&self) {
         {
             let mut inner = self.inner.write().unwrap();
             for page in &mut inner.pages {
@@ -373,51 +379,54 @@ fn calculate_thumbnail_scale(page_width: f32, page_height: f32) -> f32 {
 
 // ===== 可见页节点管理 + 解码提交 =====
 
-pub fn process_visible_nodes(state: &Arc<PageViewState>) {
-    let mut inner = state.inner.write().unwrap();
-    let visible_rect = compute_visible_rect(
-        (0.0, 0.0), inner.view_size, inner.orientation, inner.preload_screens,
-    );
-    let crop = inner.crop;
-    let zoom = inner.zoom;
-    let orientation = inner.orientation;
+impl PageViewState {
+    pub fn process_visible_nodes(&self) {
+        let self_arc = self.self_arc.get().expect("self_arc not initialized");
+        let mut inner = self.inner.write().unwrap();
+        let visible_rect = compute_visible_rect(
+            (0.0, 0.0), inner.view_size, inner.orientation, inner.preload_screens,
+        );
+        let crop = inner.crop;
+        let zoom = inner.zoom;
+        let orientation = inner.orientation;
 
-    let visible_pages = inner.visible_pages.clone();
-    for &page_idx in &visible_pages {
-        if let Some(page) = inner.pages.get_mut(page_idx) {
-            let thumb_key = thumbnail_cache_key(page.info.index, crop);
-            if page.thumb_bitmap.is_none() && !page.is_thumb_loading {
-                if let Some(img) = state.cache.get_thumbnail(&thumb_key) {
-                    page.thumb_bitmap = Some(img);
-                } else {
-                    page.is_thumb_loading = true;
-                    let thumb_scale = calculate_thumbnail_scale(page.info.width, page.info.height);
-                    let mut thumb_info = page.info.clone();
-                    thumb_info.scale = thumb_scale;
-                    state.decode_service.render_pages(vec![RenderPage {
-                        key: thumb_key.clone(),
-                        page_info: thumb_info,
-                        crop,
-                        task_type: TaskType::Page,
-                        callback: Some(Arc::new(PageCallback {
-                            state: Arc::clone(state),
-                            page_idx: page.info.index,
-                            node_key: None,
-                            cache_key: thumb_key,
-                        })),
-                        region: None,
-                    }]);
+        let visible_pages = inner.visible_pages.clone();
+        for &page_idx in &visible_pages {
+            if let Some(page) = inner.pages.get_mut(page_idx) {
+                let thumb_key = thumbnail_cache_key(page.info.index, crop);
+                if page.thumb_bitmap.is_none() && !page.is_thumb_loading {
+                    if let Some(img) = self.cache.get_thumbnail(&thumb_key) {
+                        page.thumb_bitmap = Some(img);
+                    } else {
+                        page.is_thumb_loading = true;
+                        let thumb_scale = calculate_thumbnail_scale(page.info.width, page.info.height);
+                        let mut thumb_info = page.info.clone();
+                        thumb_info.scale = thumb_scale;
+                        self.decode_service.render_pages(vec![RenderPage {
+                            key: thumb_key.clone(),
+                            page_info: thumb_info,
+                            crop,
+                            task_type: TaskType::Page,
+                            callback: Some(Arc::new(PageCallback {
+                                state: Arc::clone(self_arc),
+                                page_idx: page.info.index,
+                                node_key: None,
+                                cache_key: thumb_key,
+                            })),
+                            region: None,
+                        }]);
+                    }
                 }
+
+                page.update_visible_nodes(
+                    &visible_rect, &self.decode_service, &self.cache,
+                    crop, zoom, orientation, Arc::clone(self_arc),
+                );
             }
-
-            page.update_visible_nodes(
-                &visible_rect, &state.decode_service, &state.cache,
-                crop, zoom, orientation, Arc::clone(state),
-            );
         }
-    }
 
-    state.repaint_needed.store(true, Ordering::Release);
+        self.repaint_needed.store(true, Ordering::Release);
+    }
 }
 
 // ===== 布局算法 =====

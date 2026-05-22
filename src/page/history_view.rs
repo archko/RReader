@@ -1,6 +1,6 @@
-use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::cell::RefCell;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -40,7 +40,7 @@ pub struct HistoryItem {
 
 pub fn create_history_view(
     history_items: RwSignal<Vec<HistoryItem>>,
-    page_view_state: Rc<RefCell<PageViewState>>,
+    page_view_state: Arc<PageViewState>,
     document_opened: RwSignal<bool>,
     file_path: RwSignal<String>,
     current_page: RwSignal<i32>,
@@ -98,7 +98,7 @@ pub fn create_history_view(
 // ============================================================
 
 fn create_history_toolbar(
-    page_view_state: Rc<RefCell<PageViewState>>,
+    page_view_state: Arc<PageViewState>,
     document_opened: RwSignal<bool>,
     file_path: RwSignal<String>,
     current_page: RwSignal<i32>,
@@ -132,7 +132,7 @@ fn create_history_toolbar(
                     let path_str = path.to_string_lossy().to_string();
                     info!("打开文件: {}", path_str);
 
-                    let result = state.borrow_mut().open_document(&path);
+                    let result = state.open_document(&path);
                     if result.is_ok() {
                         poll_document_load(
                             state.clone(),
@@ -178,7 +178,7 @@ fn create_history_toolbar(
 
 pub fn create_history_card(
     item: HistoryItem,
-    page_view_state: Rc<RefCell<PageViewState>>,
+    page_view_state: Arc<PageViewState>,
     document_opened: RwSignal<bool>,
     file_path: RwSignal<String>,
     current_page: RwSignal<i32>,
@@ -249,7 +249,7 @@ pub fn create_history_card(
         let path = PathBuf::from(&item_path);
         if path.exists() {
             info!("从历史记录打开文件: {}", item_path);
-            let result = page_view_state.borrow_mut().open_document(&path);
+            let result = page_view_state.open_document(&path);
             if result.is_ok() {
                 let path_str = item_path.clone();
                 poll_document_load(
@@ -273,7 +273,7 @@ pub fn create_history_card(
 // ============================================================
 
 pub fn poll_document_load(
-    state: Rc<RefCell<PageViewState>>,
+    state: Arc<PageViewState>,
     document_opened: RwSignal<bool>,
     file_path: RwSignal<String>,
     current_page: RwSignal<i32>,
@@ -282,27 +282,22 @@ pub fn poll_document_load(
     viewmodel: Rc<RefCell<MainViewmodel>>,
     path_str: String,
 ) {
-    let result = {
-        let borrowed = state.borrow();
-        borrowed.decode_service.try_recv_load_result()
-    };
+    let result = state.decode_service.try_recv_load_result();
 
     if let Some(result) = result {
         match result {
             Ok(pages) => {
-                state.borrow_mut().set_pages_from_info(pages);
+                state.set_pages_from_info(pages);
                 // 通过内部 RwLock 读取 Inner 字段
                 let (width, height) = {
-                    let s = state.borrow();
-                    let inner = s.read();
+                    let inner = state.read();
                     (inner.view_size.0, inner.view_size.1)
                 };
 
-                state.borrow().update_view_size(width, height, 1.0, true);
+                state.update_view_size(width, height, 1.0, true);
 
                 page_count.set({
-                    let s = state.borrow();
-                    let inner = s.read();
+                    let inner = state.read();
                     inner.pages.len() as i32
                 });
                 document_opened.set(true);

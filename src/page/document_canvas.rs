@@ -1,7 +1,5 @@
-use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::rc::Rc;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,22 +26,17 @@ use crate::decoder::pdf::utils::generate_thumbnail_key;
 // 完成后设置 repaint_needed = true。本循环定期检查该标志，
 // 一旦发现为 true 就递增 decode_refresh_trigger 信号，
 // 触发 Canvas 重新绘制。
-//
-// 对比旧方案（定时轮询 try_recv_result()），本方案：
-// 1. 解码回调直接写入缓存 — 零拷贝延迟
-// 2. 轻量轮询仅检查 AtomicBool — 无锁争用
-// 3. Canvas 通过信号驱动重绘 — 与 Floem 响应式模型一致
 // ============================================================
 
 pub fn start_repaint_loop(
-    page_view_state: Rc<RefCell<PageViewState>>,
+    page_view_state: Arc<PageViewState>,
     decode_refresh_trigger: RwSignal<u64>,
 ) {
-    fn poll_repaint(state: Rc<RefCell<PageViewState>>, trigger: RwSignal<u64>) {
-        let needs_repaint = state.borrow().repaint_needed.load(Ordering::Acquire);
+    fn poll_repaint(state: Arc<PageViewState>, trigger: RwSignal<u64>) {
+        let needs_repaint = state.repaint_needed.load(Ordering::Acquire);
 
         if needs_repaint {
-            state.borrow().repaint_needed.store(false, Ordering::Release);
+            state.repaint_needed.store(false, Ordering::Release);
             debug!("[RepaintLoop] 触发重绘");
             trigger.update(|v| *v += 1);
         }
@@ -70,7 +63,7 @@ pub fn start_repaint_loop(
 // ============================================================
 
 pub fn create_document_canvas(
-    page_view_state: Rc<RefCell<PageViewState>>,
+    page_view_state: Arc<PageViewState>,
     decode_refresh_trigger: RwSignal<u64>,
     doc_info_trigger: RwSignal<u64>,
 ) -> impl IntoView {
@@ -82,9 +75,7 @@ pub fn create_document_canvas(
         let _ = decode_refresh_trigger.get();
         let _ = doc_info_trigger.get();
 
-        let state = state_for_canvas.borrow();
-        // 通过内部 RwLock 读取 Inner 的字段
-        let inner = state.read();
+        let inner = state_for_canvas.read();
         let pages_snapshot: Vec<_> = inner
             .visible_pages
             .iter()
@@ -92,7 +83,7 @@ pub fn create_document_canvas(
             .map(|page| {
                 // 收集需要绘制的信息，避免长期持有 inner 锁
                 let thumb_key = generate_thumbnail_key(page);
-                let thumb_img = state.cache.get_thumbnail(&thumb_key);
+                let thumb_img = state_for_canvas.cache.get_thumbnail(&thumb_key);
                 let nodes: Vec<_> = page
                     .visible_nodes
                     .iter()
@@ -128,9 +119,8 @@ pub fn create_document_canvas(
                 )
             })
             .collect();
-        // 释放 inner 锁和 RefCell 借入
+        // 释放 inner 锁
         drop(inner);
-        drop(state);
 
         // --- 执行绘制 ---
         for (bx, by, bw, bh, thumb_img, nodes) in &pages_snapshot {
@@ -150,8 +140,7 @@ pub fn create_document_canvas(
     })
     .style(move |s| {
         let _ = doc_info_trigger.get();
-        let state = state_for_style.borrow();
-        let inner = state.read();
+        let inner = state_for_style.read();
         s.flex_direction(floem::taffy::FlexDirection::Column)
             .width(inner.total_width as f64)
             .height(inner.total_height as f64)
