@@ -147,7 +147,7 @@ impl PageViewState {
                 visible_pages: Vec::new(),
                 orientation,
                 crop,
-                preload_screens: 1.0,
+                preload_screens: 0.0,
                 outline_items: Vec::new(),
                 view_offset: (0.0, 0.0),
             }),
@@ -303,19 +303,6 @@ impl PageViewState {
         self.read().visible_pages.first().copied()
     }
 
-    /// 获取可见页面的引用（方便 canvas 绘制）
-    pub fn get_visible_pages_snapshot(&self) -> Vec<(usize, String)> {
-        let inner = self.read();
-        inner.visible_pages.iter().filter_map(|&idx| {
-            inner.pages.get(idx).map(|p| {
-                let key = thumbnail_cache_key(p.info.index, inner.crop);
-                (idx, key)
-            })
-        }).collect()
-    }
-
-    // ===== 资源清理 =====
-
     pub fn shutdown(&self) {
         {
             let mut inner = self.inner.write().unwrap();
@@ -384,14 +371,19 @@ fn thumbnail_cache_key(page_index: usize, crop: i32) -> String {
     format!("thumb-{}-{}", page_index, crop)
 }
 
-fn calculate_thumbnail_scale(page_width: f32, page_height: f32) -> f32 {
-    let max_dim = page_width.max(page_height);
+fn calculate_thumbnail_scale(page_width: f32, _page_height: f32, target_width: f32) -> f32 {
+    /*let max_dim = page_width.max(page_height);
     let base_size = if max_dim > 100_000.0 { 60.0 }
         else if max_dim > 30_000.0 { 80.0 }
         else if max_dim > 20_000.0 { 120.0 }
         else if max_dim > 10_000.0 { 180.0 }
         else { 360.0 };
-    base_size / max_dim
+    base_size / max_dim*/
+    if page_width > 0.0 {
+        target_width / page_width
+    } else {
+        1.0
+    }
 }
 
 // ===== 可见页节点管理 + 解码提交 =====
@@ -406,6 +398,7 @@ impl PageViewState {
         let crop = inner.crop;
         let zoom = inner.zoom;
         let orientation = inner.orientation;
+        let view_width = inner.view_size.0;
 
         let visible_pages = inner.visible_pages.clone();
         for &page_idx in &visible_pages {
@@ -416,7 +409,7 @@ impl PageViewState {
                         page.thumb_bitmap.store(Some(Arc::new(img)));
                     } else {
                         page.is_thumb_loading.store(true, Ordering::Release);
-                        let thumb_scale = calculate_thumbnail_scale(page.info.width, page.info.height);
+                        let thumb_scale = calculate_thumbnail_scale(page.info.width, page.info.height, view_width * zoom);
                         let mut thumb_info = page.info.clone();
                         thumb_info.scale = thumb_scale;
                         self.decode_service.render_pages(vec![RenderPage {
@@ -435,10 +428,10 @@ impl PageViewState {
                     }
                 }
 
-                page.update_visible_nodes(
+                /*page.update_visible_nodes(
                     &visible_rect, &self.decode_service, &self.cache,
                     crop, zoom, orientation, Arc::clone(self_arc),
-                );
+                );*/
             }
         }
 

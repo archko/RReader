@@ -11,7 +11,9 @@ use floem::peniko::Color;
 use floem::prelude::*;
 use floem::reactive::Effect;
 use floem::style::{NoWrapOverflow, ObjectFit, TextOverflow};
-use floem::views::{Button, Container, Decorators, DynStack, Label, Scroll, Stack, img_from_path};
+use floem::views::{
+    Button, Container, Decorators, Label, Scroll, Stack, img_from_path, VirtualStack,
+};
 use log::{debug, error, info};
 use sea_orm::ActiveValue;
 
@@ -60,35 +62,89 @@ pub fn create_history_view(
         viewmodel.clone(),
     );
 
-    // --- 历史网格 ---
-    let grid = dyn_stack(
-        move || history_items.get(),
-        |item| item.path.clone(),
-        move |item| {
-            create_history_card(
-                item,
-                page_view_state.clone(),
-                document_opened,
-                file_path,
-                current_page,
-                zoom_level,
-                page_count,
-                viewmodel.clone(),
+    // ============================================================
+    // 虚拟化历史网格（行分组 + VirtualStack + 动态列数）
+    // ============================================================
+
+    const CARD_WIDTH: f64 = 180.0;
+    const CARD_GAP: f64 = 10.0;
+    const CONTAINER_PADDING: f64 = 10.0;
+
+    // 动态列数信号：根据容器实际宽度计算
+    let items_per_row: RwSignal<usize> = RwSignal::new(4);
+
+    // 行分组信号：当 history_items 或 items_per_row 变化时重新分组
+    let rows_signal: RwSignal<Vec<Vec<HistoryItem>>> = RwSignal::new(Vec::new());
+    Effect::new(move |_| {
+        let items = history_items.get();
+        let cols = items_per_row.get().max(1);
+        let new_rows: Vec<Vec<HistoryItem>> = items
+            .chunks(cols)
+            .map(|c| c.to_vec())
+            .collect();
+        rows_signal.set(new_rows);
+    });
+
+    let grid = VirtualStack::with_view(
+        move || rows_signal,
+        move |row| {
+            Stack::horizontal_from_iter(
+                row.into_iter().map(|item| {
+                    create_history_card(
+                        item,
+                        page_view_state.clone(),
+                        document_opened,
+                        file_path,
+                        current_page,
+                        zoom_level,
+                        page_count,
+                        viewmodel.clone(),
+                    )
+                }),
             )
+            .style(|s| s.gap(CARD_GAP))
         },
     )
     .style(|s| {
-        s.flex_direction(floem::taffy::FlexDirection::Row)
-            .flex_wrap(floem::taffy::FlexWrap::Wrap)
-            .gap(10.0)
-            .padding(10.0)
+        s.flex_col()
+            .gap(CARD_GAP)
+            .padding(CONTAINER_PADDING)
     });
 
-    // 注意：Container 不能设 size(100%, 100%)，否则它的布局尺寸被锁定为视口大小，
-    // 导致 Scroll 检测 content_size == viewport_size，无法滚动。
-    // 让 Container 自然包裹 grid 内容，Scroll 就能正确计算溢出。
-    let scroll = Scroll::new(Container::new(grid))
-        .style(|s| s.flex_grow(1.0).min_height(0));
+    // 创建 Scroll，获取其 ViewId 以测量容器宽度
+    let mut scroll = grid.scroll();
+    let scroll_id = scroll.id();
+
+    // 根据 Scroll 容器宽度计算每行卡片数
+    // formula: cols = floor((container_width - 2*padding + gap) / (card_width + gap))
+    let recalc_items_per_row = move || {
+        let rect = scroll_id.get_content_rect_local();
+        let width = rect.width();
+        if width > CONTAINER_PADDING * 2.0 {
+            let available = width - CONTAINER_PADDING * 2.0;
+            let cols = ((available + CARD_GAP) / (CARD_WIDTH + CARD_GAP))
+                .floor()
+                .max(1.0) as usize;
+            if cols != items_per_row.get_untracked() {
+                items_per_row.set(cols);
+            }
+        }
+    };
+
+    // 首次布局完成后进行一次测量
+    exec_after(Duration::from_millis(50), move |_| {
+        recalc_items_per_row();
+    });
+
+    // 窗口大小变化时重新测量（延迟执行，等布局计算完成后）
+    let scroll = scroll
+        .style(|s| s.flex_grow(1.0).min_height(0))
+        .on_event_stop(listener::WindowResized, move |_cx, _size| {
+            // 推迟到布局更新完成后执行，避免 get_content_rect_local() 返回旧值
+            exec_after(Duration::from_millis(0), move |_| {
+                recalc_items_per_row();
+            });
+        });
 
     Stack::vertical((toolbar, scroll)).style(|s| s.size(100.pct(), 100.pct()))
 }
@@ -246,23 +302,35 @@ pub fn create_history_card(
             .hover(|s| s.border_color(Color::from_rgb8(104, 104, 204)))
     })
     .on_event(listener::Click, move |_cx, _event| {
+        // 推迟到当前事件处理完成后执行，避免嵌套事件循环导致崩溃
         let path = PathBuf::from(&item_path);
-        if path.exists() {
-            info!("从历史记录打开文件: {}", item_path);
-            let result = page_view_state.open_document(&path);
-            if result.is_ok() {
-                let path_str = item_path.clone();
-                poll_document_load(
-                    page_view_state.clone(),
-                    document_opened,
-                    file_path,
-                    current_page,
-                    zoom_level,
-                    page_count,
-                    viewmodel.clone(),
-                    path_str,
-                );
-            }
+        let path_exists = path.exists();
+        let item_path_clone = item_path.clone();
+        let state = page_view_state.clone();
+        let doc_opened = document_opened.clone();
+        let fp = file_path.clone();
+        let cp = current_page.clone();
+        let zl = zoom_level.clone();
+        let pc = page_count.clone();
+        let vm = viewmodel.clone();
+
+        if path_exists {
+            exec_after(Duration::from_millis(0), move |_| {
+                info!("从历史记录打开文件: {}", item_path_clone);
+                let result = state.open_document(&path);
+                if result.is_ok() {
+                    poll_document_load(
+                        state,
+                        doc_opened,
+                        fp,
+                        cp,
+                        zl,
+                        pc,
+                        vm,
+                        item_path_clone,
+                    );
+                }
+            });
         }
         EventPropagation::Continue
     })

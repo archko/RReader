@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -10,6 +8,7 @@ use floem::context::PaintCx;
 use floem::kurbo::Rect as KurboRect;
 use floem::peniko::{Color, ImageData};
 use floem::Renderer;
+use log::info;
 
 use super::{PageNode, PageNodePool, Orientation, PageViewState};
 use crate::cache::PageCache;
@@ -189,7 +188,8 @@ impl Page {
         // Draw thumbnail (background)
         let thumb_key = format!("thumb-{}-{}", self.info.index, self.crop);
         if let Some(img) = cache.get_thumbnail(&thumb_key) {
-            draw_image(cx, &img, bx, by, bw, bh, "");
+            //info!("draw: {}: {}: {}: {}", thumb_key, self.bounds.top, bh);
+            draw_image(cx, &img, bx, by, bw, bh, &thumb_key);
         }
 
         // Draw visible nodes (tiles)
@@ -261,17 +261,13 @@ fn draw_image(
     h: f64,
     cache_key: &str,
 ) {
-    let mut hasher = DefaultHasher::new();
-    cache_key.hash(&mut hasher);
-    let hash_val = hasher.finish().to_le_bytes();
-
     let image_brush = floem::peniko::ImageBrush::new(image_data.clone());
     let rect = KurboRect::from_origin_size((x, y), (w, h));
 
     cx.draw_img(
         floem::floem_renderer::Img {
             img: image_brush,
-            hash: &hash_val,
+            hash: cache_key.as_bytes(),
         },
         rect,
     );
