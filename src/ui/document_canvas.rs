@@ -72,7 +72,7 @@ impl DocumentCanvasWidget {
         };
         let new_x = (old_x + dx).clamp(-(tw - vw).max(0.0), 0.0);
         let new_y = (old_y + dy).clamp(-(th - vh).max(0.0), 0.0);
-        if (new_x - old_x).abs() < 0.5 && (new_y - old_y).abs() < 0.5 {
+        if (new_x - old_x).abs() < 0.01 && (new_y - old_y).abs() < 0.01 {
             return false;
         }
         self.state.update_offset(new_x, new_y);
@@ -184,19 +184,26 @@ impl Widget for DocumentCanvasWidget {
                 self.is_dragging = false;
 
                 if was_dragging {
-                    // compute fling velocity from drag samples
+                    // 🚨 修复 2：清理由于手指/鼠标停顿导致的陈旧采样（100ms 以外的丢弃）
+                    let now = std::time::Instant::now();
+                    self.drag_samples.retain(|s| now.duration_since(s.time).as_millis() < 100);
+
                     if self.drag_samples.len() >= 2 {
                         let first = self.drag_samples.front().unwrap();
                         let last = self.drag_samples.back().unwrap();
                         let dt = last.time.duration_since(first.time).as_secs_f64();
-                        if dt > 0.02 {
+                        
+                        if dt > 0.005 { // 避免除以 0
                             self.fling_velocity_x = ((last.x - first.x) / dt) as f32;
                             self.fling_velocity_y = ((last.y - first.y) / dt) as f32;
                             let speed = (self.fling_velocity_x.powi(2)
                                 + self.fling_velocity_y.powi(2))
                             .sqrt();
+                            
                             if speed > 80.0 {
                                 self.is_flinging = true;
+                                // 🚨 修复 3：引擎点火！必须申请第一帧动画
+                                ctx.request_anim_frame();
                             }
                         }
                     }
@@ -254,31 +261,33 @@ impl Widget for DocumentCanvasWidget {
         let mut needs_anim = false;
 
         if self.is_flinging {
-            let dt = (interval as f32).min(50_000.0) / 1_000_000.0;
-            let decay = (-2.0 * dt).exp();
+            // 🚨 修复 4：使用固定物理步长 0.016 秒 (即 60fps)，彻底杜绝 dt 计算错误导致的静止
+            let dt = 0.016_f32; 
+            
+            // 阻尼系数稍微调大一点 (例如 -2.5)，让滑动停止得更自然
+            let decay = (-2.5 * dt).exp(); 
             self.fling_velocity_x *= decay;
             self.fling_velocity_y *= decay;
 
             let dx = self.fling_velocity_x * dt;
             let dy = self.fling_velocity_y * dt;
 
-            if dx.abs() < 0.5 && dy.abs() < 0.5 {
+            // 速度极小时停止
+            if dx.abs() < 0.1 && dy.abs() < 0.1 {
                 self.is_flinging = false;
             } else if self.apply_scroll(dx, dy) {
                 ctx.request_render();
                 needs_anim = true;
             } else {
-                // 继续减速直到停止
-                needs_anim = true;
+                // 撞到边界时，立刻停止 Fling，避免死循环请求
+                self.is_flinging = false;
             }
         }
 
-        // 解码完成需要重绘
         if self.state.repaint_needed.swap(false, Ordering::Acquire) {
             ctx.request_render();
         }
 
-        // 仅在有动画（fling）时才请求下一帧
         if needs_anim {
             ctx.request_anim_frame();
         }
