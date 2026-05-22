@@ -202,12 +202,14 @@ impl PageViewState {
 
     pub fn update_offset(&self, x: f32, y: f32) {
         let mut inner = self.inner.write().unwrap();
-        inner.view_offset = (x, y);
+        let min_x = -(inner.total_width - inner.view_size.0).max(0.0);
+        let min_y = -(inner.total_height - inner.view_size.1).max(0.0);
+        let clamped_x = x.clamp(min_x, 0.0);
+        let clamped_y = y.clamp(min_y, 0.0);
+        inner.view_offset = (clamped_x, clamped_y);
         let visible_rect = compute_visible_rect(
-            (x, y), inner.view_size, inner.orientation, inner.preload_screens,
+            (clamped_x, clamped_y), inner.view_size, inner.orientation, inner.preload_screens,
         );
-        // 暂时用 view_offset 的概念 - 将 x,y 存储为偏移
-        // 但 Inner 没有 view_offset 字段，通过 visible_rect 计算可见页
         let old_visible = std::mem::take(&mut inner.visible_pages);
 
         let first = find_first_visible(&inner.pages, &visible_rect, inner.orientation);
@@ -226,6 +228,18 @@ impl PageViewState {
                 inner.visible_pages.push(i);
             }
         }
+    }
+
+    pub fn update_offset_delta(&self, dx: f32, dy: f32) {
+        let (old_x, old_y, tw, th, vw, vh) = {
+            let inner = self.read();
+            (inner.view_offset.0, inner.view_offset.1, inner.total_width, inner.total_height, inner.view_size.0, inner.view_size.1)
+        };
+        let min_x = -(tw - vw).max(0.0);
+        let min_y = -(th - vh).max(0.0);
+        let new_x = (old_x + dx).clamp(min_x, 0.0);
+        let new_y = (old_y + dy).clamp(min_y, 0.0);
+        self.update_offset(new_x, new_y);
     }
 
     pub fn jump_to_page(&self, page_index: usize) {
