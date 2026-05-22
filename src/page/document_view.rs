@@ -10,7 +10,7 @@ use floem::views::{Button, Container, Decorators, Label, Scroll, Stack};
 use log::info;
 
 use crate::page::PageViewState;
-use crate::page::document_canvas::{create_document_canvas, start_repaint_loop};
+use crate::page::document_canvas::create_document_canvas;
 
 pub struct DocumentViewData {
     pub page_view_state: Arc<PageViewState>,
@@ -144,12 +144,11 @@ fn create_document_toolbar(
 // ============================================================
 // create_document_view — 文档视图（工具栏 + 滚动画布）
 //
-// 回调式解码流程：
+// 解码流程（无轮询）：
 //   1. 解码线程 PageCallback::on_completed() 直接写入 cache
-//   2. start_repaint_loop 每 50ms 检查 repaint_needed 标志
-//   3. 发现标志为 true → 递增 decode_refresh_trigger
+//   2. 回调中调用 register_ext_trigger(repaint_trigger)
+//   3. 主线程 Effect 追踪该 trigger → 递增 decode_refresh_trigger
 //   4. Canvas 的闭包追踪该信号 → 从 cache 读取最新图片 → 重绘
-//   5. 无需轮询 try_recv_result()
 // ============================================================
 
 pub fn create_document_view(data: DocumentViewData) -> impl IntoView {
@@ -165,8 +164,12 @@ pub fn create_document_view(data: DocumentViewData) -> impl IntoView {
         doc_info_trigger,
     } = data;
 
-    // 启动回调式刷新循环
-    start_repaint_loop(page_view_state.clone(), decode_refresh_trigger);
+    // ExtSendTrigger 驱动：解码线程通过 register_ext_trigger 通知主线程
+    let repaint_trigger = page_view_state.repaint_trigger;
+    Effect::new(move |_| {
+        repaint_trigger.track();
+        decode_refresh_trigger.update(|v| *v += 1);
+    });
 
     // --- 工具栏 ---
     let toolbar = create_document_toolbar(
@@ -199,7 +202,6 @@ pub fn create_document_view(data: DocumentViewData) -> impl IntoView {
         }
     });
 
-    // --- Canvas 画布 ---
     let doc_canvas = create_document_canvas(
         page_view_state.clone(),
         decode_refresh_trigger,
@@ -208,9 +210,7 @@ pub fn create_document_view(data: DocumentViewData) -> impl IntoView {
 
     let canvas_container = Container::new(doc_canvas).style(|s| s.padding(20.0));
 
-    // --- 滚动容器 ---
     // 使用 ScrollChanged 自定义事件监听滚动位置变化
-    // 注意：仅画布容器可滚动，工具栏固定在顶部（使用 flex_grow）
     let state_for_scroll = page_view_state.clone();
     let trigger_for_scroll = decode_refresh_trigger.clone();
     let cp = current_page.clone();

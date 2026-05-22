@@ -19,4 +19,3 @@ pub use history_view::create_history_view;
 pub use document_view::DocumentViewData;
 pub use document_view::create_document_view;
 pub use document_canvas::create_document_canvas;
-pub use document_canvas::start_repaint_loop;

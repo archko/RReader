@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, OnceLock, RwLock, atomic::{AtomicBool, Ordering}};
+use std::sync::{Arc, OnceLock, RwLock};
+
+use floem::ext_event::{register_ext_trigger, create_trigger, ExtSendTrigger};
 
 use anyhow::Result;
 use log::{debug, info};
@@ -22,7 +24,7 @@ pub enum Orientation {
 pub struct PageViewState {
     pub decode_service: Arc<DecodeService>,
     pub cache: PageCache,
-    pub repaint_needed: AtomicBool,
+    pub repaint_trigger: ExtSendTrigger,
     pub page_links: Arc<std::sync::Mutex<HashMap<usize, Vec<Link>>>>,
     inner: RwLock<Inner>,
     self_arc: OnceLock<Arc<Self>>,
@@ -114,7 +116,7 @@ impl DecodeCallback for PageCallback {
                 }
             }
         }
-        self.state.repaint_needed.store(true, Ordering::Release);
+        register_ext_trigger(self.state.repaint_trigger);
     }
 
     fn on_error(&self, _page_idx: usize) {
@@ -129,7 +131,7 @@ impl DecodeCallback for PageCallback {
                 None => page.is_thumb_loading = false,
             }
         }
-        self.state.repaint_needed.store(true, Ordering::Release);
+        register_ext_trigger(self.state.repaint_trigger);
     }
 }
 
@@ -139,8 +141,8 @@ impl PageViewState {
     pub fn new(orientation: Orientation, crop: i32) -> Self {
         Self {
             decode_service: Arc::new(DecodeService::new()),
-            cache: PageCache::new(24, 20),
-            repaint_needed: AtomicBool::new(false),
+            cache: PageCache::new(32, 20),
+            repaint_trigger: create_trigger(),
             page_links: Arc::new(std::sync::Mutex::new(HashMap::new())),
             inner: RwLock::new(Inner {
                 pages: Vec::new(),
@@ -432,7 +434,7 @@ impl PageViewState {
             }
         }
 
-        self.repaint_needed.store(true, Ordering::Release);
+        register_ext_trigger(self.repaint_trigger);
     }
 }
 
