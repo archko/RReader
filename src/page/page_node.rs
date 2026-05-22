@@ -1,6 +1,7 @@
-use log::info;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
+use arc_swap::ArcSwapOption;
 use floem::peniko::ImageData;
 use crate::decoder::{Rect, PageInfo};
 use crate::decoder::decode_service::{DecodeService, RenderPage, TaskType, DecodeCallbackRef};
@@ -10,8 +11,8 @@ pub struct PageNode {
     pub page_index: usize,
     pub bounds: Rect,
     pub cache_key: String,
-    pub bitmap: Option<ImageData>,
-    pub is_decoding: bool,
+    pub bitmap: ArcSwapOption<ImageData>,
+    pub is_decoding: AtomicBool,
     cached_pixel_rect: Option<Rect>,
     cached_page_size: Option<(f32, f32, f32, f32)>,
 }
@@ -23,8 +24,8 @@ impl PageNode {
             page_index,
             bounds,
             cache_key,
-            bitmap: None,
-            is_decoding: false,
+            bitmap: ArcSwapOption::new(None),
+            is_decoding: AtomicBool::new(false),
             cached_pixel_rect: None,
             cached_page_size: None,
         }
@@ -42,8 +43,8 @@ impl PageNode {
         self.page_index = page_index;
         self.bounds = bounds;
         self.cache_key = Self::generate_cache_key(page_index, &self.bounds, zoom, orientation, crop);
-        self.bitmap = None;
-        self.is_decoding = false;
+        self.bitmap.store(None);
+        self.is_decoding.store(false, Ordering::Release);
         self.cached_pixel_rect = None;
         self.cached_page_size = None;
     }
@@ -81,7 +82,7 @@ impl PageNode {
     pub fn decode(&mut self, _page_width: f32, _page_height: f32, _page_info: &PageInfo,
                   _crop: i32, decode_service: &DecodeService,
                   callback: DecodeCallbackRef) {
-        if self.is_decoding || self.bitmap.is_some() {
+        if self.is_decoding.load(Ordering::Acquire) || self.bitmap.load().is_some() {
             return;
         }
         let scale = _page_info.scale;
@@ -109,16 +110,16 @@ impl PageNode {
             callback: Some(callback),
             region: Some(region),
         }]);
-        self.is_decoding = true;
+        self.is_decoding.store(true, Ordering::Release);
     }
 
     pub fn needs_decoding(&self) -> bool {
-        self.bitmap.is_none() && !self.is_decoding
+        self.bitmap.load().is_none() && !self.is_decoding.load(Ordering::Acquire)
     }
 
     pub fn recycle(&mut self) {
-        self.bitmap = None;
-        self.is_decoding = false;
+        self.bitmap.store(None);
+        self.is_decoding.store(false, Ordering::Release);
         self.cached_pixel_rect = None;
         self.cached_page_size = None;
     }

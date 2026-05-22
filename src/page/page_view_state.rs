@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, OnceLock, RwLock};
 
 use floem::ext_event::{register_ext_trigger, create_trigger, ExtSendTrigger};
 use floem::peniko::{Blob, ImageAlphaType, ImageData};
 
 use anyhow::Result;
-use log::{debug, info};
 
 use super::{Page, PageNode};
 use crate::cache::PageCache;
@@ -59,7 +59,7 @@ impl DecodeCallback for PageCallback {
         match self.node_key {
             Some(nk) => self.state.read().pages.get(self.page_idx)
                 .and_then(|p| p.visible_nodes.get(&nk))
-                .map(|n| n.cache_key == self.cache_key && n.is_decoding)
+                .map(|n| n.cache_key == self.cache_key && n.is_decoding.load(Ordering::Acquire))
                 .unwrap_or(false),
             None => self.state.read().visible_pages.contains(&self.page_idx),
         }
@@ -82,12 +82,12 @@ impl DecodeCallback for PageCallback {
                     self.cache_key.clone(),
                     image_data,
                 );
-                let mut inner = self.state.write();
-                if let Some(page) = inner.pages.get_mut(self.page_idx) {
-                    if let Some(node) = page.visible_nodes.get_mut(&nk) {
+                let inner = self.state.read();
+                if let Some(page) = inner.pages.get(self.page_idx) {
+                    if let Some(node) = page.visible_nodes.get(&nk) {
                         if node.cache_key == self.cache_key {
-                            node.bitmap = Some(img);
-                            node.is_decoding = false;
+                            node.bitmap.store(Some(Arc::new(img)));
+                            node.is_decoding.store(false, Ordering::Release);
                         }
                     }
                 }
@@ -97,15 +97,15 @@ impl DecodeCallback for PageCallback {
                     self.cache_key.clone(),
                     image_data,
                 );
-                let mut inner = self.state.write();
-                if let Some(page) = inner.pages.get_mut(self.page_idx) {
-                    if page.is_thumb_loading {
-                        page.thumb_bitmap = Some(img);
-                        page.is_thumb_loading = false;
+                let inner = self.state.read();
+                if let Some(page) = inner.pages.get(self.page_idx) {
+                    if page.is_thumb_loading.load(Ordering::Acquire) {
+                        page.thumb_bitmap.store(Some(Arc::new(img)));
+                        page.is_thumb_loading.store(false, Ordering::Release);
                     }
                     if !result.links.is_empty() {
-                        page.links = result.links;
-                        page.links_loaded = true;
+                        *page.links.lock().unwrap() = result.links;
+                        page.links_loaded.store(true, Ordering::Release);
                     }
                 }
             }
@@ -114,18 +114,18 @@ impl DecodeCallback for PageCallback {
     }
 
     fn on_error(&self, _page_idx: usize) {
-        let mut inner = self.state.write();
-        if let Some(page) = inner.pages.get_mut(self.page_idx) {
+        let inner = self.state.read();
+        if let Some(page) = inner.pages.get(self.page_idx) {
             match self.node_key {
                 Some(nk) => {
-                    if let Some(node) = page.visible_nodes.get_mut(&nk) {
-                        node.is_decoding = false;
+                    if let Some(node) = page.visible_nodes.get(&nk) {
+                        node.is_decoding.store(false, Ordering::Release);
                     }
                 }
-                None => page.is_thumb_loading = false,
+                None => page.is_thumb_loading.store(false, Ordering::Release),
             }
         }
-        register_ext_trigger(self.state.repaint_trigger);
+        //register_ext_trigger(self.state.repaint_trigger);
     }
 }
 
@@ -397,11 +397,11 @@ impl PageViewState {
         for &page_idx in &visible_pages {
             if let Some(page) = inner.pages.get_mut(page_idx) {
                 let thumb_key = thumbnail_cache_key(page.info.index, crop);
-                if page.thumb_bitmap.is_none() && !page.is_thumb_loading {
+                if page.thumb_bitmap.load().is_none() && !page.is_thumb_loading.load(Ordering::Acquire) {
                     if let Some(img) = self.cache.get_thumbnail(&thumb_key) {
-                        page.thumb_bitmap = Some(img);
+                        page.thumb_bitmap.store(Some(Arc::new(img)));
                     } else {
-                        page.is_thumb_loading = true;
+                        page.is_thumb_loading.store(true, Ordering::Release);
                         let thumb_scale = calculate_thumbnail_scale(page.info.width, page.info.height);
                         let mut thumb_info = page.info.clone();
                         thumb_info.scale = thumb_scale;

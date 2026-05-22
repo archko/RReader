@@ -2,12 +2,14 @@ use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
+use arc_swap::ArcSwapOption;
 use floem::context::PaintCx;
 use floem::kurbo::Rect as KurboRect;
 use floem::peniko::{Color, ImageData};
 use floem::Renderer;
-use log::info;
 
 use super::{PageNode, PageNodePool, Orientation, PageViewState};
 use crate::cache::PageCache;
@@ -19,18 +21,18 @@ pub struct Page {
     pub info: PageInfo,
     pub bounds: Rect,
     pub visible_nodes: HashMap<usize, PageNode>,
-    pub links: Vec<Link>,
     pub width: f32,
     pub height: f32,
     pub is_decoding: bool,
 
-    pub thumb_bitmap: Option<ImageData>,
-    pub is_thumb_loading: bool,
+    pub thumb_bitmap: ArcSwapOption<ImageData>,
+    pub is_thumb_loading: AtomicBool,
     pub x_offset: f32,
     pub y_offset: f32,
     pub total_scale: f32,
     pub base_zoom: f32,
-    pub links_loaded: bool,
+    pub links: Mutex<Vec<Link>>,
+    pub links_loaded: AtomicBool,
     pub tile_config: TileConfig,
     pub crop: i32,
     node_pool: PageNodePool,
@@ -45,17 +47,17 @@ impl Page {
             info,
             bounds,
             visible_nodes: HashMap::new(),
-            links: Vec::new(),
+            links: Mutex::new(Vec::new()),
             width,
             height,
             is_decoding: false,
-            thumb_bitmap: None,
-            is_thumb_loading: false,
+            thumb_bitmap: ArcSwapOption::new(None),
+            is_thumb_loading: AtomicBool::new(false),
             x_offset,
             y_offset,
             total_scale,
             base_zoom,
-            links_loaded: false,
+            links_loaded: AtomicBool::new(false),
             tile_config,
             crop,
             node_pool: PageNodePool::new(),
@@ -188,14 +190,12 @@ impl Page {
         let thumb_key = format!("thumb-{}-{}", self.info.index, self.crop);
         if let Some(img) = cache.get_thumbnail(&thumb_key) {
             draw_image(cx, &img, bx, by, bw, bh, "");
-        } else {
-            //let rect = KurboRect::from_origin_size((bx, by), (bw, bh));
-            //cx.fill(&rect, Color::from_rgb8(240, 240, 240), 0.0);
         }
 
         // Draw visible nodes (tiles)
         for (_nk, node) in &self.visible_nodes {
-            if let Some(bitmap) = &node.bitmap {
+            let bitmap_guard = node.bitmap.load();
+            if let Some(bitmap) = bitmap_guard.as_ref() {
                 let nx = bx + node.bounds.left as f64 * self.width as f64;
                 let ny = by + node.bounds.top as f64 * self.height as f64;
                 let nw = (node.bounds.right - node.bounds.left) as f64 * self.width as f64;
@@ -205,8 +205,9 @@ impl Page {
         }
 
         // Draw links
-        if self.links_loaded {
-            for link in &self.links {
+        if self.links_loaded.load(Ordering::Acquire) {
+            let links = self.links.lock().unwrap();
+            for link in links.iter() {
                 let lx = bx + link.bounds.left as f64 / self.info.width as f64 * self.width as f64;
                 let ly = by + link.bounds.top as f64 / self.info.height as f64 * self.height as f64;
                 let lw = (link.bounds.right - link.bounds.left) as f64 / self.info.width as f64 * self.width as f64;
@@ -217,7 +218,7 @@ impl Page {
         }
     }
 
-    pub fn find_link_at(&self, doc_x: f32, doc_y: f32) -> Option<&Link> {
+    pub fn find_link_at(&self, doc_x: f32, doc_y: f32) -> Option<Link> {
         let page_x = doc_x - self.bounds.left;
         let page_y = doc_y - self.bounds.top;
         if page_x < 0.0 || page_y < 0.0 || page_x > self.width || page_y > self.height {
@@ -225,10 +226,12 @@ impl Page {
         }
         let rel_x = page_x * self.info.width / self.width;
         let rel_y = page_y * self.info.height / self.height;
-        self.links.iter().find(|link| {
-            rel_x >= link.bounds.left && rel_x <= link.bounds.right
-                && rel_y >= link.bounds.top && rel_y <= link.bounds.bottom
-        })
+        self.links.lock().unwrap().iter()
+            .find(|link| {
+                rel_x >= link.bounds.left && rel_x <= link.bounds.right
+                    && rel_y >= link.bounds.top && rel_y <= link.bounds.bottom
+            })
+            .cloned()
     }
 
     pub fn needs_decoding(&self) -> bool { !self.is_decoding }
@@ -241,8 +244,8 @@ impl Page {
     }
 
     pub fn clear_thumb(&mut self) {
-        self.thumb_bitmap = None;
-        self.is_thumb_loading = false;
+        self.thumb_bitmap.store(None);
+        self.is_thumb_loading.store(false, Ordering::Release);
     }
 
     pub fn node_pool(&self) -> &PageNodePool { &self.node_pool }

@@ -23,6 +23,7 @@ regex = "1.12.2"
 dirs = "6.0.0"
 lru = "0.13"
 tracing = "0.1"
+arc-swap = "1.9.1"
 
 [profile.dev]
 incremental = true          # 保留增量编译（核心提速点）

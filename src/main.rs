@@ -20,7 +20,6 @@ use floem::view::IntoView;
 use dirs;
 
 mod cache;
-mod controllers;
 mod dao;
 mod decoder;
 mod entity;
