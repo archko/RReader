@@ -1,6 +1,13 @@
 use std::collections::HashMap;
-use log::info;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+
+use floem::context::PaintCx;
+use floem::kurbo::Rect as KurboRect;
+use floem::peniko::{Blob, Color, ImageAlphaType, ImageData};
+use floem::Renderer;
+use log::info;
 
 use super::{PageNode, PageNodePool, Orientation, PageViewState};
 use crate::cache::PageCache;
@@ -169,6 +176,45 @@ impl Page {
         )
     }
 
+    pub fn draw(&self, cx: &mut PaintCx, cache: &PageCache) {
+        let bx = self.bounds.left as f64;
+        let by = self.bounds.top as f64;
+        let bw = self.width as f64;
+        let bh = self.height as f64;
+
+        // Draw thumbnail (background)
+        let thumb_key = format!("{}-{}-{}", self.info.index, self.info.width, self.info.height);
+        if let Some(img) = cache.get_thumbnail(&thumb_key) {
+            draw_image(cx, &*img, bx, by, bw, bh, "");
+        } else {
+            let rect = KurboRect::from_origin_size((bx, by), (bw, bh));
+            cx.fill(&rect, Color::from_rgb8(240, 240, 240), 0.0);
+        }
+
+        // Draw visible nodes (tiles)
+        for (_nk, node) in &self.visible_nodes {
+            if let Some(bitmap) = &node.bitmap {
+                let nx = bx + node.bounds.left as f64 * self.width as f64;
+                let ny = by + node.bounds.top as f64 * self.height as f64;
+                let nw = (node.bounds.right - node.bounds.left) as f64 * self.width as f64;
+                let nh = (node.bounds.bottom - node.bounds.top) as f64 * self.height as f64;
+                draw_image(cx, bitmap, nx, ny, nw, nh, &node.cache_key);
+            }
+        }
+
+        // Draw links
+        if self.links_loaded {
+            for link in &self.links {
+                let lx = bx + link.bounds.left as f64 / self.info.width as f64 * self.width as f64;
+                let ly = by + link.bounds.top as f64 / self.info.height as f64 * self.height as f64;
+                let lw = (link.bounds.right - link.bounds.left) as f64 / self.info.width as f64 * self.width as f64;
+                let lh = (link.bounds.bottom - link.bounds.top) as f64 / self.info.height as f64 * self.height as f64;
+                let link_rect = KurboRect::from_origin_size((lx, ly), (lw, lh));
+                cx.fill(&link_rect, Color::from_rgba8(0, 100, 255, 40), 0.0);
+            }
+        }
+    }
+
     pub fn find_link_at(&self, doc_x: f32, doc_y: f32) -> Option<&Link> {
         let page_x = doc_x - self.bounds.left;
         let page_y = doc_y - self.bounds.top;
@@ -199,6 +245,43 @@ impl Page {
 
     pub fn node_pool(&self) -> &PageNodePool { &self.node_pool }
     pub fn node_pool_mut(&mut self) -> &mut PageNodePool { &mut self.node_pool }
+}
+
+fn draw_image(
+    cx: &mut PaintCx,
+    dynamic_img: &image::DynamicImage,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    cache_key: &str,
+) {
+    let rgba = dynamic_img.to_rgba8();
+    let (img_w, img_h) = rgba.dimensions();
+    let blob = Blob::new(Arc::new(rgba.into_raw()));
+
+    let image_data = ImageData {
+        data: blob,
+        format: floem::peniko::ImageFormat::Rgba8,
+        alpha_type: ImageAlphaType::AlphaPremultiplied,
+        width: img_w,
+        height: img_h,
+    };
+
+    let mut hasher = DefaultHasher::new();
+    cache_key.hash(&mut hasher);
+    let hash_val = hasher.finish().to_le_bytes();
+
+    let image_brush = floem::peniko::ImageBrush::new(image_data);
+    let rect = KurboRect::from_origin_size((x, y), (w, h));
+
+    cx.draw_img(
+        floem::floem_renderer::Img {
+            img: image_brush,
+            hash: &hash_val,
+        },
+        rect,
+    );
 }
 
 pub fn rects_intersect(a: &Rect, b: &Rect) -> bool {
