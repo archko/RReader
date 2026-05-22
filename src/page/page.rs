@@ -193,7 +193,7 @@ impl Page {
         }
 
         // Draw visible nodes (tiles)
-        for (_nk, node) in &self.visible_nodes {
+        /*for (_nk, node) in &self.visible_nodes {
             let bitmap_guard = node.bitmap.load();
             if let Some(bitmap) = bitmap_guard.as_ref() {
                 let nx = bx + node.bounds.left as f64 * self.width as f64;
@@ -202,7 +202,7 @@ impl Page {
                 let nh = (node.bounds.bottom - node.bounds.top) as f64 * self.height as f64;
                 draw_image(cx, bitmap, nx, ny, nw, nh, &node.cache_key);
             }
-        }
+        }*/
 
         // Draw links
         if self.links_loaded.load(Ordering::Acquire) {

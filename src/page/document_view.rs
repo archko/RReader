@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use floem::event::{EventPropagation, PointerScrollEventExt, listener};
 use floem::peniko::kurbo::{Size, Vec2};
+use floem::peniko::Color;
 use floem::prelude::*;
 use floem::reactive::Effect;
 use floem::style::{NoWrapOverflow, TextOverflow};
@@ -144,7 +145,11 @@ fn create_document_toolbar(
         zoom_out_button,
         zoom_in_button,
     ))
-    .style(|s| s.padding(8.0).gap(8.0))
+    .style(|s| {
+        s.padding(8.0)
+            .gap(8.0)
+            .background(Color::from_rgb8(255, 255, 255))
+    })
 }
 
 // ============================================================
@@ -236,7 +241,7 @@ pub fn create_document_view(data: DocumentViewData) -> impl IntoView {
             let size = Size::new(vw, vh);
             let delta = pse.resolve_to_points(None, Some(size));
 
-            state_for_scroll.update_offset_delta(-delta.x as f32, -delta.y as f32);
+            state_for_scroll.update_offset_delta(delta.x as f32, delta.y as f32);
             state_for_scroll.process_visible_nodes();
 
             if let Some(first_visible) = state_for_scroll.get_first_visible_page() {

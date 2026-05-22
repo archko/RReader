@@ -169,7 +169,7 @@ fn create_history_toolbar(
     .style(|s| s.padding_right(8.0));
 
     Stack::horizontal((open_button, clear_button, label))
-        .style(|s| s.padding(10.0).gap(10.0))
+        .style(|s| s.padding(10.0).gap(10.0).background(Color::from_rgb8(255, 255, 255)))
 }
 
 // ============================================================
