@@ -5,6 +5,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 use floem::ext_event::{register_ext_trigger, create_trigger, ExtSendTrigger};
 use floem::peniko::{Blob, ImageAlphaType, ImageData};
+use log::info;
 
 use anyhow::Result;
 
@@ -99,6 +100,7 @@ impl DecodeCallback for PageCallback {
                 );
                 let inner = self.state.read();
                 if let Some(page) = inner.pages.get(self.page_idx) {
+                    //info!("on_completed: {}: {}", self.page_idx, self.cache_key);
                     if page.is_thumb_loading.load(Ordering::Acquire) {
                         page.thumb_bitmap.store(Some(Arc::new(img)));
                         page.is_thumb_loading.store(false, Ordering::Release);

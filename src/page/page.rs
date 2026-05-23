@@ -188,8 +188,10 @@ impl Page {
         // Draw thumbnail (background)
         let thumb_key = format!("thumb-{}-{}", self.info.index, self.crop);
         if let Some(img) = cache.get_thumbnail(&thumb_key) {
-            //info!("draw: {}: {}: {}: {}", thumb_key, self.bounds.top, bh);
+            info!("draw: {}: {}-{}-{}-{}", thumb_key, bx, by, bw, bh);
             draw_image(cx, &img, bx, by, bw, bh, &thumb_key);
+        } else {
+            //info!("draw.empty: {}: {}: {}", thumb_key, self.bounds.top, bh);
         }
 
         // Draw visible nodes (tiles)
@@ -216,6 +218,15 @@ impl Page {
                 cx.fill(&link_rect, Color::from_rgba8(0, 100, 255, 40), 0.0);
             }
         }
+
+        // Draw full page rect, color mapped to page index via golden angle hue
+        let page_rect = KurboRect::from_origin_size((bx, by), (bw, bh));
+        let hue = (self.info.index as f64 * 137.508) % 360.0;
+        let r = ((hue + 120.0).to_radians().sin() * 0.5 + 0.5) * 200.0 + 30.0;
+        let g = (hue.to_radians().sin() * 0.5 + 0.5) * 200.0 + 30.0;
+        let b = ((hue - 120.0).to_radians().sin() * 0.5 + 0.5) * 200.0 + 30.0;
+        let rect_color = Color::from_rgba8(r as u8, g as u8, b as u8, 100);
+        cx.fill(&page_rect, rect_color, 0.0);
     }
 
     pub fn find_link_at(&self, doc_x: f32, doc_y: f32) -> Option<Link> {
@@ -241,6 +252,7 @@ impl Page {
             self.node_pool.release(node);
         }
         self.is_decoding = false;
+        self.is_thumb_loading.store(false, Ordering::Release);
     }
 
     pub fn clear_thumb(&mut self) {

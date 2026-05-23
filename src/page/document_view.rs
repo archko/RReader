@@ -223,11 +223,8 @@ pub fn create_document_view(data: DocumentViewData) -> impl IntoView {
         doc_info_trigger,
     );
 
-    // 画布容器（固定为视口大小，通过 translate 实现滚动）
-    let canvas_container = Container::new(
-        Container::new(doc_canvas).style(|s| s.padding(20.0))
-    )
-    .style(|s| s.flex_grow(1.0).min_height(0));
+    let canvas_container = Container::new(doc_canvas)
+    .style(|s| s.flex_grow(1.0).width_pct(100.0).height_pct(100.0));
 
     // 鼠标滚轮滚动
     let state_for_scroll = page_view_state.clone();
