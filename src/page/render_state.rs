@@ -272,14 +272,19 @@ fn thumbnail_cache_key(page_index: usize, crop: i32) -> String {
     format!("thumb-{}-{}", page_index, crop)
 }
 
-fn calculate_thumbnail_scale(page_width: f32, page_height: f32) -> f32 {
-    let max_dim = page_width.max(page_height);
+fn calculate_thumbnail_scale(page_width: f32, page_height: f32, target_width: f32) -> f32 {
+    /*let max_dim = page_width.max(page_height);
     let base_size = if max_dim > 100_000.0 { 60.0 }
         else if max_dim > 30_000.0 { 80.0 }
         else if max_dim > 20_000.0 { 120.0 }
         else if max_dim > 10_000.0 { 180.0 }
         else { 360.0 };
-    base_size / max_dim
+    base_size / max_dim*/
+    if page_width > 0.0 {
+        target_width / page_width
+    } else {
+        1.0
+    }
 }
 
 // ===== 可见页节点管理 + 解码提交 =====
@@ -292,6 +297,7 @@ pub fn process_visible_nodes(state: &Arc<PageRenderState>) {
     let crop = inner.crop;
     let zoom = inner.zoom;
     let orientation = inner.orientation;
+    let view_width = inner.view_size.0;
 
     let visible_pages = inner.visible_pages.clone();
     for &page_idx in &visible_pages {
@@ -302,7 +308,7 @@ pub fn process_visible_nodes(state: &Arc<PageRenderState>) {
                     page.thumb_bitmap = Some(img);
                 } else {
                     page.is_thumb_loading = true;
-                    let thumb_scale = calculate_thumbnail_scale(page.info.width, page.info.height);
+                    let thumb_scale = calculate_thumbnail_scale(page.info.width, page.info.height, view_width * zoom);
                     let mut thumb_info = page.info.clone();
                     thumb_info.scale = thumb_scale;
                     state.decode_service.render_pages(vec![RenderPage {
@@ -321,10 +327,10 @@ pub fn process_visible_nodes(state: &Arc<PageRenderState>) {
                 }
             }
 
-            page.update_visible_nodes(
+            /*page.update_visible_nodes(
                 &visible_rect, &state.decode_service, &state.cache,
                 crop, zoom, orientation, Arc::clone(state),
-            );
+            );*/
         }
     }
 

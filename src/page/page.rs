@@ -118,10 +118,10 @@ impl Page {
             painter.draw_image(&**img, transform);
         }
 
-        for node in self.visible_nodes.values() {
+        /*for node in self.visible_nodes.values() {
             node.draw(painter, scroll_x, scroll_y, current_width, current_height, current_left, current_top, cache,
                       vis_left, vis_top, vis_right, vis_bottom);
-        }
+        }*/
     }
 
     pub fn draw_links(&self, painter: &mut Painter<'_>, scroll_x: f32, scroll_y: f32, scale_ratio: f32) {
